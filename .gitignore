@@ -1,0 +1,4 @@
+# Generated Files
+/node_modules/
+/dist/
+/coverage/
