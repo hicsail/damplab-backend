@@ -1,7 +1,7 @@
 name: PR Checks
 
 on:
-  push:
+  pull_request:
     branches: [ main ]
 
 jobs:
@@ -18,7 +18,7 @@ jobs:
           node-version: 17
 
       - name: NPM Install
-        run: npm-install --only-dev
+        run: npm install --only-dev
 
   lint:
     runs-on: ubuntu-latest
@@ -33,7 +33,7 @@ jobs:
           node-version: 17
 
       - name: NPM Install
-        run: npm-install --only-dev
+        run: npm install --only-dev
 
       - name: Check for Linting Issues
         run: npm run lint
@@ -51,7 +51,7 @@ jobs:
           node-version: 17
 
       - name: NPM Install
-        run: npm-install
+        run: npm install
 
       - name: Check for Formatting Issues
         run: npm run format
@@ -69,10 +69,21 @@ jobs:
           node-version: 17
 
       - name: NPM Install
-        run: npm-install
+        run: npm install
 
       - name: Run Unit Tests
         run: npm run test
+
+      - name: Determine Coverage
+        uses: ArtiomTr/jest-coverage-report-action@v2
+        id: coverage
+        with:
+          output: report-markdown
+
+      - name: Display Coverage Results
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          message: ${{ steps.coverage.outputs.report }}
 
   e2e-tests:
     runs-on: ubuntu-latest
@@ -87,7 +98,7 @@ jobs:
           node-version: 17
 
       - name: NPM Install
-        run: npm-install
+        run: npm install
 
       - name: Run E2E Tests
         run: npm run test:e2e
