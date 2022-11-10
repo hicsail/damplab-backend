@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@nestjs/common": "^9.0.0",
+    "@nestjs/config": "^2.2.0",
     "@nestjs/core": "^9.0.0",
     "@nestjs/platform-express": "^9.0.0",
     "@nestjs/terminus": "^9.1.2",
@@ -70,8 +71,12 @@
     ],
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "/dist/",
-      "./src/main.ts"
+      "/dist/"
+    ],
+    "coveragePathIgnorePatterns" : [
+      "src/main.ts",
+      ".module.ts",
+      "src/config.ts"
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
