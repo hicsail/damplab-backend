@@ -71,8 +71,12 @@
     ],
     "testPathIgnorePatterns": [
       "/node_modules/",
-      "/dist/",
-      "./src/main.ts"
+      "/dist/"
+    ],
+    "coveragePathIgnorePatterns" : [
+      "src/main.ts",
+      ".module.ts",
+      "src/config.ts"
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
