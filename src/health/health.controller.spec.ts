@@ -1,22 +1,35 @@
 import { HealthController } from './health.controller';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DiskHealthIndicator, HealthCheckError, MemoryHealthIndicator, TerminusModule } from '@nestjs/terminus';
+import { ConfigService } from '@nestjs/config';
 
 describe('HealthController', () => {
   let controller: HealthController;
   let diskHealth: jest.SpiedFunction<DiskHealthIndicator['checkStorage']>;
   let memoryHealth: jest.SpiedFunction<MemoryHealthIndicator['checkHeap']>;
+  let configService: jest.SpiedFunction<ConfigService['getOrThrow']>;
 
   beforeEach(async () => {
     diskHealth = jest.fn().mockResolvedValue({ status: 'ok' });
     memoryHealth = jest.fn().mockResolvedValue({ status: 'ok' });
+    configService = jest.fn().mockImplementation((key: string) => {
+      switch (key) {
+        case 'health.storageThreshold':
+          return 0.75;
+        case 'health.memoryThreshold':
+          return 100 * 1024 * 1024;
+        default:
+          throw new Error(`Unexpected key: ${key}`);
+      }
+    });
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [HealthController],
       imports: [TerminusModule],
       providers: [
         { provide: DiskHealthIndicator, useValue: { checkStorage: diskHealth } },
-        { provide: MemoryHealthIndicator, useValue: { checkHeap: memoryHealth } }
+        { provide: MemoryHealthIndicator, useValue: { checkHeap: memoryHealth } },
+        { provide: ConfigService, useValue: { getOrThrow: configService } }
       ]
     }).compile();
 
