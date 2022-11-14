@@ -3,6 +3,7 @@ import { Order } from './models/order.model';
 import { Node } from './models/node.model';
 import { Edge } from './models/edge.model';
 import {NewOrderInput} from './dto/new-order.input';
+import {AddNodeInput} from './dto/add-node.input';
 
 /**
  * Placeholder service for testing GraphQL integration. Stores an array of
@@ -67,15 +68,15 @@ export class OrdersService {
   /**
    * Add a node to an order
    */
-  addNode(orderId: string, node: Node): Promise<Node> {
-    const order = this.orders.find((order) => order.id === orderId);
+  addNode(addNode: AddNodeInput): Promise<Node> {
+    const order = this.orders.find((order) => order.id === addNode.orderId);
 
     if (!order) {
-      throw new Error(`Order with id ${orderId} not found`);
+      throw new Error(`Order with id ${addNode.orderId} not found`);
     }
 
-    order.nodes.push(node);
-    return Promise.resolve(node);
+    order.nodes.push({ id: addNode.nodeId });
+    return Promise.resolve({ id: addNode.nodeId });
   }
 
   /**
