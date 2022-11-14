@@ -2,10 +2,9 @@ import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { Node } from './node.model';
 import JSON from 'graphql-type-json';
 
-
 @ObjectType({ description: 'edge' })
 export class Edge {
-  @Field(_type => ID, { description: 'edge id' })
+  @Field(() => ID, { description: 'edge id' })
   id: string;
 
   @Field({ description: 'where the edge is originating from' })

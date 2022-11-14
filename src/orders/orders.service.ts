@@ -17,26 +17,26 @@ export class OrdersService {
       description: 'Order 1 description',
       nodes: [
         {
-          id: '1',
+          id: '1'
         },
         {
-          id: '2',
-        },
+          id: '2'
+        }
       ],
       edges: [
         {
           id: '1',
           origin: {
-            id: '1',
+            id: '1'
           },
           destination: {
-            id: '2',
+            id: '2'
           },
           properties: {
-            weight: 1,
-          },
-        },
-      ],
+            weight: 1
+          }
+        }
+      ]
     }
   ];
 
@@ -59,7 +59,7 @@ export class OrdersService {
    * Add a node to an order
    */
   addNode(orderId: string, node: Node): Promise<Node> {
-    const order = this.orders.find(order => order.id === orderId);
+    const order = this.orders.find((order) => order.id === orderId);
 
     if (!order) {
       throw new Error(`Order with id ${orderId} not found`);
@@ -75,7 +75,7 @@ export class OrdersService {
    * @param edge
    */
   addEdge(orderId: string, edge: Edge): Promise<Edge> {
-    const order = this.orders.find(order => order.id === orderId);
+    const order = this.orders.find((order) => order.id === orderId);
 
     if (!order) {
       throw new Error(`Order with id ${orderId} not found`);
@@ -84,5 +84,4 @@ export class OrdersService {
     order.edges.push(edge);
     return Promise.resolve(edge);
   }
-
 }

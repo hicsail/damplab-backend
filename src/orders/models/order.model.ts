@@ -4,7 +4,7 @@ import { Edge } from './edge.model';
 
 @ObjectType({ description: 'order' })
 export class Order {
-  @Field(_type => ID, { description: 'order id' })
+  @Field((_type) => ID, { description: 'order id' })
   id: string;
 
   @Field({ description: 'order name' })
