@@ -1,5 +1,5 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
-import { Node } from './node.model';
+import { Node } from './nodes/node.model';
 import JSON from 'graphql-type-json';
 
 @ObjectType({ description: 'edge' })

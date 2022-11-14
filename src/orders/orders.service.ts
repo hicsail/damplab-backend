@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { Order } from './models/order.model';
-import { Node } from './models/node.model';
+import { Node, NodeType } from './models/nodes/node.model';
 import { Edge } from './models/edge.model';
-import {NewOrderInput} from './dto/new-order.input';
-import {AddNodeInput} from './dto/add-node.input';
+import { NewOrderInput } from './dto/new-order.input';
+import { AddNodeInput } from './dto/add-node.input';
+import { Mixer } from './models/nodes/mixer.model';
+import { Pipette } from './models/nodes/pipette.model';
 
 /**
  * Placeholder service for testing GraphQL integration. Stores an array of
@@ -12,30 +14,45 @@ import {AddNodeInput} from './dto/add-node.input';
 @Injectable()
 export class OrdersService {
   // TODO: Remove once database is added in
+  private testNodes = [
+      {
+        id: '1',
+        nodeType: NodeType.PIPETTE,
+        volume: 10
+      } as Pipette,
+      {
+        id: '2',
+        nodeType: NodeType.PIPETTE,
+        volume: 20
+      } as Pipette,
+      {
+        id: '3',
+        nodeType: NodeType.MIXER,
+        speed: 100
+      } as Mixer,
+  ];
+
   private orders: Order[] = [
     {
       id: '1',
       name: 'Order 1',
       description: 'Order 1 description',
-      nodes: [
-        {
-          id: '1'
-        },
-        {
-          id: '2'
-        }
-      ],
+      nodes: this.testNodes,
       edges: [
         {
           id: '1',
-          origin: {
-            id: '1'
-          },
-          destination: {
-            id: '2'
-          },
+          origin: this.testNodes[0],
+          destination: this.testNodes[1],
           properties: {
             weight: 1
+          }
+        },
+        {
+          id: '2',
+          origin: this.testNodes[1],
+          destination: this.testNodes[2],
+          properties: {
+            weight: 2
           }
         }
       ]
@@ -75,8 +92,8 @@ export class OrdersService {
       throw new Error(`Order with id ${addNode.orderId} not found`);
     }
 
-    order.nodes.push({ id: addNode.nodeId });
-    return Promise.resolve({ id: addNode.nodeId });
+    // order.nodes.push({ id: addNode.nodeId, nodeType: addNode.nodeType });
+    return Promise.resolve({ id: addNode.nodeId, nodeType: addNode.nodeType });
   }
 
   /**
