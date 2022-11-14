@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Order } from './models/order.model';
 import { Node } from './models/node.model';
 import { Edge } from './models/edge.model';
+import {NewOrderInput} from './dto/new-order.input';
 
 /**
  * Placeholder service for testing GraphQL integration. Stores an array of
@@ -50,7 +51,15 @@ export class OrdersService {
   /**
    * Create a new order
    */
-  create(order: Order): Promise<Order> {
+  create(newOrder: NewOrderInput): Promise<Order> {
+    const order: Order = {
+      id: (this.orders.length + 1).toString(),
+      name: newOrder.name,
+      description: newOrder.description,
+      nodes: [],
+      edges: []
+    };
+
     this.orders.push(order);
     return Promise.resolve(order);
   }
