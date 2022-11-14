@@ -13,9 +13,9 @@ export class Order {
   @Field({ description: 'order description' })
   description: string;
 
-  @Field({ description: 'nodes associated with the order' })
+  @Field(() => [Node], { description: 'nodes associated with the order' })
   nodes: Node[];
 
-  @Field({ description: 'edges associated with the order' })
+  @Field(() => [Edge], { description: 'edges associated with the order' })
   edges: Edge[];
 }

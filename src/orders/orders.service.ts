@@ -55,4 +55,34 @@ export class OrdersService {
     return Promise.resolve(order);
   }
 
+  /**
+   * Add a node to an order
+   */
+  addNode(orderId: string, node: Node): Promise<Node> {
+    const order = this.orders.find(order => order.id === orderId);
+
+    if (!order) {
+      throw new Error(`Order with id ${orderId} not found`);
+    }
+
+    order.nodes.push(node);
+    return Promise.resolve(node);
+  }
+
+  /**
+   * Add an edge to an order
+   * @param orderId
+   * @param edge
+   */
+  addEdge(orderId: string, edge: Edge): Promise<Edge> {
+    const order = this.orders.find(order => order.id === orderId);
+
+    if (!order) {
+      throw new Error(`Order with id ${orderId} not found`);
+    }
+
+    order.edges.push(edge);
+    return Promise.resolve(edge);
+  }
+
 }
