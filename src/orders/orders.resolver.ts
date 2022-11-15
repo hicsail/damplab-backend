@@ -1,9 +1,7 @@
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { OrdersService } from './orders.service';
 import { Order } from './models/order.model';
-import { Node } from './models/nodes/node.model';
 import { NewOrderInput } from './dto/new-order.input';
-import { AddNodeInput } from './dto/add-node.input';
 
 @Resolver(() => Order)
 export class OrdersResolver {
@@ -19,8 +17,10 @@ export class OrdersResolver {
     return this.ordersService.create(newOrder);
   }
 
+  /*
   @Mutation(() => Node)
   async addNode(@Args('addNode') addNode: AddNodeInput): Promise<Node> {
     return this.ordersService.addNode(addNode);
   }
+  */
 }
