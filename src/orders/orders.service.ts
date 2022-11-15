@@ -1,11 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { Order } from './models/order.model';
-import { Node, NodeType } from './models/nodes/node.model';
+import { Node, NodeType, Pipette, Mixer } from './models/node.model';
 import { Edge } from './models/edge.model';
 import { NewOrderInput } from './dto/new-order.input';
-import { AddNodeInput } from './dto/add-node.input';
-import { Mixer } from './models/nodes/mixer.model';
-import { Pipette } from './models/nodes/pipette.model';
 
 /**
  * Placeholder service for testing GraphQL integration. Stores an array of
@@ -19,17 +16,17 @@ export class OrdersService {
         id: '1',
         nodeType: NodeType.PIPETTE,
         volume: 10
-      } as Pipette,
+      },
       {
         id: '2',
         nodeType: NodeType.PIPETTE,
         volume: 20
-      } as Pipette,
+      },
       {
         id: '3',
         nodeType: NodeType.MIXER,
         speed: 100
-      } as Mixer,
+      },
   ];
 
   private orders: Order[] = [
@@ -85,6 +82,7 @@ export class OrdersService {
   /**
    * Add a node to an order
    */
+  /*
   addNode(addNode: AddNodeInput): Promise<Node> {
     const order = this.orders.find((order) => order.id === addNode.orderId);
 
@@ -92,9 +90,15 @@ export class OrdersService {
       throw new Error(`Order with id ${addNode.orderId} not found`);
     }
 
-    // order.nodes.push({ id: addNode.nodeId, nodeType: addNode.nodeType });
-    return Promise.resolve({ id: addNode.nodeId, nodeType: addNode.nodeType });
+    // TODO: Generate an ID for the node
+    const node = {
+      ...addNode.node
+    };
+
+    order.nodes.push(node);
+    return Promise.resolve(node);
   }
+  */
 
   /**
    * Add an edge to an order

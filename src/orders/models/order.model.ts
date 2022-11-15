@@ -1,6 +1,6 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
-import { NodeUnion } from './nodes/node-factory';
 import { Edge } from './edge.model';
+import { Node } from './node.model';
 
 
 @ObjectType({ description: 'order' })
@@ -14,8 +14,8 @@ export class Order {
   @Field({ description: 'order description' })
   description: string;
 
-  @Field(() => [NodeUnion], { description: 'nodes associated with the order' })
-  nodes: typeof NodeUnion[];
+  @Field(() => [Node], { description: 'nodes associated with the order' })
+  nodes: Node[];
 
   @Field(() => [Edge], { description: 'edges associated with the order' })
   edges: Edge[];

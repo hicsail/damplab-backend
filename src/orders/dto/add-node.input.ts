@@ -1,14 +1,18 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { NodeType } from '../models/nodes/node.model';
+import { Node } from '../models/node.model';
+
+@InputType()
+class NewNodeInput extends Node {
+  @Field()
+  id: string;
+
+}
 
 @InputType()
 export class AddNodeInput {
   @Field()
   orderId: string;
 
-  @Field()
-  nodeId: string;
-
-  @Field(() => NodeType)
-  nodeType: NodeType;
+  @Field(() => NewNodeInput)
+  node: NewNodeInput;
 }

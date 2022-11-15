@@ -8,6 +8,7 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
 import { OrdersModule } from './orders/orders.module';
+import { Mixer, Pipette } from './orders/models/node.model';
 
 @Module({
   imports: [
@@ -18,7 +19,10 @@ import { OrdersModule } from './orders/orders.module';
     OrdersModule,
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: join(process.cwd(), 'dist/schema.gql')
+      autoSchemaFile: join(process.cwd(), 'dist/schema.gql'),
+      buildSchemaOptions: {
+        orphanedTypes: [Mixer, Pipette]
+      }
     })
   ],
   controllers: [AppController],
