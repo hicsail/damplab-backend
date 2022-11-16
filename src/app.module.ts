@@ -8,7 +8,7 @@ import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
 import { OrdersModule } from './orders/orders.module';
-import { Mixer, Pipette } from './orders/models/node.model';
+import { MixerNode, PipetteNode } from './orders/models/node.model';
 
 @Module({
   imports: [
@@ -21,7 +21,7 @@ import { Mixer, Pipette } from './orders/models/node.model';
       driver: ApolloDriver,
       autoSchemaFile: join(process.cwd(), 'dist/schema.gql'),
       buildSchemaOptions: {
-        orphanedTypes: [Mixer, Pipette]
+        orphanedTypes: [MixerNode, PipetteNode]
       }
     })
   ],

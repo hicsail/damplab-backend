@@ -1,17 +1,17 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
-import { Node } from './node.model';
+import { DampNode } from './node.model';
 
 @ObjectType({ description: 'edge' })
 export class Edge {
   @Field(() => ID, { description: 'edge id' })
   id: string;
 
-  @Field(() => Node, { description: 'where the edge is originating from' })
-  origin: Node;
+  @Field(() => DampNode, { description: 'where the edge is originating from' })
+  origin: DampNode;
 
-  @Field(() => Node, { description: 'where the edge is going to' })
-  destination: Node;
+  @Field(() => DampNode, { description: 'where the edge is going to' })
+  destination: DampNode;
 
   @Field(() => JSON, { description: 'properties associated with the edge' })
   properties: any;

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Order } from './models/order.model';
-import { Node, NodeType } from './models/node.model';
+import { DampNode, DampNodeType } from './models/node.model';
 import { Edge } from './models/edge.model';
 import { NewOrderInput } from './dto/new-order.input';
 import { AddNodeInput } from './dto/add-node.input';
@@ -15,17 +15,17 @@ export class OrdersService {
   private testNodes = [
       {
         id: '1',
-        nodeType: NodeType.PIPETTE,
+        nodeType: DampNodeType.PIPETTE,
         volume: 10
       },
       {
         id: '2',
-        nodeType: NodeType.PIPETTE,
+        nodeType: DampNodeType.PIPETTE,
         volume: 20
       },
       {
         id: '3',
-        nodeType: NodeType.MIXER,
+        nodeType: DampNodeType.MIXER,
         speed: 100
       },
   ];
@@ -83,7 +83,7 @@ export class OrdersService {
   /**
    * Add a node to an order
    */
-  addNode(addNode: AddNodeInput): Promise<Node> {
+  addNode(addNode: AddNodeInput): Promise<DampNode> {
     const order = this.orders.find((order) => order.id === addNode.orderId);
 
     if (!order) {

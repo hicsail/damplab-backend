@@ -3,24 +3,24 @@ import { Field, ID, InterfaceType, ObjectType, registerEnumType } from '@nestjs/
 /**
  * The different nodes. Each node represents a supported service
  */
-export enum NodeType {
+export enum DampNodeType {
   PIPETTE,
   MIXER
 }
-registerEnumType(NodeType, { name: 'NodeType' });
+registerEnumType(DampNodeType, { name: 'NodeType' });
 
 /**
  * The stored node.
  */
 @InterfaceType({
   description: 'node',
-  resolveType(value: Node) {
+  resolveType(value: DampNode) {
     switch (value.nodeType) {
-      case NodeType.PIPETTE: {
-        return Pipette;
+      case DampNodeType.PIPETTE: {
+        return PipetteNode;
       }
-      case NodeType.MIXER: {
-        return Mixer;
+      case DampNodeType.MIXER: {
+        return MixerNode;
       }
       default: {
         console.error('Unknown node type');
@@ -30,22 +30,22 @@ registerEnumType(NodeType, { name: 'NodeType' });
     }
   }
 })
-export class Node {
+export class DampNode {
   @Field(() => ID, { description: 'node id' })
   id: string;
 
-  @Field(() => NodeType)
-  nodeType: NodeType;
+  @Field(() => DampNodeType)
+  nodeType: DampNodeType;
 }
 
-@ObjectType({ description: 'pipette', implements: () => [Node] })
-export class Pipette extends Node {
+@ObjectType({ description: 'pipette', implements: () => [DampNode] })
+export class PipetteNode extends DampNode {
   @Field({ description: 'pipette volume' })
   volume: number;
 }
 
-@ObjectType({ description: 'mixer', implements: () => [Node] })
-export class Mixer extends Node {
+@ObjectType({ description: 'mixer', implements: () => [DampNode] })
+export class MixerNode extends DampNode {
   @Field({ description: 'mixer speed' })
   speed: number;
 }

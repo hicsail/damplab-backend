@@ -1,14 +1,36 @@
 import { Field, InputType, OmitType } from '@nestjs/graphql';
-import { Node } from '../models/node.model';
+import { DampNode, PipetteNode, MixerNode } from '../models/node.model';
+
+
+/**
+ * Describes the shared properties needed when adding a new node
+ */
+@InputType()
+export abstract class AddNodeInput {
+  orderId: string;
+  node: Omit<DampNode, 'id'>;
+}
 
 @InputType()
-class NewNodeInput extends OmitType(Node, ['id'] as const, InputType) {}
+export class PipetteNodeInput extends OmitType(PipetteNode, ['id'] as const, InputType) {}
 
 @InputType()
-export class AddNodeInput {
+export class AddPipetteNodeInput implements AddNodeInput {
   @Field()
   orderId: string;
 
-  @Field(() => NewNodeInput)
-  node: NewNodeInput;
+  @Field(() => PipetteNodeInput)
+  node: Omit<PipetteNode, 'id'>;
+}
+
+@InputType()
+export class MixerNodeInput extends OmitType(MixerNode, ['id'] as const, InputType) {}
+
+@InputType()
+export class AddMixerNodeInput implements AddNodeInput {
+  @Field()
+  orderId: string;
+
+  @Field(() => MixerNodeInput)
+  node: Omit<MixerNode, 'id'>;
 }
