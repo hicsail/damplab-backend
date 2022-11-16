@@ -19,10 +19,8 @@ export class OrdersResolver {
     return this.ordersService.create(newOrder);
   }
 
-  /*
   @Mutation(() => Node)
   async addNode(@Args('addNode') addNode: AddNodeInput): Promise<Node> {
     return this.ordersService.addNode(addNode) as Promise<Node>;
   }
-  */
 }

@@ -1,12 +1,8 @@
-import { Field, InputType } from '@nestjs/graphql';
+import { Field, InputType, OmitType } from '@nestjs/graphql';
 import { Node } from '../models/node.model';
 
 @InputType()
-class NewNodeInput extends Node {
-  @Field()
-  id: string;
-
-}
+class NewNodeInput extends OmitType(Node, ['id'] as const, InputType) {}
 
 @InputType()
 export class AddNodeInput {

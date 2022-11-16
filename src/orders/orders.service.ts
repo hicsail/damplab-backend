@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { Order } from './models/order.model';
-import { Node, NodeType, Pipette, Mixer } from './models/node.model';
+import { Node, NodeType } from './models/node.model';
 import { Edge } from './models/edge.model';
 import { NewOrderInput } from './dto/new-order.input';
+import { AddNodeInput } from './dto/add-node.input';
 
 /**
  * Placeholder service for testing GraphQL integration. Stores an array of
@@ -82,7 +83,6 @@ export class OrdersService {
   /**
    * Add a node to an order
    */
-  /*
   addNode(addNode: AddNodeInput): Promise<Node> {
     const order = this.orders.find((order) => order.id === addNode.orderId);
 
@@ -92,13 +92,13 @@ export class OrdersService {
 
     // TODO: Generate an ID for the node
     const node = {
+      id: (order.nodes.length + 1).toString(),
       ...addNode.node
     };
 
     order.nodes.push(node);
     return Promise.resolve(node);
   }
-  */
 
   /**
    * Add an edge to an order

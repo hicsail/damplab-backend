@@ -16,14 +16,17 @@ registerEnumType(NodeType, { name: 'NodeType' });
   description: 'node',
   resolveType(value: Node) {
     switch (value.nodeType) {
-      case NodeType.PIPETTE:
+      case NodeType.PIPETTE: {
         return Pipette;
-      case NodeType.MIXER:
+      }
+      case NodeType.MIXER: {
         return Mixer;
-      default:
+      }
+      default: {
         console.error('Unknown node type');
         console.error(value);
         throw new Error('Unknown node type');
+      }
     }
   }
 })
