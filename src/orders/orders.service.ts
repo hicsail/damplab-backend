@@ -13,21 +13,21 @@ import { AddNodeInput } from './dto/add-node.input';
 export class OrdersService {
   // TODO: Remove once database is added in
   private testNodes = [
-      {
-        id: '1',
-        nodeType: DampNodeType.PIPETTE,
-        volume: 10
-      },
-      {
-        id: '2',
-        nodeType: DampNodeType.PIPETTE,
-        volume: 20
-      },
-      {
-        id: '3',
-        nodeType: DampNodeType.MIXER,
-        speed: 100
-      },
+    {
+      id: '1',
+      nodeType: DampNodeType.PIPETTE,
+      volume: 10
+    },
+    {
+      id: '2',
+      nodeType: DampNodeType.PIPETTE,
+      volume: 20
+    },
+    {
+      id: '3',
+      nodeType: DampNodeType.MIXER,
+      speed: 100
+    }
   ];
 
   private orders: Order[] = [
