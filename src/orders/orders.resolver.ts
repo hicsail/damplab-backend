@@ -3,7 +3,7 @@ import { OrdersService } from './orders.service';
 import { Order } from './models/order.model';
 import { NewOrderInput } from './dto/new-order.input';
 import { AddPipetteNodeInput, AddMixerNodeInput } from './dto/add-node.input';
-import { DampNode } from './models/node.model';
+import { DampNode, DampNodeType } from './models/node.model';
 
 @Resolver(() => Order)
 export class OrdersResolver {
@@ -20,12 +20,12 @@ export class OrdersResolver {
   }
 
   @Mutation(() => DampNode)
-  async addPipetteNode(@Args('node') node: AddPipetteNodeInput): Promise<DampNode> {
-    return this.ordersService.addNode(node);
+  async addPipetteNode(@Args('newNode') newNode: AddPipetteNodeInput): Promise<DampNode> {
+    return this.ordersService.addNode(newNode, DampNodeType.PIPETTE);
   }
 
   @Mutation(() => DampNode)
-  async addMixerNode(@Args('node') node: AddMixerNodeInput): Promise<DampNode> {
-    return this.ordersService.addNode(node);
+  async addMixerNode(@Args('newNode') newNode: AddMixerNodeInput): Promise<DampNode> {
+    return this.ordersService.addNode(newNode, DampNodeType.MIXER);
   }
 }

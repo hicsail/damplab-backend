@@ -83,7 +83,7 @@ export class OrdersService {
   /**
    * Add a node to an order
    */
-  addNode(addNode: AddNodeInput): Promise<DampNode> {
+  addNode(addNode: AddNodeInput, nodeType: DampNodeType): Promise<DampNode> {
     const order = this.orders.find((order) => order.id === addNode.orderId);
 
     if (!order) {
@@ -93,6 +93,7 @@ export class OrdersService {
     // TODO: Generate an ID for the node
     const node = {
       id: (order.nodes.length + 1).toString(),
+      nodeType: nodeType,
       ...addNode.node
     };
 
