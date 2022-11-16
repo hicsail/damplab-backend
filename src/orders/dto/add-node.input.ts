@@ -20,7 +20,7 @@ export class AddPipetteNodeInput implements AddNodeInput {
   orderId: string;
 
   @Field(() => PipetteNodeInput)
-  node: Omit<PipetteNode, 'id'>;
+  node: PipetteNodeInput;
 }
 
 @InputType()
@@ -32,5 +32,5 @@ export class AddMixerNodeInput implements AddNodeInput {
   orderId: string;
 
   @Field(() => MixerNodeInput)
-  node: Omit<MixerNode, 'id'>;
+  node: MixerNodeInput;
 }

@@ -10,7 +10,8 @@ export enum DampNodeType {
 registerEnumType(DampNodeType, { name: 'NodeType' });
 
 /**
- * The stored node.
+ * Shared features that all nodes should have. Also provides a means to
+ * resolve the type of node.
  */
 @InterfaceType({
   description: 'node',
