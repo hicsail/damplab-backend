@@ -1,0 +1,5 @@
+version: '2'
+services:
+  damplab:
+    image: hicsail/damplab-backend:unstable
+    ports: ["3000:3000"]
