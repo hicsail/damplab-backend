@@ -9,7 +9,7 @@ import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
 import { OrdersModule } from './orders/orders.module';
 import { MixerNode, PipetteNode } from './orders/models/node.model';
-import { ServicesModule } from './services/services.modules';
+import { DampLabServicesModule } from './services/damplab-services.module';
 
 @Module({
   imports: [
@@ -18,7 +18,7 @@ import { ServicesModule } from './services/services.modules';
       load: [config]
     }),
     OrdersModule,
-    ServicesModule,
+    DampLabServicesModule,
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
       autoSchemaFile: join(process.cwd(), 'dist/schema.gql'),

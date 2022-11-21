@@ -2,7 +2,7 @@ import { Field, ID, ObjectType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 
 @ObjectType({ description: 'Services supported by the DampLab' })
-export class Service {
+export class DampLabService {
   @Field(() => ID, { description: 'unique database generated ID' })
   id: string;
 
