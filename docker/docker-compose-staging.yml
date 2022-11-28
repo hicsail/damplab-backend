@@ -1,5 +1,15 @@
 version: '2'
 services:
+  mongo:
+    image: mongo
+    ports: ["27017:27017"]
+    volumes:
+      - ./db:/data/db
   damplab:
     image: hicsail/damplab-backend:unstable
+    restart: always
+    depends_on:
+      - mongo
     ports: ["3000:3000"]
+    env_file:
+      - stack.env
