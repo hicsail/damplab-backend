@@ -1,7 +1,8 @@
 import { Command, Flags } from '@oclif/core';
 import { MongoClient } from 'mongodb';
 
-export default class Reset extends Command {
+export default class Reset extends Command
+{
   static description = 'Clear out all data in the database';
 
   static flags = {
