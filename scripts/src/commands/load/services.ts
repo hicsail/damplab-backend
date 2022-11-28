@@ -20,13 +20,22 @@ export default class LoadServices extends Command {
       description: 'database to load into',
       default: 'mongodb://localhost:27017/damplab',
       required: false,
-    })
+    }),
+    collection: Flags.string({
+      char: 'c',
+      description: 'collection to load into',
+      default: 'damplabservices',
+      required: false,
+    }),
   }
 
   client: MongoClient | null = null;
+  flags: any;
 
   async run() {
     const { flags } = await this.parse(LoadServices);
+    this.flags = flags;
+
 
     // Connect to the database
     this.client = await MongoClient.connect(flags.db);
@@ -54,12 +63,13 @@ export default class LoadServices extends Command {
     // For each of the services, save the info not including
     // the allowed connections
     for (const service of services) {
-      // Get a copy of the data without the allowed connections
+      // Get a copy of the data without the allowed connections and id
       const copy = { ...service };
       delete copy.allowedConnections;
+      delete copy.id;
 
       // Insert the service into the database
-      const result = await this.client!.db().collection('services').insertOne(copy);
+      const result = await this.client!.db().collection(this.flags.collection).insertOne(copy);
 
       // Update the map
       serviceMap.set(service.id, result.insertedId);
@@ -67,9 +77,6 @@ export default class LoadServices extends Command {
 
     // For each of the services, update the allowed connections
     for (const service of services) {
-      // Get the ID of the service
-      const id = serviceMap.get(service.id);
-
       // Get the IDs of the allowed connections
       const allowedConnections = service.allowedConnections.map((id: string) => {
         if (!serviceMap.has(id)) {
@@ -79,8 +86,8 @@ export default class LoadServices extends Command {
       });
 
       // Update the service
-      await this.client!.db().collection('services').updateOne({
-        _id: id
+      const result = await this.client!.db().collection(this.flags.collection).updateOne({
+        name: service.name
       }, {
         $set: { allowedConnections: allowedConnections }
       });
