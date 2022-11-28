@@ -5,11 +5,7 @@ import { DampLabServices } from './damplab-services.services';
 import { DampLabService, DampLabServiceSchema } from './models/damplab-service.model';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([
-      { name: DampLabService.name, schema: DampLabServiceSchema },
-    ]),
-  ],
+  imports: [MongooseModule.forFeature([{ name: DampLabService.name, schema: DampLabServiceSchema }])],
   providers: [DampLabServicesResolver, DampLabServices]
 })
 export class DampLabServicesModule {}

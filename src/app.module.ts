@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, DynamicModule } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthModule } from './health/health.module';
@@ -27,18 +27,17 @@ import { MongooseModule } from '@nestjs/mongoose';
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        uri: configService.get('database.uri'),
+        uri: configService.get('database.uri')
       }),
-      inject: [ConfigService],
+      inject: [ConfigService]
     }),
     OrdersModule,
-    DampLabServicesModule,
+    DampLabServicesModule
   ],
   controllers: [AppController],
   providers: [AppService]
 })
 export class AppModule {}
-
 
 /**
  * Get the config module based on the specific environment file to load from.
@@ -53,13 +52,13 @@ export class AppModule {}
  * In such cases, by not providing an `ENV_FILE` environment variable, the
  * config will be loaded from the environment variables.
  */
-function getConfigModule() {
+function getConfigModule(): DynamicModule {
   // If the `ENV_FILE` is provided, load from that file
   if (process.env.ENV_FILE) {
     console.info('Loading config from file: .env.' + process.env.ENV_FILE);
     return ConfigModule.forRoot({
       envFilePath: `.env.${process.env.ENV_FILE}`,
-      load: [config],
+      load: [config]
     });
   }
 
@@ -67,6 +66,6 @@ function getConfigModule() {
   console.info('Loading config from environment variables');
   return ConfigModule.forRoot({
     ignoreEnvFile: true,
-    load: [config],
+    load: [config]
   });
 }
