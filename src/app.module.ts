@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthModule } from './health/health.module';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import config from './config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
@@ -10,6 +10,7 @@ import { join } from 'path';
 import { OrdersModule } from './orders/orders.module';
 import { MixerNode, PipetteNode } from './orders/models/node.model';
 import { DampLabServicesModule } from './services/damplab-services.module';
+import { MongooseModule } from '@nestjs/mongoose';
 
 @Module({
   imports: [
@@ -23,6 +24,14 @@ import { DampLabServicesModule } from './services/damplab-services.module';
       buildSchemaOptions: {
         orphanedTypes: [MixerNode, PipetteNode]
       }
+    }),
+    // Load the MongoDB connection based on the config service
+    MongooseModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        uri: configService.get('database.uri'),
+      }),
+      inject: [ConfigService],
     })
   ],
   controllers: [AppController],
@@ -47,6 +56,7 @@ export class AppModule {}
 function getConfigModule() {
   // If the `ENV_FILE` is provided, load from that file
   if (process.env.ENV_FILE) {
+    console.info('Loading config from file: .env.' + process.env.ENV_FILE);
     return ConfigModule.forRoot({
       envFilePath: `.env.${process.env.ENV_FILE}`,
       load: [config],
@@ -54,6 +64,7 @@ function getConfigModule() {
   }
 
   // Otherwise don't load from a file, just use the environment variables
+  console.info('Loading config from environment variables');
   return ConfigModule.forRoot({
     ignoreEnvFile: true,
     load: [config],
