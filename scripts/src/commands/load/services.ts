@@ -43,6 +43,9 @@ export default class LoadServices extends Command {
    * Converts the services from the JSON format into a format that can be
    * inserted into the database. This handles the logic of connecting
    * the "allowedConnections" up
+   *
+   * TODO: If an error takes place, remove the services that were already
+   *       inserted
    */
   async insertIntoDatabase(services: any[]) {
     /** Maps the ID as defined in the JSON file to the ID in the database */
