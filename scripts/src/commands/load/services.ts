@@ -86,7 +86,7 @@ export default class LoadServices extends Command {
       });
 
       // Update the service
-      const result = await this.client!.db().collection(this.flags.collection).updateOne({
+      await this.client!.db().collection(this.flags.collection).updateOne({
         name: service.name
       }, {
         $set: { allowedConnections: allowedConnections }

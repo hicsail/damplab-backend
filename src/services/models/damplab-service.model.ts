@@ -34,9 +34,9 @@ export class DampLabService {
   @Field(() => JSON, { description: 'Parameters defined earlier in the graph' })
   flowParams?: any;
 
-  @Prop()
-  @Field(() => [String], { description: 'List of services this service can connect to' })
-  allowedConnections: string[];
+  @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: DampLabService.name }] })
+  @Field(() => [DampLabService!]!, { description: 'List of services this service can connect to' })
+  allowedConnections: DampLabService[];
 
   @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
   @Field(() => JSON, { description: 'The by-product of the service' })

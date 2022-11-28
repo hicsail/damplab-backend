@@ -7,7 +7,6 @@ import { Model } from 'mongoose';
 export class DampLabServices {
   constructor(@InjectModel(DampLabService.name) private readonly dampLabServiceModel: Model<DampLabServiceDocument>) {}
 
-
   findAll(): Promise<DampLabService[]> {
     return this.dampLabServiceModel.find().exec();
   }
