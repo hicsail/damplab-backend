@@ -11,6 +11,10 @@ export class DampLabServicesResolver {
     return this.dampLabServices.findAll();
   }
 
+  /**
+   * Resolver which the `allowedConnections` field of the `DampLabService`
+   * type. Allows for the recursive search on possible connections.
+   */
   @ResolveField()
   allowedConnections(@Parent() service: DampLabService): Promise<DampLabService[]> {
     return this.dampLabServices.findByIds(service.allowedConnections);

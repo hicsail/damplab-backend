@@ -12,6 +12,9 @@ export class DampLabServices {
     return this.dampLabServiceModel.find().exec();
   }
 
+  /**
+   * Find a list of services by their IDs.
+   */
   async findByIds(ids: mongoose.Types.ObjectId[]): Promise<DampLabService[]> {
     return this.dampLabServiceModel.find({ _id: { $in: ids } }).exec();
   }
