@@ -19,23 +19,22 @@ export default class LoadServices extends Command {
       char: 'd',
       description: 'database to load into',
       default: 'mongodb://localhost:27017/damplab',
-      required: false,
+      required: false
     }),
     collection: Flags.string({
       char: 'c',
       description: 'collection to load into',
       default: 'damplabservices',
-      required: false,
-    }),
-  }
+      required: false
+    })
+  };
 
   client: MongoClient | null = null;
   flags: any;
 
-  async run() {
+  async run(): Promise<void> {
     const { flags } = await this.parse(LoadServices);
     this.flags = flags;
-
 
     // Connect to the database
     this.client = await MongoClient.connect(flags.db);
@@ -56,7 +55,7 @@ export default class LoadServices extends Command {
    * TODO: If an error takes place, remove the services that were already
    *       inserted
    */
-  async insertIntoDatabase(services: any[]) {
+  async insertIntoDatabase(services: any[]): Promise<void> {
     /** Maps the ID as defined in the JSON file to the ID in the database */
     const serviceMap = new Map<string, ObjectId>();
 
@@ -69,7 +68,7 @@ export default class LoadServices extends Command {
       delete copy.id;
 
       // Insert the service into the database
-      const result = await this.client!.db().collection(this.flags.collection).insertOne(copy);
+      const result = await this.client?.db().collection(this.flags.collection).insertOne(copy);
 
       // Update the map
       serviceMap.set(service.id, result.insertedId);
@@ -82,16 +81,21 @@ export default class LoadServices extends Command {
         if (!serviceMap.has(id)) {
           throw new Error(`Service "${service.id}" has an invalid allowed connection "${id}"`);
         }
-        return serviceMap.get(id)
+        return serviceMap.get(id);
       });
 
       // Update the service
-      await this.client!.db().collection(this.flags.collection).updateOne({
-        name: service.name
-      }, {
-        $set: { allowedConnections: allowedConnections }
-      });
+      await this.client
+        ?.db()
+        .collection(this.flags.collection)
+        .updateOne(
+          {
+            name: service.name
+          },
+          {
+            $set: { allowedConnections: allowedConnections }
+          }
+        );
     }
   }
-
 }

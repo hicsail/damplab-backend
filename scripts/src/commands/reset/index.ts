@@ -1,8 +1,7 @@
 import { Command, Flags } from '@oclif/core';
 import { MongoClient } from 'mongodb';
 
-export default class Reset extends Command
-{
+export default class Reset extends Command {
   static description = 'Clear out all data in the database';
 
   static flags = {
@@ -12,9 +11,9 @@ export default class Reset extends Command
       default: 'mongodb://localhost:27017/damplab',
       required: false
     })
-  }
+  };
 
-  async run() {
+  async run(): Promise<void> {
     const { flags } = await this.parse(Reset);
 
     // Connect to the database
