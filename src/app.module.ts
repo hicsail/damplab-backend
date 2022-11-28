@@ -16,8 +16,6 @@ import { MongooseModule } from '@nestjs/mongoose';
   imports: [
     HealthModule,
     getConfigModule(),
-    OrdersModule,
-    DampLabServicesModule,
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
       autoSchemaFile: join(process.cwd(), 'dist/schema.gql'),
@@ -32,7 +30,9 @@ import { MongooseModule } from '@nestjs/mongoose';
         uri: configService.get('database.uri'),
       }),
       inject: [ConfigService],
-    })
+    }),
+    OrdersModule,
+    DampLabServicesModule,
   ],
   controllers: [AppController],
   providers: [AppService]
