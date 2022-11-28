@@ -2,7 +2,7 @@ version: '2'
 services:
   mongo:
     image: mongo
-    ports: ["27017:27017"]
+    ports: ["27018:27017"]
     volumes:
       - ./db:/data/db
   damplab:
@@ -12,4 +12,4 @@ services:
       - mongo
     ports: ["3000:3000"]
     env_file:
-      - stack.env
+      - ../stack.env
