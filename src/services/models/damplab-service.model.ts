@@ -14,7 +14,6 @@ import mongoose from 'mongoose';
 @Schema()
 @ObjectType({ description: 'Services supported by the DampLab' })
 export class DampLabService {
-  @Prop()
   @Field(() => ID, { description: 'unique database generated ID' })
   _id: string;
 
@@ -35,8 +34,11 @@ export class DampLabService {
   flowParams?: any;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: DampLabService.name }] })
-  @Field(() => [DampLabService!]!, { description: 'List of services this service can connect to' })
-  allowedConnections: DampLabService[];
+  @Field(
+    () => [DampLabService!]!,
+    { description: 'List of services this service can connect to' }
+  )
+  allowedConnections: mongoose.Types.ObjectId[];
 
   @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
   @Field(() => JSON, { description: 'The by-product of the service' })

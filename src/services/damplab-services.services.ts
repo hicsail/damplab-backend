@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { DampLabService, DampLabServiceDocument } from './models/damplab-service.model';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import mongoose from 'mongoose';
 
 @Injectable()
 export class DampLabServices {
@@ -9,5 +10,9 @@ export class DampLabServices {
 
   findAll(): Promise<DampLabService[]> {
     return this.dampLabServiceModel.find().exec();
+  }
+
+  async findByIds(ids: mongoose.Types.ObjectId[]): Promise<DampLabService[]> {
+    return this.dampLabServiceModel.find({ _id: { $in: ids} }).exec();
   }
 }
