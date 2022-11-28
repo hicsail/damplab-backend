@@ -69,6 +69,9 @@ export default class LoadServices extends Command {
 
       // Get the IDs of the allowed connections
       const allowedConnections = service.allowedConnections.map((id: string) => {
+        if (!serviceMap.has(id)) {
+          throw new Error(`Service "${service.id}" has an invalid allowed connection "${id}"`);
+        }
         return serviceMap.get(id)
       });
 

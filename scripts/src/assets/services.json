@@ -19,7 +19,6 @@
       ],
       "allowedConnections": [
         "gene",
-        "storage",
         "design-primers"
       ]
     },
@@ -182,7 +181,6 @@
         }
       ],
       "allowedConnections": [
-        "assembly",
         "dna-gel"
       ]
     },
@@ -195,7 +193,6 @@
       ],
       "parameters": [],
       "allowedConnections": [
-        "assembly"
       ]
     },
     {
@@ -247,8 +244,7 @@
       ],
       "parameters": [],
       "allowedConnections": [
-        "overnight-culture",
-        "plate-storage"
+        "overnight-culture"
       ],
       "result": {
         "id": "transformation-product",
@@ -271,7 +267,7 @@
         }
       ],
       "allowedConnections": [
-        "miniprep"
+        "miniprep-gs"
       ],
       "result": {
         "id": "overnight-culture-product",
@@ -293,7 +289,6 @@
         }
       ],
       "allowedConnections": [
-        "storage",
         "seq"
       ],
       "result": {
