@@ -2,7 +2,7 @@ import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { DampLabService } from '../../services/models/damplab-service.model';
-import { Field, ID } from '@nestjs/graphql';
+import { Field, ID, ObjectType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 
 /**
@@ -10,6 +10,7 @@ import JSON from 'graphql-type-json';
  * cooresponding parameters populated.
  */
 @Schema()
+@ObjectType({ description: 'Represents a single node in a workflow. A node is a service with the cooresponding parameters populated.' })
 export class WorkflowNode {
   @Field(() => ID, { description: 'unique database generated ID' })
   _id: string;

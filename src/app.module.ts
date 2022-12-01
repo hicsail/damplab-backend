@@ -9,6 +9,7 @@ import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
 import { DampLabServicesModule } from './services/damplab-services.module';
 import { MongooseModule } from '@nestjs/mongoose';
+import { WorkflowModule } from './workflow/workflow.module';
 
 @Module({
   imports: [
@@ -26,7 +27,8 @@ import { MongooseModule } from '@nestjs/mongoose';
       }),
       inject: [ConfigService]
     }),
-    DampLabServicesModule
+    DampLabServicesModule,
+    WorkflowModule
   ],
   controllers: [AppController],
   providers: [AppService]
