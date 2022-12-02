@@ -14,8 +14,12 @@ import JSON from 'graphql-type-json';
 @Schema()
 @ObjectType({ description: 'Represents a single edge in a workflow' })
 export class WorkflowEdge {
-  @Field(() => ID, { description: 'unique database generated ID' })
+  /** Database generated ID */
   _id: string;
+
+  @Field(() => ID, { description: 'ID used in identify the edge in the workflow' })
+  @Prop({ required: true })
+  id: string;
 
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: WorkflowNode.name })
   @Field(() => WorkflowNode, { description: 'The source node of the edge' })

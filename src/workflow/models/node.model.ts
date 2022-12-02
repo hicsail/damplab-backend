@@ -12,8 +12,12 @@ import JSON from 'graphql-type-json';
 @Schema()
 @ObjectType({ description: 'Represents a single node in a workflow. A node is a service with the cooresponding parameters populated.' })
 export class WorkflowNode {
-  @Field(() => ID, { description: 'unique database generated ID' })
+  /** Database generated ID */
   _id: string;
+
+  @Field(() => ID, { description: 'ID used in identify the node in the workflow' })
+  @Prop({ required: true })
+  id: string;
 
   @Prop()
   @Field({ description: 'Human readable name of the service' })
