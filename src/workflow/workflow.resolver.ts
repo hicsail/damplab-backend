@@ -9,12 +9,10 @@ import { WorkflowEdgeService } from './services/edge.service';
 
 @Resolver(() => Workflow)
 export class WorkflowResolver {
-  constructor(private readonly workflowService: WorkflowService,
-              private readonly nodeService: WorkflowNodeService,
-              private readonly edgeService: WorkflowEdgeService) {}
+  constructor(private readonly workflowService: WorkflowService, private readonly nodeService: WorkflowNodeService, private readonly edgeService: WorkflowEdgeService) {}
 
   @Mutation(() => Workflow)
-  async createWorkflow(@Args('createWorkflowInput') createWorkflowInput: AddWorkflowInput) {
+  async createWorkflow(@Args('createWorkflowInput') createWorkflowInput: AddWorkflowInput): Promise<Workflow> {
     return this.workflowService.create(createWorkflowInput);
   }
 
@@ -28,11 +26,11 @@ export class WorkflowResolver {
 
   @ResolveField()
   async nodes(@Parent() workflow: Workflow): Promise<WorkflowNode[]> {
-    return this.nodeService.getByIDs(workflow.nodes.map(node => node._id.toString()));
+    return this.nodeService.getByIDs(workflow.nodes.map((node) => node._id.toString()));
   }
 
   @ResolveField()
   async edges(@Parent() workflow: Workflow): Promise<WorkflowEdge[]> {
-    return this.edgeService.getByIDs(workflow.edges.map(edge => edge._id.toString()));
+    return this.edgeService.getByIDs(workflow.edges.map((edge) => edge._id.toString()));
   }
 }

@@ -3,7 +3,7 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { WorkflowNode } from './node.model';
 import { WorkflowEdge } from './edge.model';
-import { Field, ID, ObjectType } from '@nestjs/graphql';
+import { Field, ObjectType } from '@nestjs/graphql';
 
 /**
  * Represents a series of services that are connected together to form a
@@ -12,7 +12,7 @@ import { Field, ID, ObjectType } from '@nestjs/graphql';
 @Schema()
 @ObjectType({ description: 'Represents a series of services that are connected together to form a workflow.' })
 export class Workflow {
-  @Field(() => ID, { description: 'unique database generated ID' })
+  /** Database generated ID */
   _id: string;
 
   @Prop()

@@ -15,10 +15,10 @@ import { WorkflowEdgeResolver } from './resolvers/edge.resolver';
     MongooseModule.forFeature([
       { name: Workflow.name, schema: WorkflowSchema },
       { name: WorkflowNode.name, schema: WorkflowNodeSchema },
-      { name: WorkflowEdge.name, schema: WorkflowEdgeSchema },
+      { name: WorkflowEdge.name, schema: WorkflowEdgeSchema }
     ]),
-    DampLabServicesModule,
+    DampLabServicesModule
   ],
-  providers: [WorkflowResolver, WorkflowService, WorkflowNodeService, WorkflowEdgeService, WorkflowEdgeResolver],
+  providers: [WorkflowResolver, WorkflowService, WorkflowNodeService, WorkflowEdgeService, WorkflowEdgeResolver]
 })
 export class WorkflowModule {}

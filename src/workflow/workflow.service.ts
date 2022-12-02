@@ -8,9 +8,11 @@ import { WorkflowEdgeService } from './services/edge.service';
 
 @Injectable()
 export class WorkflowService {
-  constructor(@InjectModel(Workflow.name) private readonly workflowModel: Model<WorkflowDocument>,
-              private readonly nodeService: WorkflowNodeService,
-              private readonly edgeService: WorkflowEdgeService) {}
+  constructor(
+    @InjectModel(Workflow.name) private readonly workflowModel: Model<WorkflowDocument>,
+    private readonly nodeService: WorkflowNodeService,
+    private readonly edgeService: WorkflowEdgeService
+  ) {}
 
   async create(createWorkflowInput: AddWorkflowInput): Promise<Workflow> {
     // For now, if a workflow with the same name exists, we will just
@@ -22,7 +24,7 @@ export class WorkflowService {
     }
 
     // Make the nodes
-    const nodes = await Promise.all(createWorkflowInput.nodes.map(node => this.nodeService.create(node)));
+    const nodes = await Promise.all(createWorkflowInput.nodes.map((node) => this.nodeService.create(node)));
 
     // Get the mapping between workflow IDs and the database IDs
     const nodeIDMap = new Map<string, string>();
@@ -31,7 +33,7 @@ export class WorkflowService {
     }
 
     // Make the edges
-    const edges = await Promise.all(createWorkflowInput.edges.map(edge => this.edgeService.create(edge, nodeIDMap)));
+    const edges = await Promise.all(createWorkflowInput.edges.map((edge) => this.edgeService.create(edge, nodeIDMap)));
 
     const workflow = { ...createWorkflowInput, nodes, edges };
 
@@ -44,11 +46,11 @@ export class WorkflowService {
 
   private async remove(workflow: Workflow): Promise<void> {
     // Remove all nodes
-    const workflowNodes = workflow.nodes.map(node => node._id.toString());
+    const workflowNodes = workflow.nodes.map((node) => node._id.toString());
     await this.nodeService.removeByIDs(workflowNodes);
 
     // Remove all edges
-    const workflowEdges = workflow.edges.map(edge => edge._id.toString());
+    const workflowEdges = workflow.edges.map((edge) => edge._id.toString());
     await this.edgeService.removeByIDs(workflowEdges);
 
     // Remove the workflow

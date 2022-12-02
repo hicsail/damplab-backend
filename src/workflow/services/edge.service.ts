@@ -24,11 +24,17 @@ export class WorkflowEdgeService {
     const edge = { ...newEdge };
 
     // Make sure the source and destination are valid
-    if (!nodeIDMap.has(edge.source)) { throw new Error(`Invalid source node ID: ${edge.source}`); }
-    if (!nodeIDMap.has(edge.destination)) { throw new Error(`Invalid destination node ID: ${edge.destination}`); }
+    const sourceDBID = nodeIDMap.get(edge.source);
+    if (!sourceDBID) {
+      throw new Error(`Invalid source node ID: ${edge.source}`);
+    }
+    const destDBID = nodeIDMap.get(edge.destination);
+    if (!destDBID) {
+      throw new Error(`Invalid destination node ID: ${edge.destination}`);
+    }
 
-    edge.source = nodeIDMap.get(edge.source)!;
-    edge.destination = nodeIDMap.get(edge.destination)!;
+    edge.source = sourceDBID;
+    edge.destination = destDBID;
     return this.workflowEdgeModel.create(edge);
   }
 
