@@ -7,10 +7,9 @@ import config from './config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { join } from 'path';
-import { OrdersModule } from './orders/orders.module';
-import { MixerNode, PipetteNode } from './orders/models/node.model';
 import { DampLabServicesModule } from './services/damplab-services.module';
 import { MongooseModule } from '@nestjs/mongoose';
+import { WorkflowModule } from './workflow/workflow.module';
 
 @Module({
   imports: [
@@ -18,10 +17,7 @@ import { MongooseModule } from '@nestjs/mongoose';
     getConfigModule(),
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: join(process.cwd(), 'dist/schema.gql'),
-      buildSchemaOptions: {
-        orphanedTypes: [MixerNode, PipetteNode]
-      }
+      autoSchemaFile: join(process.cwd(), 'dist/schema.gql')
     }),
     // Load the MongoDB connection based on the config service
     MongooseModule.forRootAsync({
@@ -31,8 +27,8 @@ import { MongooseModule } from '@nestjs/mongoose';
       }),
       inject: [ConfigService]
     }),
-    OrdersModule,
-    DampLabServicesModule
+    DampLabServicesModule,
+    WorkflowModule
   ],
   controllers: [AppController],
   providers: [AppService]
