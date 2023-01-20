@@ -15,6 +15,7 @@ export class Category {
   label: string;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: DampLabService.name }] })
+  @Field(() => [DampLabService], { description: 'List of DampLab services in this category' })
   services: mongoose.Types.ObjectId[];
 }
 

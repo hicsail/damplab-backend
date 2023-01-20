@@ -6,6 +6,7 @@ import { DampLabService, DampLabServiceSchema } from './models/damplab-service.m
 
 @Module({
   imports: [MongooseModule.forFeature([{ name: DampLabService.name, schema: DampLabServiceSchema }])],
-  providers: [DampLabServicesResolver, DampLabServices]
+  providers: [DampLabServicesResolver, DampLabServices],
+  exports: [DampLabServices],
 })
 export class DampLabServicesModule {}
