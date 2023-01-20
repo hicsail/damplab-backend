@@ -32,7 +32,7 @@ import { BundlesModule } from './bundles/bundles.module';
     DampLabServicesModule,
     WorkflowModule,
     CategoriesModule,
-    BundlesModule,
+    BundlesModule
   ],
   controllers: [AppController],
   providers: [AppService]

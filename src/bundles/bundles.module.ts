@@ -6,10 +6,7 @@ import { BundlesResolver } from './bundles.resolver';
 import { BundlesService } from './bundles.service';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: Bundle.name, schema: BundleSchema }]),
-    DampLabServicesModule,
-  ],
-  providers: [BundlesService, BundlesResolver],
+  imports: [MongooseModule.forFeature([{ name: Bundle.name, schema: BundleSchema }]), DampLabServicesModule],
+  providers: [BundlesService, BundlesResolver]
 })
 export class BundlesModule {}
