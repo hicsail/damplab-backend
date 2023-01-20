@@ -10,6 +10,7 @@ import { join } from 'path';
 import { DampLabServicesModule } from './services/damplab-services.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WorkflowModule } from './workflow/workflow.module';
+import { CategoriesModule } from './categories/categories.module';
 
 @Module({
   imports: [
@@ -28,7 +29,8 @@ import { WorkflowModule } from './workflow/workflow.module';
       inject: [ConfigService]
     }),
     DampLabServicesModule,
-    WorkflowModule
+    WorkflowModule,
+    CategoriesModule
   ],
   controllers: [AppController],
   providers: [AppService]
