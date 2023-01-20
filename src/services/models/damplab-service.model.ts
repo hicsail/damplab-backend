@@ -14,7 +14,7 @@ import mongoose from 'mongoose';
 @Schema()
 @ObjectType({ description: 'Services supported by the DampLab' })
 export class DampLabService {
-  @Field(() => ID, { description: 'unique database generated ID' })
+  @Field(() => ID, { description: 'unique database generated ID', name: 'id' })
   _id: string;
 
   @Prop()
@@ -29,20 +29,16 @@ export class DampLabService {
   @Field(() => JSON, { description: 'Parameters that are part of the service' })
   parameters: any;
 
-  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
-  @Field(() => JSON, { description: 'Parameters defined earlier in the graph' })
-  flowParams?: any;
-
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: DampLabService.name }] })
   @Field(() => [DampLabService], { description: 'List of services this service can connect to' })
   allowedConnections: mongoose.Types.ObjectId[];
 
   @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
-  @Field(() => JSON, { description: 'The by-product of the service' })
+  @Field(() => JSON, { description: 'The by-product of the service', nullable: true })
   result?: any;
 
   @Prop({ required: false })
-  @Field(() => [String], { description: 'The expected fields in the result of the service' })
+  @Field(() => [String], { description: 'The expected fields in the result of the service', nullable: true })
   resultParams?: string[];
 }
 
