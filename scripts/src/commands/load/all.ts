@@ -136,8 +136,7 @@ export default class LoadDatabase extends Command {
   }
 
   async insertCategories(categories: any[], serviceMap: Map<string, ObjectId>): Promise<void> {
-
-    for(const category of categories) {
+    for (const category of categories) {
       category.services = this.convertIDs(category.services, serviceMap);
       await this.client?.db().collection(this.flags.categoryCollection).insertOne(category);
     }
@@ -151,12 +150,11 @@ export default class LoadDatabase extends Command {
   }
 
   private convertIDs(ids: string[], serviceMap: Map<string, ObjectId>): ObjectId[] {
-    return ids.map(id => {
+    return ids.map((id) => {
       if (!serviceMap.has(id)) {
         throw new Error(`${id} not found in service map`);
       }
       return serviceMap.get(id);
     });
   }
-
 }
