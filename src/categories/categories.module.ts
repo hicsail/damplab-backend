@@ -5,9 +5,8 @@ import { CategoryService } from './categories.service';
 import { CategoryResolver } from './categories.resolver';
 import { DampLabServicesModule } from '../services/damplab-services.module';
 
-
 @Module({
   imports: [MongooseModule.forFeature([{ name: Category.name, schema: CategorySchema }]), DampLabServicesModule],
-  providers: [CategoryService, CategoryResolver],
+  providers: [CategoryService, CategoryResolver]
 })
 export class CategoriesModule {}
