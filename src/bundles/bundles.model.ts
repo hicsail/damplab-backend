@@ -1,7 +1,7 @@
 import { ObjectType, Field, ID } from '@nestjs/graphql';
 import { Schema } from '@nestjs/mongoose';
 import { Prop, SchemaFactory } from '@nestjs/mongoose';
-import { DampLabService } from 'src/services/models/damplab-service.model';
+import { DampLabService } from '../services/models/damplab-service.model';
 import mongoose from 'mongoose';
 
 @Schema()
