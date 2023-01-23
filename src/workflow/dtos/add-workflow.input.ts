@@ -8,7 +8,7 @@ import { Workflow } from '../models/workflow.model';
  * and the nodes+edges are provided via the addNode and addEdge inputs.
  */
 @InputType()
-export class AddWorkflowInput extends OmitType(Workflow, ['_id', 'nodes', 'edges'] as const, InputType) {
+export class AddWorkflowInput extends OmitType(Workflow, ['_id', 'nodes', 'edges', 'state'] as const, InputType) {
   @Field(() => [AddNodeInput], { description: 'The nodes in the workflow' })
   nodes: AddNodeInput[];
 

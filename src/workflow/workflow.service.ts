@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Workflow, WorkflowDocument } from './models/workflow.model';
+import { Workflow, WorkflowDocument, WorkflowState } from './models/workflow.model';
 import { AddWorkflowInput } from './dtos/add-workflow.input';
 import { WorkflowNodeService } from './services/node.service';
 import { WorkflowEdgeService } from './services/edge.service';
@@ -35,7 +35,7 @@ export class WorkflowService {
     // Make the edges
     const edges = await Promise.all(createWorkflowInput.edges.map((edge) => this.edgeService.create(edge, nodeIDMap)));
 
-    const workflow = { ...createWorkflowInput, nodes, edges };
+    const workflow = { ...createWorkflowInput, nodes, edges, state: WorkflowState.SUBMITTED };
 
     return this.workflowModel.create(workflow);
   }

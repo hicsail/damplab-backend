@@ -3,7 +3,20 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { WorkflowNode } from './node.model';
 import { WorkflowEdge } from './edge.model';
-import { Field, ObjectType } from '@nestjs/graphql';
+import { Field, ObjectType, registerEnumType } from '@nestjs/graphql';
+
+/**
+ * The different states the workflow can be in
+ */
+export enum WorkflowState {
+  SUBMITTED,
+  APPROVED,
+  REJECTED,
+  QUEUED,
+  PROCESSING,
+}
+
+registerEnumType(WorkflowState, { name: 'WorkflowState' });
 
 /**
  * Represents a series of services that are connected together to form a
@@ -34,6 +47,10 @@ export class Workflow {
   @Prop()
   @Field({ description: 'The institution that the workflow belongs to' })
   institution: string;
+
+  @Prop()
+  @Field(() => WorkflowState, { description: 'Where in the process the Workflow is' })
+  state: WorkflowState;
 }
 
 export type WorkflowDocument = Workflow & Document;
