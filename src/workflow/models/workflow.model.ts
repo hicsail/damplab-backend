@@ -13,7 +13,7 @@ export enum WorkflowState {
   APPROVED,
   REJECTED,
   QUEUED,
-  PROCESSING,
+  PROCESSING
 }
 
 registerEnumType(WorkflowState, { name: 'WorkflowState' });
