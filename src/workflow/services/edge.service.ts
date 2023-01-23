@@ -17,24 +17,24 @@ export class WorkflowEdgeService {
 
   /**
    * Create a new edge. A map is provided which is used to convert
-   * the workflow IDs to the database IDs for the source and destination
+   * the workflow IDs to the database IDs for the source and target
    * nodes
    */
   async create(newEdge: AddEdgeInput, nodeIDMap: Map<string, string>): Promise<WorkflowEdge> {
     const edge = { ...newEdge };
 
-    // Make sure the source and destination are valid
+    // Make sure the source and target are valid
     const sourceDBID = nodeIDMap.get(edge.source);
     if (!sourceDBID) {
       throw new Error(`Invalid source node ID: ${edge.source}`);
     }
-    const destDBID = nodeIDMap.get(edge.destination);
+    const destDBID = nodeIDMap.get(edge.target);
     if (!destDBID) {
-      throw new Error(`Invalid destination node ID: ${edge.destination}`);
+      throw new Error(`Invalid target node ID: ${edge.target}`);
     }
 
     edge.source = sourceDBID;
-    edge.destination = destDBID;
+    edge.target = destDBID;
     return this.workflowEdgeModel.create(edge);
   }
 

@@ -27,7 +27,7 @@ export class WorkflowEdge {
 
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: WorkflowNode.name })
   @Field(() => WorkflowNode, { description: 'The target node of the edge' })
-  destination: mongoose.Types.ObjectId | WorkflowNode;
+  target: mongoose.Types.ObjectId | WorkflowNode;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
   @Field(() => JSON, { description: 'React Flow representation of the graph for re-generating' })

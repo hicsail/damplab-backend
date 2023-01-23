@@ -17,10 +17,10 @@ export class WorkflowEdgeResolver {
   }
 
   @ResolveField()
-  async destination(@Parent() edge: WorkflowEdge): Promise<WorkflowNode> {
-    const node = await this.nodeService.getByID(edge.destination.toString());
+  async target(@Parent() edge: WorkflowEdge): Promise<WorkflowNode> {
+    const node = await this.nodeService.getByID(edge.target.toString());
     if (!node) {
-      throw new Error(`Could not find node with ID ${edge.destination}`);
+      throw new Error(`Could not find node with ID ${edge.target}`);
     }
     return node;
   }
