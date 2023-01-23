@@ -26,6 +26,14 @@ export class Workflow {
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: WorkflowEdge.name }] })
   @Field(() => [WorkflowEdge], { description: 'The edges in the workflow' })
   edges: mongoose.Types.ObjectId[] | WorkflowEdge[];
+
+  @Prop()
+  @Field({ description: 'The name of the user who created the workflow' })
+  username: string;
+
+  @Prop()
+  @Field({ description: 'The institution that the workflow belongs to' })
+  institution: string;
 }
 
 export type WorkflowDocument = Workflow & Document;
