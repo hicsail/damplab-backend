@@ -13,6 +13,7 @@ import JSON from 'graphql-type-json';
 @ObjectType({ description: 'Represents a single node in a workflow. A node is a service with the cooresponding parameters populated.' })
 export class WorkflowNode {
   /** Database generated ID */
+  @Field(() => ID, { description: 'Database generated ID', name: 'id' })
   _id: string;
 
   @Field(() => ID, { description: 'ID used in identify the node in the workflow' })
@@ -26,10 +27,6 @@ export class WorkflowNode {
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'WorkflowNode' })
   @Field(() => DampLabService, { description: 'The service this node represents' })
   service: mongoose.Types.ObjectId | DampLabService;
-
-  @Prop({ type: mongoose.Schema.Types.Mixed })
-  @Field(() => JSON, { description: 'Parameters that are part of the service' })
-  parameters: any;
 
   @Prop()
   @Field({ description: 'Additional instructions for this portion of the workflow' })
