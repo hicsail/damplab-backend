@@ -33,7 +33,6 @@ export class WorkflowResolver {
     return this.workflowService.getByState(state);
   }
 
-
   @ResolveField()
   async nodes(@Parent() workflow: Workflow): Promise<WorkflowNode[]> {
     return this.nodeService.getByIDs(workflow.nodes.map((node) => node._id.toString()));

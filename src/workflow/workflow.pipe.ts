@@ -1,4 +1,4 @@
-import { Workflow } from "./models/workflow.model";
+import { Workflow } from './models/workflow.model';
 import { Injectable, BadRequestException, PipeTransform } from '@nestjs/common';
 import { WorkflowService } from './workflow.service';
 

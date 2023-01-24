@@ -21,6 +21,4 @@ export class WorkflowNodeResolver {
       return node.service as DampLabService;
     }
   }
-
 }
-
