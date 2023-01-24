@@ -3,7 +3,7 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { WorkflowNode } from './node.model';
 import { WorkflowEdge } from './edge.model';
-import { Field, ObjectType, registerEnumType } from '@nestjs/graphql';
+import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
 
 /**
  * The different states the workflow can be in
@@ -26,6 +26,7 @@ registerEnumType(WorkflowState, { name: 'WorkflowState' });
 @ObjectType({ description: 'Represents a series of services that are connected together to form a workflow.' })
 export class Workflow {
   /** Database generated ID */
+  @Field(() => ID, { name: 'id' })
   _id: string;
 
   @Prop()
