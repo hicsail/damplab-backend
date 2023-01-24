@@ -9,7 +9,6 @@ export class WorkflowNodeResolver {
 
   @ResolveField()
   async service(@Parent() node: WorkflowNode): Promise<DampLabService> {
-    console.log(node);
     if (typeof node.service === 'string') {
       const service = await this.damplabServices.findOne(node.service);
       if (service !== null) {

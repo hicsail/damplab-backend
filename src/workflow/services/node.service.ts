@@ -10,7 +10,8 @@ export class WorkflowNodeService {
 
   async create(newNode: AddNodeInput): Promise<WorkflowNode> {
     // TODO: Ensure the fields are valid
-    return this.workflowNodeModel.create(newNode);
+    const node = { ...newNode, service: newNode.serviceId };
+    return this.workflowNodeModel.create(node);
   }
 
   async getByID(id: string): Promise<WorkflowNode | null> {
