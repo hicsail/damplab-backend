@@ -1,5 +1,5 @@
 import { Resolver, Query, Mutation, Args, ResolveField, Parent } from '@nestjs/graphql';
-import { Workflow } from './models/workflow.model';
+import { Workflow, WorkflowState } from './models/workflow.model';
 import { WorkflowService } from './workflow.service';
 import { AddWorkflowInput } from './dtos/add-workflow.input';
 import { WorkflowNode } from './models/node.model';
@@ -26,6 +26,11 @@ export class WorkflowResolver {
   @Mutation(() => Workflow)
   async updateWorkflowState(@Args('updateWorkflowState', { type: () => UpdateWorkflowState }, UpdateWorkflowStatePipe) updateWorkflowState: UpdateWorkflowStateFull): Promise<Workflow> {
     return this.workflowService.updateState(updateWorkflowState);
+  }
+
+  @Query(() => [Workflow])
+  async getWorkflowByState(@Args('state', { type: () => WorkflowState }) state: WorkflowState): Promise<Workflow[]> {
+    return this.workflowService.getByState(state);
   }
 
 

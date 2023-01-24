@@ -61,6 +61,9 @@ export class WorkflowService {
     return result!;
   }
 
+  async getByState(state: WorkflowState): Promise<Workflow[]> {
+    return this.workflowModel.find({ state });
+  }
 
   private async remove(workflow: Workflow): Promise<void> {
     // Remove all nodes
