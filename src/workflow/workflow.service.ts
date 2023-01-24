@@ -5,6 +5,7 @@ import { Workflow, WorkflowDocument, WorkflowState } from './models/workflow.mod
 import { AddWorkflowInput } from './dtos/add-workflow.input';
 import { WorkflowNodeService } from './services/node.service';
 import { WorkflowEdgeService } from './services/edge.service';
+import { UpdateWorkflowStateFull } from './dtos/update-state.input';
 
 @Injectable()
 export class WorkflowService {
@@ -37,12 +38,29 @@ export class WorkflowService {
 
     const workflow = { ...createWorkflowInput, nodes, edges, state: WorkflowState.SUBMITTED };
 
+    if (existingWorkflow) {
+      await this.workflowModel.updateOne({ _id: existingWorkflow._id }, workflow).exec();
+      const result = await this.workflowModel.findOne({ _id: existingWorkflow._id });
+      return result!;
+    }
+
     return this.workflowModel.create(workflow);
   }
 
   async findByName(name: string): Promise<Workflow | null> {
     return this.workflowModel.findOne({ name });
   }
+
+  async findOne(id: string): Promise<Workflow | null> {
+    return this.workflowModel.findById(id);
+  }
+
+  async updateState(updateWorkflowState: UpdateWorkflowStateFull): Promise<Workflow> {
+    await this.workflowModel.updateOne({ _id: updateWorkflowState.workflow._id }, { state: updateWorkflowState.state }).exec();
+    const result = await this.workflowModel.findOne({ _id: updateWorkflowState.workflow._id });
+    return result!;
+  }
+
 
   private async remove(workflow: Workflow): Promise<void> {
     // Remove all nodes
@@ -52,8 +70,5 @@ export class WorkflowService {
     // Remove all edges
     const workflowEdges = workflow.edges.map((edge) => edge._id.toString());
     await this.edgeService.removeByIDs(workflowEdges);
-
-    // Remove the workflow
-    await this.workflowModel.deleteOne({ _id: workflow._id });
   }
 }
