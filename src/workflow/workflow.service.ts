@@ -51,6 +51,10 @@ export class WorkflowService {
     return this.workflowModel.findOne({ name });
   }
 
+  async findById(id: string): Promise<Workflow | null> {
+    return this.workflowModel.findById(id);
+  }
+
   async findOne(id: string): Promise<Workflow | null> {
     return this.workflowModel.findById(id);
   }

@@ -1,4 +1,4 @@
-import { Resolver, Query, Mutation, Args, ResolveField, Parent } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ResolveField, Parent, ID } from '@nestjs/graphql';
 import { Workflow, WorkflowState } from './models/workflow.model';
 import { WorkflowService } from './workflow.service';
 import { AddWorkflowInput } from './dtos/add-workflow.input';
@@ -21,6 +21,11 @@ export class WorkflowResolver {
   @Query(() => Workflow, { nullable: true })
   async workflow(@Args('name') name: string): Promise<Workflow | null> {
     return this.workflowService.findByName(name);
+  }
+
+  @Query(() => Workflow, { nullable: true })
+  async workflowById(@Args('id', { type: () => ID }) id: string): Promise<Workflow | null> {
+    return this.workflowService.findById(id);
   }
 
   @Mutation(() => Workflow)
