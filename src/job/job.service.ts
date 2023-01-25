@@ -19,5 +19,4 @@ export class JobService {
   async findByName(name: string): Promise<Job | null> {
     return this.jobModel.findOne({ name });
   }
-
 }

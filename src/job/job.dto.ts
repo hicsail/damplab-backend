@@ -1,4 +1,4 @@
-import {Injectable, PipeTransform} from '@nestjs/common';
+import { Injectable, PipeTransform } from '@nestjs/common';
 import { ID, InputType, OmitType, Field } from '@nestjs/graphql';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowPipe } from '../workflow/workflow.pipe';
@@ -11,7 +11,7 @@ export class CreateJob extends OmitType(Job, ['_id', 'workflows'] as const, Inpu
   workflows: string[];
 }
 
-export interface CreateJobFull extends Omit<Job, '_id'> {}
+export type CreateJobFull = Omit<Job, '_id'>;
 
 /** Transform the list of IDs into workflows, ensures the workflows exist */
 @Injectable()

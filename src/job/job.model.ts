@@ -4,11 +4,10 @@ import mongoose from 'mongoose';
 import { Field, ObjectType, ID } from '@nestjs/graphql';
 import { Workflow } from '../workflow/models/workflow.model';
 
-
 @Schema()
 @ObjectType({ description: 'Jobs encapsulate many workflows that were submitted together' })
 export class Job {
-  @Field(() =>ID, { name: 'id' })
+  @Field(() => ID, { name: 'id' })
   _id: string;
 
   @Prop()

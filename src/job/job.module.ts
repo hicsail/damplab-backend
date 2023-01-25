@@ -6,10 +6,7 @@ import { JobResolver } from './job.resolver';
 import { JobService } from './job.service';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: Job.name, schema: JobSchema }]),
-    WorkflowModule
-  ],
+  imports: [MongooseModule.forFeature([{ name: Job.name, schema: JobSchema }]), WorkflowModule],
   providers: [JobService, JobResolver]
 })
 export class JobModule {}
