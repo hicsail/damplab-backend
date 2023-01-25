@@ -1,0 +1,31 @@
+import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
+import { CreateJob, CreateJobFull, CreateJobPipe } from './job.dto';
+import { Job } from './job.model';
+import { JobService } from './job.service';
+import { WorkflowService } from '../workflow/workflow.service';
+import { Workflow } from '../workflow/models/workflow.model';
+
+@Resolver(() => Job)
+export class JobResolver {
+  constructor(private readonly jobService: JobService, private readonly workflowService: WorkflowService) {}
+
+  @Query(() => Job, { nullable: true })
+  async jobByName(@Args('name') name: string): Promise<Job | null> {
+    return this.jobService.findByName(name);
+  }
+
+  @Query(() => Job, { nullable: true })
+  async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
+    return this.jobService.findById(id);
+  }
+
+  @Mutation(() => Job)
+  async createJob(@Args('createJobInput', { type: () => CreateJob }, CreateJobPipe) createJobInput: CreateJobFull): Promise<Job> {
+    return this.jobService.create(createJobInput);
+  }
+
+  @ResolveField()
+  async workflows(@Parent() job: Job): Promise<Workflow[]> {
+    return this.workflowService.findByIds(job.workflows.map((workflow) => workflow._id));
+  }
+}

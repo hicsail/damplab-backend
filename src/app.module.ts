@@ -12,6 +12,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { WorkflowModule } from './workflow/workflow.module';
 import { CategoriesModule } from './categories/categories.module';
 import { BundlesModule } from './bundles/bundles.module';
+import { JobModule } from './job/job.module';
 
 @Module({
   imports: [
@@ -32,7 +33,8 @@ import { BundlesModule } from './bundles/bundles.module';
     DampLabServicesModule,
     WorkflowModule,
     CategoriesModule,
-    BundlesModule
+    BundlesModule,
+    JobModule
   ],
   controllers: [AppController],
   providers: [AppService]

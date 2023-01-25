@@ -21,6 +21,7 @@ import { WorkflowNodeResolver } from './resolvers/node.resolver';
     ]),
     DampLabServicesModule
   ],
-  providers: [WorkflowResolver, WorkflowService, WorkflowNodeService, WorkflowEdgeService, WorkflowEdgeResolver, WorkflowPipe, WorkflowNodeResolver]
+  providers: [WorkflowResolver, WorkflowService, WorkflowNodeService, WorkflowEdgeService, WorkflowEdgeResolver, WorkflowPipe, WorkflowNodeResolver],
+  exports: [WorkflowPipe, WorkflowService]
 })
 export class WorkflowModule {}

@@ -17,12 +17,6 @@ export class WorkflowResolver {
     return this.workflowService.create(createWorkflowInput);
   }
 
-  /** Find a workflow by its name */
-  @Query(() => Workflow, { nullable: true })
-  async workflow(@Args('name') name: string): Promise<Workflow | null> {
-    return this.workflowService.findByName(name);
-  }
-
   @Query(() => Workflow, { nullable: true })
   async workflowById(@Args('id', { type: () => ID }) id: string): Promise<Workflow | null> {
     return this.workflowService.findById(id);
