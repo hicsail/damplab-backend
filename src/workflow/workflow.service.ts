@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import mongoose, { Model } from 'mongoose';
 import { Workflow, WorkflowDocument, WorkflowState } from './models/workflow.model';
 import { AddWorkflowInput } from './dtos/add-workflow.input';
 import { WorkflowNodeService } from './services/node.service';
@@ -49,5 +49,9 @@ export class WorkflowService {
 
   async getByState(state: WorkflowState): Promise<Workflow[]> {
     return this.workflowModel.find({ state });
+  }
+
+  async findByIds(ids: mongoose.Types.ObjectId[]): Promise<Workflow[]> {
+    return this.workflowModel.find({ _id: { $in: ids } });
   }
 }
