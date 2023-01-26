@@ -12,8 +12,7 @@ export class Job {
 
   @Prop()
   @Field({ description: 'Human readable name of the workflow' })
-  jobName: string;
-
+  name: string;
 
   /// These fields will be replaced by a user field in the future /////////////
   @Prop()
@@ -23,6 +22,10 @@ export class Job {
   @Prop()
   @Field({ description: 'The institute the user is from' })
   institute: string;
+
+  @Prop()
+  @Field({ description: 'The email address of the user' })
+  email: string;
   /////////////////////////////////////////////////////////////////////////////
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: Workflow.name }] })
