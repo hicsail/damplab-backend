@@ -40,6 +40,10 @@ export class Workflow {
   @Prop()
   @Field(() => WorkflowState, { description: 'Where in the process the Workflow is' })
   state: WorkflowState;
+
+  @Prop()
+  @Field(() => String, { description: 'The name of the workflow' })
+  name: string;
 }
 
 export type WorkflowDocument = Workflow & Document;
