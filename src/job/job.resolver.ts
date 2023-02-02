@@ -4,6 +4,7 @@ import { Job } from './job.model';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { Workflow } from '../workflow/models/workflow.model';
+import { WorkflowPipe } from '../workflow/workflow.pipe';
 
 @Resolver(() => Job)
 export class JobResolver {
@@ -17,6 +18,11 @@ export class JobResolver {
   @Query(() => Job, { nullable: true })
   async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
     return this.jobService.findById(id);
+  }
+
+  @Query(() => Job)
+  async jobByWorkflowId(@Args('workflow', { type: () => ID }, WorkflowPipe) workflow: Workflow): Promise<Job | null> {
+    return this.jobService.findByWorkflow(workflow);
   }
 
   @Mutation(() => Job)
