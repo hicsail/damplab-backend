@@ -31,6 +31,10 @@ export class Job {
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: Workflow.name }] })
   @Field(() => [Workflow], { description: 'The workflows that were submitted together' })
   workflows: mongoose.Types.ObjectId[];
+
+  @Prop({ default: new Date() })
+  @Field({ description: 'The date the job was submitted' })
+  submitted: Date;
 }
 
 export type JobDocument = Job & Document;

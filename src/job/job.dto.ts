@@ -6,12 +6,12 @@ import { Job } from './job.model';
 import mongoose from 'mongoose';
 
 @InputType()
-export class CreateJob extends OmitType(Job, ['_id', 'workflows'] as const, InputType) {
+export class CreateJob extends OmitType(Job, ['_id', 'workflows', 'submitted'] as const, InputType) {
   @Field(() => [ID], { description: 'The workflows that were submitted together' })
   workflows: string[];
 }
 
-export type CreateJobFull = Omit<Job, '_id'>;
+export type CreateJobFull = Omit<Job, '_id' | 'submitted'>;
 
 /** Transform the list of IDs into workflows, ensures the workflows exist */
 @Injectable()
