@@ -70,7 +70,7 @@ export default class LoadDatabase extends Command {
     const idMap = await this.insertServices(services);
 
     // Insert the categories into the database
-    await this.insertCategories(categories, idMap);
+    await this.insertCategories(categories, idMap, services);
 
     // Insert the bundles into the database
     await this.insertBundles(bundles, idMap);
@@ -135,10 +135,19 @@ export default class LoadDatabase extends Command {
     return serviceMap;
   }
 
-  async insertCategories(categories: any[], serviceMap: Map<string, ObjectId>): Promise<void> {
+  async insertCategories(categories: any[], serviceMap: Map<string, ObjectId>, services: any[]): Promise<void> {
+    const categoryMap = new Map<string, ObjectId>();
     for (const category of categories) {
-      category.services = this.convertIDs(category.services, serviceMap);
-      await this.client?.db().collection(this.flags.categoryCollection).insertOne(category);
+      const result = await this.client?.db().collection(this.flags.categoryCollection).insertOne(category);
+      categoryMap.set(category.id, result.insertedId);
+    }
+
+    for (const category of categories) {
+      const serviceList = services.filter((service: any) => service.categories.includes(category.id)).map((service: any) => serviceMap.get(service.id));
+      await this.client
+        ?.db()
+        .collection(this.flags.categoryCollection)
+        .updateOne({ _id: categoryMap.get(category.id) }, { $set: { services: serviceList } });
     }
   }
 
