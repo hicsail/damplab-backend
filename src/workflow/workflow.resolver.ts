@@ -1,7 +1,6 @@
 import { Resolver, Query, Mutation, Args, ResolveField, Parent, ID } from '@nestjs/graphql';
 import { Workflow, WorkflowState } from './models/workflow.model';
 import { WorkflowService } from './workflow.service';
-import { AddWorkflowInput } from './dtos/add-workflow.input';
 import { WorkflowNode } from './models/node.model';
 import { WorkflowNodeService } from './services/node.service';
 import { WorkflowEdge } from './models/edge.model';
@@ -11,11 +10,6 @@ import { UpdateWorkflowState, UpdateWorkflowStatePipe, UpdateWorkflowStateFull }
 @Resolver(() => Workflow)
 export class WorkflowResolver {
   constructor(private readonly workflowService: WorkflowService, private readonly nodeService: WorkflowNodeService, private readonly edgeService: WorkflowEdgeService) {}
-
-  @Mutation(() => Workflow)
-  async createWorkflow(@Args('createWorkflowInput') createWorkflowInput: AddWorkflowInput): Promise<Workflow> {
-    return this.workflowService.create(createWorkflowInput);
-  }
 
   @Query(() => Workflow, { nullable: true })
   async workflowById(@Args('id', { type: () => ID }) id: string): Promise<Workflow | null> {
