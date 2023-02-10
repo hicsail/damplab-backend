@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Job, JobDocument } from './job.model';
 import { Model } from 'mongoose';
-import { CreateJob } from './job.dto';
+import { CreateJobFull } from './job.dto';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
 
@@ -10,7 +10,7 @@ import { WorkflowService } from '../workflow/workflow.service';
 export class JobService {
   constructor(@InjectModel(Job.name) private readonly jobModel: Model<JobDocument>, private readonly workflowService: WorkflowService) {}
 
-  async create(createJobInput: CreateJob): Promise<Job> {
+  async create(createJobInput: CreateJobFull): Promise<Job> {
     const workflowIDs = await Promise.all(
       createJobInput.workflows.map(async (workflow) => {
         const createdWorkflow = await this.workflowService.create(workflow);
