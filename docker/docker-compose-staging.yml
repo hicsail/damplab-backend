@@ -3,6 +3,7 @@ services:
   mongo:
     image: mongo
     ports: ["27018:27017"]
+    restart: always
     volumes:
       - damplab-staging:/data/db
   damplab:
