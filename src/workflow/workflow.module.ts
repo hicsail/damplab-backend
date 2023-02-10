@@ -11,6 +11,8 @@ import { DampLabServicesModule } from '../services/damplab-services.module';
 import { WorkflowEdgeResolver } from './resolvers/edge.resolver';
 import { WorkflowPipe } from './workflow.pipe';
 import { WorkflowNodeResolver } from './resolvers/node.resolver';
+import { AddWorkflowInputPipe } from './dtos/add-workflow.input';
+import { AddNodeInputPipe } from './dtos/add-node.input';
 
 @Module({
   imports: [
@@ -21,7 +23,7 @@ import { WorkflowNodeResolver } from './resolvers/node.resolver';
     ]),
     DampLabServicesModule
   ],
-  providers: [WorkflowResolver, WorkflowService, WorkflowNodeService, WorkflowEdgeService, WorkflowEdgeResolver, WorkflowPipe, WorkflowNodeResolver],
-  exports: [WorkflowPipe, WorkflowService]
+  providers: [WorkflowResolver, WorkflowService, WorkflowNodeService, WorkflowEdgeService, WorkflowEdgeResolver, WorkflowPipe, WorkflowNodeResolver, AddWorkflowInputPipe, AddNodeInputPipe],
+  exports: [WorkflowPipe, WorkflowService, AddWorkflowInputPipe]
 })
 export class WorkflowModule {}

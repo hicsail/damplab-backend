@@ -2,15 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { WorkflowNode, WorkflowNodeDocument } from '../models/node.model';
-import { AddNodeInput } from '../dtos/add-node.input';
+import { AddNodeInputFull } from '../dtos/add-node.input';
 
 @Injectable()
 export class WorkflowNodeService {
   constructor(@InjectModel(WorkflowNode.name) private readonly workflowNodeModel: Model<WorkflowNodeDocument>) {}
 
-  async create(newNode: AddNodeInput): Promise<WorkflowNode> {
+  async create(newNode: AddNodeInputFull): Promise<WorkflowNode> {
     // TODO: Ensure the fields are valid
-    const node = { ...newNode, service: newNode.serviceId };
+    const node = { ...newNode, service: newNode.service._id };
     return this.workflowNodeModel.create(node);
   }
 
