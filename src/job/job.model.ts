@@ -1,8 +1,20 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
-import { Field, ObjectType, ID } from '@nestjs/graphql';
+import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
 import { Workflow } from '../workflow/models/workflow.model';
+
+export enum JobState {
+  CREATING,
+  SUBMITTED,
+  ACCEPTED,
+  WAITING_FOR_SOW,
+  QUEUED,
+  IN_PROGRESS,
+  COMPLETE,
+  REJECTED
+}
+registerEnumType(JobState, { name: 'JobState' });
 
 @Schema()
 @ObjectType({ description: 'Jobs encapsulate many workflows that were submitted together' })
@@ -39,6 +51,10 @@ export class Job {
   @Prop({ required: false })
   @Field({ description: 'Additional information the user provided', nullable: true })
   notes?: string;
+
+  @Prop({ required: true, default: JobState.CREATING })
+  @Field(() => JobState, { description: 'Where in the Job life cycle this Job is' })
+  state: JobState;
 }
 
 export type JobDocument = Job & Document;

@@ -9,11 +9,9 @@ import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
  * The different states the workflow can be in
  */
 export enum WorkflowState {
-  SUBMITTED,
-  APPROVED,
-  REJECTED,
   QUEUED,
-  PROCESSING
+  IN_PROGRESS,
+  COMPLETE
 }
 
 registerEnumType(WorkflowState, { name: 'WorkflowState' });

@@ -28,7 +28,7 @@ export class WorkflowService {
     // Make the edges
     const edges = await Promise.all(createWorkflowInput.edges.map((edge) => this.edgeService.create(edge, nodeIDMap)));
 
-    const workflow = { ...createWorkflowInput, nodes, edges, state: WorkflowState.SUBMITTED };
+    const workflow = { ...createWorkflowInput, nodes, edges, state: WorkflowState.QUEUED };
 
     return this.workflowModel.create(workflow);
   }
