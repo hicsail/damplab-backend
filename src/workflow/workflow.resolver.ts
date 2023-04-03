@@ -5,7 +5,7 @@ import { WorkflowNode } from './models/node.model';
 import { WorkflowNodeService } from './services/node.service';
 import { WorkflowEdge } from './models/edge.model';
 import { WorkflowEdgeService } from './services/edge.service';
-import {WorkflowPipe} from './workflow.pipe';
+import { WorkflowPipe } from './workflow.pipe';
 
 @Resolver(() => Workflow)
 export class WorkflowResolver {

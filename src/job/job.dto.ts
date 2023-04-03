@@ -2,7 +2,7 @@ import { InputType, OmitType, Field } from '@nestjs/graphql';
 import { Job, JobState } from './job.model';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
-import {JobService} from './job.service';
+import { JobService } from './job.service';
 
 @InputType()
 export class CreateJob extends OmitType(Job, ['_id', 'workflows', 'submitted', 'state'] as const, InputType) {

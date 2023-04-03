@@ -31,7 +31,7 @@ export class JobResolver {
   }
 
   @Mutation(() => Job)
-  async changeJobState(@Args('job', { type: () => ID}, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState): Promise<Job> {
+  async changeJobState(@Args('job', { type: () => ID }, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState): Promise<Job> {
     return (await this.jobService.updateState(job, newState))!;
   }
 

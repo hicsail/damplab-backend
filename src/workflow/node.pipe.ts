@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
-import {WorkflowNode} from './models/node.model';
-import {WorkflowNodeService} from './services/node.service';
+import { WorkflowNode } from './models/node.model';
+import { WorkflowNodeService } from './services/node.service';
 
 @Injectable()
 export class WorkflowNodePipe implements PipeTransform<string, Promise<WorkflowNode>> {

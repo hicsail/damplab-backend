@@ -8,14 +8,15 @@ import { WorkflowNodeService } from '../services/node.service';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
-  constructor(private readonly damplabServices: DampLabServices,
-              private readonly nodeService: WorkflowNodeService) {}
+  constructor(private readonly damplabServices: DampLabServices, private readonly nodeService: WorkflowNodeService) {}
 
   @Mutation(() => WorkflowNode)
-  async changeWorkflowNodeState(@Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode, @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState): Promise<WorkflowNode> {
+  async changeWorkflowNodeState(
+    @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
+    @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState
+  ): Promise<WorkflowNode> {
     return (await this.nodeService.updateState(workflowNode, newState))!;
   }
-
 
   @ResolveField()
   async service(@Parent() node: WorkflowNode): Promise<DampLabService> {
