@@ -20,7 +20,7 @@ registerEnumType(WorkflowNodeState, { name: 'WorkflowNodeState' });
 @ObjectType({ description: 'Represents a single node in a workflow. A node is a service with the cooresponding parameters populated.' })
 export class WorkflowNode {
   /** Database generated ID */
-  @Field(() => ID, { description: 'Database generated ID', name: 'id' })
+  @Field(() => ID, { description: 'Database generated ID', name: '_id' })
   _id: string;
 
   @Field(() => ID, { description: 'ID used in identify the node in the workflow' })
