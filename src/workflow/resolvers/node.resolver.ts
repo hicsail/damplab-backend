@@ -1,12 +1,21 @@
-import { WorkflowNode } from '../models/node.model';
-import { Parent, Resolver, ResolveField } from '@nestjs/graphql';
+import { WorkflowNode, WorkflowNodeState } from '../models/node.model';
+import { Parent, Resolver, ResolveField, Mutation, ID, Args } from '@nestjs/graphql';
 import { DampLabServices } from '../../services/damplab-services.services';
 import { DampLabService } from '../../services/models/damplab-service.model';
 import mongoose from 'mongoose';
+import { WorkflowNodePipe } from '../node.pipe';
+import { WorkflowNodeService } from '../services/node.service';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
-  constructor(private readonly damplabServices: DampLabServices) {}
+  constructor(private readonly damplabServices: DampLabServices,
+              private readonly nodeService: WorkflowNodeService) {}
+
+  @Mutation(() => WorkflowNode)
+  async changeWorkflowNodeState(@Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode, @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState): Promise<WorkflowNode> {
+    return (await this.nodeService.updateState(workflowNode, newState))!;
+  }
+
 
   @ResolveField()
   async service(@Parent() node: WorkflowNode): Promise<DampLabService> {

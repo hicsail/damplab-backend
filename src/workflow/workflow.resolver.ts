@@ -5,7 +5,7 @@ import { WorkflowNode } from './models/node.model';
 import { WorkflowNodeService } from './services/node.service';
 import { WorkflowEdge } from './models/edge.model';
 import { WorkflowEdgeService } from './services/edge.service';
-import { UpdateWorkflowState, UpdateWorkflowStatePipe, UpdateWorkflowStateFull } from './dtos/update-state.input';
+import {WorkflowPipe} from './workflow.pipe';
 
 @Resolver(() => Workflow)
 export class WorkflowResolver {
@@ -17,8 +17,8 @@ export class WorkflowResolver {
   }
 
   @Mutation(() => Workflow)
-  async updateWorkflowState(@Args('updateWorkflowState', { type: () => UpdateWorkflowState }, UpdateWorkflowStatePipe) updateWorkflowState: UpdateWorkflowStateFull): Promise<Workflow> {
-    return this.workflowService.updateState(updateWorkflowState);
+  async changeWorkflowState(@Args('workflow', { type: () => ID }, WorkflowPipe) workflow: Workflow, @Args('newState', { type: () => WorkflowState }) newState: WorkflowState): Promise<Workflow> {
+    return (await this.workflowService.updateState(workflow, newState))!;
   }
 
   @Query(() => [Workflow])

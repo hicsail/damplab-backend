@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { WorkflowNode, WorkflowNodeDocument } from '../models/node.model';
+import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../models/node.model';
 import { AddNodeInputFull } from '../dtos/add-node.input';
 
 @Injectable()
@@ -30,5 +30,9 @@ export class WorkflowNodeService {
    */
   async getByIDs(ids: string[]): Promise<WorkflowNode[]> {
     return this.workflowNodeModel.find({ _id: { $in: ids } });
+  }
+
+  async updateState(node: WorkflowNode, newState: WorkflowNodeState): Promise<WorkflowNode | null> {
+    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { state: newState } }, { new: true });
   }
 }
