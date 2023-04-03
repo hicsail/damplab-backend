@@ -2,8 +2,15 @@ import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { DampLabService } from '../../services/models/damplab-service.model';
-import { Field, ID, ObjectType } from '@nestjs/graphql';
+import { Field, ID, ObjectType, registerEnumType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
+
+export enum WorkflowNodeState {
+  QUEUED,
+  IN_PROGRESS,
+  COMPLETE
+}
+registerEnumType(WorkflowNodeState, { name: 'WorkflowNodeState' });
 
 /**
  * Represents a single node in a workflow. A node is a service with the
@@ -13,7 +20,7 @@ import JSON from 'graphql-type-json';
 @ObjectType({ description: 'Represents a single node in a workflow. A node is a service with the cooresponding parameters populated.' })
 export class WorkflowNode {
   /** Database generated ID */
-  @Field(() => ID, { description: 'Database generated ID', name: 'id' })
+  @Field(() => ID, { description: 'Database generated ID', name: '_id' })
   _id: string;
 
   @Field(() => ID, { description: 'ID used in identify the node in the workflow' })
@@ -39,6 +46,10 @@ export class WorkflowNode {
   @Prop({ type: mongoose.Schema.Types.Mixed })
   @Field(() => JSON, { description: 'React Flow representation of the graph for re-generating' })
   reactNode: JSON;
+
+  @Prop({ requied: true, default: WorkflowNodeState.QUEUED })
+  @Field(() => WorkflowNodeState, { description: 'Where in the process is the current node' })
+  state: WorkflowNodeState;
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;

@@ -5,7 +5,6 @@ import { Workflow, WorkflowDocument, WorkflowState } from './models/workflow.mod
 import { AddWorkflowInputFull } from './dtos/add-workflow.input';
 import { WorkflowNodeService } from './services/node.service';
 import { WorkflowEdgeService } from './services/edge.service';
-import { UpdateWorkflowStateFull } from './dtos/update-state.input';
 
 @Injectable()
 export class WorkflowService {
@@ -28,7 +27,7 @@ export class WorkflowService {
     // Make the edges
     const edges = await Promise.all(createWorkflowInput.edges.map((edge) => this.edgeService.create(edge, nodeIDMap)));
 
-    const workflow = { ...createWorkflowInput, nodes, edges, state: WorkflowState.SUBMITTED };
+    const workflow = { ...createWorkflowInput, nodes, edges, state: WorkflowState.QUEUED };
 
     return this.workflowModel.create(workflow);
   }
@@ -41,10 +40,8 @@ export class WorkflowService {
     return this.workflowModel.findById(id);
   }
 
-  async updateState(updateWorkflowState: UpdateWorkflowStateFull): Promise<Workflow> {
-    await this.workflowModel.updateOne({ _id: updateWorkflowState.workflow._id }, { state: updateWorkflowState.state }).exec();
-    const result = await this.workflowModel.findOne({ _id: updateWorkflowState.workflow._id });
-    return result!;
+  async updateState(workflow: Workflow, state: WorkflowState): Promise<Workflow | null> {
+    return this.workflowModel.findOneAndUpdate({ _id: workflow._id }, { $set: { state: state } }, { new: true });
   }
 
   async getByState(state: WorkflowState): Promise<Workflow[]> {

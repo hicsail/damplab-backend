@@ -9,11 +9,9 @@ import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
  * The different states the workflow can be in
  */
 export enum WorkflowState {
-  SUBMITTED,
-  APPROVED,
-  REJECTED,
   QUEUED,
-  PROCESSING
+  IN_PROGRESS,
+  COMPLETE
 }
 
 registerEnumType(WorkflowState, { name: 'WorkflowState' });
@@ -37,7 +35,7 @@ export class Workflow {
   @Field(() => [WorkflowEdge], { description: 'The edges in the workflow' })
   edges: mongoose.Types.ObjectId[] | WorkflowEdge[];
 
-  @Prop()
+  @Prop({ required: true, default: WorkflowState.QUEUED })
   @Field(() => WorkflowState, { description: 'Where in the process the Workflow is' })
   state: WorkflowState;
 

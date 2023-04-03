@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Job, JobDocument } from './job.model';
+import { Job, JobDocument, JobState } from './job.model';
 import { Model } from 'mongoose';
 import { CreateJobFull } from './job.dto';
 import { Workflow } from '../workflow/models/workflow.model';
@@ -30,5 +30,9 @@ export class JobService {
 
   async findByWorkflow(workflow: Workflow): Promise<Job | null> {
     return this.jobModel.findOne({ workflows: workflow._id });
+  }
+
+  async updateState(job: Job, newState: JobState): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate({ _id: job._id }, { $set: { state: newState } }, { new: true }).exec();
   }
 }
