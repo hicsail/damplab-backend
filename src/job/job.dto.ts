@@ -1,10 +1,10 @@
 import { InputType, OmitType, Field } from '@nestjs/graphql';
-import { Job } from './job.model';
+import { Job, JobState } from './job.model';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { Injectable, PipeTransform } from '@nestjs/common';
 
 @InputType()
-export class CreateJob extends OmitType(Job, ['_id', 'workflows', 'submitted'] as const, InputType) {
+export class CreateJob extends OmitType(Job, ['_id', 'workflows', 'submitted', 'state'] as const, InputType) {
   @Field(() => [AddWorkflowInput], { description: 'The workflows that were submitted together' })
   workflows: AddWorkflowInput[];
 }
@@ -19,6 +19,6 @@ export class CreateJobPipe implements PipeTransform<CreateJob, Promise<CreateJob
 
   async transform(value: CreateJob): Promise<CreateJobFull> {
     const workflows = await Promise.all(value.workflows.map((workflow) => this.workflowPipe.transform(workflow)));
-    return { ...value, workflows };
+    return { ...value, workflows, state: JobState.CREATING };
   }
 }

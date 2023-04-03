@@ -35,7 +35,7 @@ export class Workflow {
   @Field(() => [WorkflowEdge], { description: 'The edges in the workflow' })
   edges: mongoose.Types.ObjectId[] | WorkflowEdge[];
 
-  @Prop()
+  @Prop({ required: true, default: WorkflowState.QUEUED })
   @Field(() => WorkflowState, { description: 'Where in the process the Workflow is' })
   state: WorkflowState;
 

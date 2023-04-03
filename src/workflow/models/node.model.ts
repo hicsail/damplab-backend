@@ -47,9 +47,9 @@ export class WorkflowNode {
   @Field(() => JSON, { description: 'React Flow representation of the graph for re-generating' })
   reactNode: JSON;
 
-  @Prop()
+  @Prop({ requied: true, default: WorkflowNodeState.QUEUED })
   @Field(() => WorkflowNodeState, { description: 'Where in the process is the current node' })
-  state: WorkflowNodeState
+  state: WorkflowNodeState;
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;
