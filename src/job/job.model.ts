@@ -35,6 +35,10 @@ export class Job {
   @Prop({ default: new Date() })
   @Field({ description: 'The date the job was submitted' })
   submitted: Date;
+
+  @Prop({ required: false })
+  @Field({ description: 'Additional information the user provided', nullable: true })
+  notes?: string;
 }
 
 export type JobDocument = Job & Document;
