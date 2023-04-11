@@ -3,7 +3,7 @@
     {
       "id": "seq",
       "name": "Send Sample to Sequencing",
-      "icon": "https://cdn-icons-png.flaticon.com/512/4425/4425323.png",
+      "icon": "https://drive.google.com/uc?id=1KwchGg3_H3REm_jv5vf6IIUDmTupIPVs",
       "parameters": [
         {
           "id": "sample",
@@ -28,12 +28,13 @@
       ],
       "categories": [
         "dna-rna"
-      ]
+      ],
+      "result": null
     },
     {
       "id": "gene",
       "name": "Order Gene Fragment",
-      "icon": "https://cdn-icons-png.flaticon.com/512/4848/4848965.png",
+      "icon": "https://drive.google.com/uc?id=1Zj4BohScCf6NNgebjrzDazseNSGN4CI9",
       "parameters": [
         {
           "id": "fragment-sequence",
@@ -48,7 +49,12 @@
       ],
       "categories": [
         "dna-assembly-cloning"
-      ]
+      ],
+      "result": {
+        "id": "gene-fragment-result",
+        "type": "GeneFragmentResult",
+        "text": "DNA suspended in solution to standard concentration"
+      }
     },
     {
       "id": "design-primers",
@@ -91,12 +97,13 @@
       ],
       "allowedConnections": [
         "rehydrate-primer"
-      ]
+      ],
+      "result": null
     },
     {
       "id": "rehydrate-primer",
       "name": "Rehydrate Primers",
-      "icon": "https://cdn-icons-png.flaticon.com/512/3304/3304587.png",
+      "icon": "https://drive.google.com/uc?id=1r3Jk3Y1P-YMmp1CNryY0-5nFCIYLc7Wy",
       "parameters": [
         {
           "id": "buffer",
@@ -111,17 +118,13 @@
       ],
       "categories": [
         "dna-assembly-cloning"
-      ]
+      ],
+      "result": null
     },
     {
       "id": "pcr",
       "name": "PCR",
-      "icon": "https://cdn-icons-png.flaticon.com/512/4192/4192192.png",
-      "flowParams": [
-        "plasmid-flow",
-        "forward-primer-flow",
-        "reverse-primer-flow"
-      ],
+      "icon": "https://drive.google.com/uc?id=1WV97Xgtp-ZngdSS1A-f8Vk9lP2LAuOpt",
       "parameters": [
         {
           "id": "melting-temp",
@@ -143,6 +146,34 @@
           "type": "number",
           "paramType": "input",
           "required": true
+        },
+        {
+          "id": "forward-primer",
+          "name": "Forward Primer",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "reverse-primer",
+          "name": "Reverse Primer",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "template-dna",
+          "name": "Template DNA",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "polymerase",
+          "name": "Polymerase",
+          "type": "string",
+          "paramType": "input",
+          "required": true
         }
       ],
       "allowedConnections": [
@@ -162,6 +193,39 @@
       }
     },
     {
+      "id": "gel-electrophoresis",
+      "name": "Gel Electrophoresis",
+      "icon": "https://drive.google.com/uc?id=1lIq60MG4kdCmu4iJrNZikAc60TUlta5M",
+      "parameters": [
+        {
+          "id": "gel-type",
+          "name": "Gel Type",
+          "type": "string",
+          "paramType": "input",
+          "required": false
+        },
+        {
+          "id": "sample-length",
+          "name": "Sample Length",
+          "type": "number",
+          "paramType": "input",
+          "required": true
+        },
+        {
+          "id": "ladder",
+          "name": "Ladder",
+          "type": "string",
+          "paramType": "input",
+          "required": true
+        }
+      ],
+      "categories": [],
+      "allowedConnections": [
+        "column-purification",
+        "pcr"
+      ]
+    },
+    {
       "id": "dpn1",
       "name": "Digest with Dpn1",
       "icon": "https://cdn-icons-png.flaticon.com/512/647/647370.png",
@@ -172,7 +236,7 @@
         {
           "id": "pcr-product-param",
           "name": "PCR Product Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         }
@@ -194,6 +258,155 @@
       ]
     },
     {
+      "id": "gibson-assembly",
+      "name": "Gibson Assembly",
+      "icon": "https://cdn-icons-png.flaticon.com/512/2222/2222661.png",
+      "parameters": [
+        {
+          "id": "template-dna",
+          "name": "Template DNA",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "forward-primer",
+          "name": "Forward Primer",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "reverse-primer",
+          "name": "Reverse Primer",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "master-mix",
+          "name": "Master Mix",
+          "type": "string",
+          "paramType": "input",
+          "required": false
+        },
+        {
+          "id": "enzyme",
+          "name": "Enzyme",
+          "type": "string",
+          "paramType": "input",
+          "required": false
+        },
+        {
+          "id": "antibiotic",
+          "name": "Antibiotic",
+          "type": "string",
+          "paramType": "input",
+          "required": false
+        }
+      ],
+      "allowedConnections": [
+        "transformation",
+        "dna-storage"
+      ],
+      "categories": []
+    },
+    {
+      "id": "restriction-digest",
+      "name": "Restriction Digest",
+      "icon": "https://cdn-icons-png.flaticon.com/512/647/647370.png",
+      "parameters": [
+        {
+          "id": "template-dna",
+          "name": "Template DNA",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "restriction-enzyme",
+          "name": "Restriction Enzyme",
+          "type": "string",
+          "paramType": "input",
+          "required": true
+        }
+      ],
+      "allowedConnections": [
+        "clean-up",
+        "dna-storage",
+        "restriction-ligation"
+      ],
+      "categories": []
+    },
+    {
+      "id": "restriction-ligation",
+      "name": "Restriction Ligation",
+      "icon": "https://cdn-icons-png.flaticon.com/512/647/647370.png",
+      "parameters": [
+        {
+          "id": "digest-dna",
+          "name": "Digest DNA",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "dna-ligase",
+          "name": "DNA Ligase",
+          "type": "string",
+          "paramType": "input",
+          "required": true
+        }
+      ],
+      "allowedConnections": [
+        "transformation",
+        "dna-storage",
+        "restriction-digest"
+      ],
+      "categories": []
+    },
+    {
+      "id": "clean-up",
+      "name": "Clean Up and Concentrate DNA",
+      "icon": "https://cdn-icons-png.flaticon.com/512/647/647370.png",
+      "parameters": [
+        {
+          "id": "template-dna",
+          "name": "Template DNA",
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
+        },
+        {
+          "id": "concentration",
+          "name": "Concentration",
+          "type": "number",
+          "paramType": "input",
+          "required": true
+        }
+      ],
+      "allowedConnections": [],
+      "categories": []
+    },
+    {
+      "id": "dna-storage",
+      "name": "Plasmid, DNA fragment, or oligo storage",
+      "icon": "https://cdn-icons-png.flaticon.com/512/647/647370.png",
+      "parameters": [
+        {
+          "id": "dna-types",
+          "name": "Type",
+          "type": "ENUM",
+          "paramType": "input",
+          "required": true
+        }
+      ],
+      "categories": [
+        "dna-assembly-cloning"
+      ],
+      "allowedConnections": []
+    },
+    {
       "id": "run-gel",
       "name": "Run Agarose Gel",
       "icon": "https://cdn-icons-png.flaticon.com/512/2222/2222661.png",
@@ -204,13 +417,16 @@
         {
           "id": "ladder",
           "name": "Ladder",
-          "type": "string"
+          "type": "string",
+          "paramType": "input",
+          "required": true
         },
         {
           "id": "pcr-product-param",
           "name": "PCR Product Result",
-          "type": null,
-          "paramType": "result"
+          "type": "boolean",
+          "paramType": "result",
+          "required": true
         }
       ],
       "allowedConnections": [
@@ -242,7 +458,7 @@
         {
           "id": "dpn1-product-param",
           "name": "Dpn1 Product Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         }
@@ -265,12 +481,14 @@
         {
           "id": "gel-product-param",
           "name": "Gel Product Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         }
       ],
       "allowedConnections": [
+        "dna-storage",
+        "gel-electrophoresis"
       ],
       "categories": [
         "dna-rna"
@@ -317,14 +535,14 @@
         {
           "id": "forward-primer-flow-param",
           "name": "Forward Primer Flow Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         },
         {
           "id": "reverse-primer-flow-param",
           "name": "Reverse Primer Flow Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         }
@@ -352,14 +570,14 @@
         {
           "id": "m-cloning-product-param",
           "name": "MCloning Product Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         },
         {
           "id": "antibiotic-workflow-product-param",
           "name": "Antibiotic Workflow Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         }
@@ -387,19 +605,21 @@
         {
           "id": "desired-volume",
           "name": "Desired Volume",
-          "type": "number"
+          "type": "number",
+          "paramType": "input",
+          "required": true
         },
         {
           "id": "transformation-product-param",
           "name": "Transformation Product Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         },
         {
           "id": "antibiotic-workflow-product-param",
           "name": "Antibiotic Workflow Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         }
@@ -428,12 +648,12 @@
           "name": "Desired Concentration",
           "type": "number",
           "paramType": "input",
-          "required": true
+          "required": false
         },
         {
           "id": "overnight-culture-product-param",
           "name": "Overnight Culture Product Result",
-          "type": null,
+          "type": "boolean",
           "paramType": "result",
           "required": true
         }
@@ -457,9 +677,13 @@
       "categories": [
         "pcr-reactions"
       ],
-      "allowedConnections": [
-      ],
-      "parameters": []
+      "parameters": [],
+      "result": {
+        "id": "glyc-storage-product",
+        "type": "GlycStorageResult",
+        "name": "Glycerol Stock Storage Result"
+      },
+      "allowedConnections": []
     },
     {
       "id": "eth-perc",
@@ -476,7 +700,8 @@
           "id": "pcr-product-param",
           "name": "PCR Product Result",
           "type": "string",
-          "paramType": "input"
+          "paramType": "input",
+          "required": true
         }
       ],
       "result": {
@@ -488,7 +713,7 @@
     {
       "id": "bioanalyzer",
       "name": "Bioanalyzer",
-      "icon": "Library.svg",
+      "icon": "https://drive.google.com/uc?id=1L2wX2D0Vhlq6UpU3VnA4FGKaDq259LXk",
       "categories": [
         "transcriptomics"
       ],
