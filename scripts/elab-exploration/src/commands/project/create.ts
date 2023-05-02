@@ -28,8 +28,7 @@ export default class CreateProject extends Command {
     // Get the API key
     const key = process.env.ELAB_KEY;
     if (!key) {
-      console.log('Requires environment variable ELAB_KEY');
-      return;
+      throw new Error('Requires environment variable ELAB_KEY');
     }
 
     const { flags } = await this.parse(CreateProject);
