@@ -1,14 +1,14 @@
-import { Args, Command, Flags } from '@oclif/core';
+import { Args, Command } from '@oclif/core';
 import { readFile } from 'fs/promises';
 
-export default class PutSectionHTML extends Command {
+export default class PutSectionTable extends Command {
   static args = {
     journalID: Args.string({
-      description: 'The expJournalID of the section to update the HTML for',
+      description: 'The expJournalID of the section to update the table for',
       required: true
     }),
-    htmlFile: Args.string({
-      description: 'The file to read the HTML from',
+    tableFile: Args.string({
+      description: 'The file to read the table from',
       required: true
     })
   };
@@ -20,15 +20,17 @@ export default class PutSectionHTML extends Command {
       throw new Error('Requires environment variable ELAB_KEY');
     }
 
-    const { args } = await this.parse(PutSectionHTML);
+    const { args } = await this.parse(PutSectionTable);
 
-    const fileContents = await readFile(args.htmlFile, { encoding: 'utf-8' });
+    const fileContents = await readFile(args.tableFile, { encoding: 'utf-8' });
+    console.log(fileContents);
 
-    const url = `https://sandbox.elabjournal.com/api/v1/experiments/sections/${args.journalID}/html`;
+    const url = `https://sandbox.elabjournal.com/api/v1/experiments/sections/${args.journalID}/datatable`;
     const result = await fetch(url, {
       method: 'PUT',
       headers: {
         'Authorization': key,
+        'Content-Type': 'application/json'
       },
       body: fileContents
     });

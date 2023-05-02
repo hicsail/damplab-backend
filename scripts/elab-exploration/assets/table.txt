@@ -1,0 +1,5 @@
+[
+  [ 'Component', 'Reaction Volumeul', 'With 10% Overage' ],
+  [ '5X Q5 Reaction Buffers', '50', '' ],
+  [ '10 nM dNTPs', '', '' ]
+]
