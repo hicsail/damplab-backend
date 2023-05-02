@@ -30,7 +30,7 @@ export default class PutSectionHTML extends Command {
       headers: {
         'Authorization': key
       },
-      body: JSON.stringify({ html: fileContents })
+      body: fileContents
     });
 
     if (result.status != 204) {
