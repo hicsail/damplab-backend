@@ -98,6 +98,7 @@ export default class LoadDatabase extends Command {
     for (const service of services) {
       // Get a copy of the data without the allowed connections and id
       const copy = { ...service };
+      copy.description = copy.description || '';
       delete copy.allowedConnections;
       delete copy.id;
 
