@@ -125,6 +125,7 @@
       "id": "pcr",
       "name": "PCR",
       "icon": "https://drive.google.com/uc?id=1WV97Xgtp-ZngdSS1A-f8Vk9lP2LAuOpt",
+      "description": "",
       "parameters": [
         {
           "id": "melting-temp",
@@ -195,18 +196,22 @@
     {
       "id": "gel-electrophoresis",
       "name": "Gel Electrophoresis",
+      "description": "Gel electrophoresis is a laboratory method used to separate mixtures of DNA, RNA, or proteins according to molecular size. In gel electrophoresis, the molecules to be separated are pushed by an electrical field through a gel that contains small pores.",
       "icon": "https://drive.google.com/uc?id=1lIq60MG4kdCmu4iJrNZikAc60TUlta5M",
+      "categories": [],
       "parameters": [
         {
           "id": "gel-type",
-          "name": "Gel Type",
-          "type": "string",
+          "name": "Gel Percentage",
+          "description": "Provide a number between 0.5% and 3.0%",
+          "type": "number",
           "paramType": "input",
           "required": false
         },
         {
           "id": "sample-length",
           "name": "Sample Length",
+          "description": "Numbers and base pairs 50bp - 10000bp",
           "type": "number",
           "paramType": "input",
           "required": true
@@ -214,12 +219,50 @@
         {
           "id": "ladder",
           "name": "Ladder",
+          "description": "select from dropdown",
+          "options": [
+            {
+              "id": "100-bp-ladder",
+              "name": "100 bp ladder"
+            },
+            {
+              "id": "1-kb-ladder",
+              "name": "1 kb ladder"
+            },
+            {
+              "id": "1-kb-plus-ladder",
+              "name": "1 kb plus ladder"
+            }
+          ],
+          "type": "dropdown",
+          "paramType": "input",
+          "required": true
+        },
+        {
+          "id": "dye",
+          "name": "Dye",
+          "description": "autofill SYBR Safe",
           "type": "string",
           "paramType": "input",
           "required": true
+        },
+        {
+          "id": "voltage",
+          "name": "Voltage",
+          "description": "Numbers and volts 50 - 200",
+          "type": "number",
+          "paramType": "input",
+          "required": false
+        },
+        {
+          "id": "time",
+          "name": "Time",
+          "description": "Provide minutes 10 - 60",
+          "type": "number",
+          "paramType": "input",
+          "required": false
         }
       ],
-      "categories": [],
       "allowedConnections": [
         "column-purification",
         "pcr"
@@ -260,26 +303,14 @@
     {
       "id": "gibson-assembly",
       "name": "Gibson Assembly",
-      "icon": "https://cdn-icons-png.flaticon.com/512/2222/2222661.png",
+      "icon": "https://drive.google.com/uc?id=1pld9hXCDV9u1MSkMbUBXg4mtvBwMpS1I",
+      "categories": [],
       "parameters": [
         {
           "id": "template-dna",
           "name": "Template DNA",
           "type": "boolean",
-          "paramType": "result",
-          "required": true
-        },
-        {
-          "id": "forward-primer",
-          "name": "Forward Primer",
-          "type": "boolean",
-          "paramType": "result",
-          "required": true
-        },
-        {
-          "id": "reverse-primer",
-          "name": "Reverse Primer",
-          "type": "boolean",
+          "description": "result param from pcr",
           "paramType": "result",
           "required": true
         },
@@ -296,25 +327,18 @@
           "type": "string",
           "paramType": "input",
           "required": false
-        },
-        {
-          "id": "antibiotic",
-          "name": "Antibiotic",
-          "type": "string",
-          "paramType": "input",
-          "required": false
         }
       ],
       "allowedConnections": [
         "transformation",
         "dna-storage"
-      ],
-      "categories": []
+      ]
     },
     {
       "id": "restriction-digest",
       "name": "Restriction Digest",
       "icon": "https://cdn-icons-png.flaticon.com/512/647/647370.png",
+      "categories": [],
       "parameters": [
         {
           "id": "template-dna",
@@ -335,13 +359,13 @@
         "clean-up",
         "dna-storage",
         "restriction-ligation"
-      ],
-      "categories": []
+      ]
     },
     {
       "id": "restriction-ligation",
       "name": "Restriction Ligation",
       "icon": "https://cdn-icons-png.flaticon.com/512/647/647370.png",
+      "categories": [],
       "parameters": [
         {
           "id": "digest-dna",
@@ -362,13 +386,13 @@
         "transformation",
         "dna-storage",
         "restriction-digest"
-      ],
-      "categories": []
+      ]
     },
     {
       "id": "clean-up",
       "name": "Clean Up and Concentrate DNA",
       "icon": "https://cdn-icons-png.flaticon.com/512/647/647370.png",
+      "categories": [],
       "parameters": [
         {
           "id": "template-dna",
@@ -385,8 +409,7 @@
           "required": true
         }
       ],
-      "allowedConnections": [],
-      "categories": []
+      "allowedConnections": []
     },
     {
       "id": "dna-storage",
@@ -561,7 +584,7 @@
     {
       "id": "transformation",
       "name": "Transformation",
-      "icon": "https://cdn-icons-png.flaticon.com/512/203/203144.png",
+      "icon": "https://drive.google.com/uc?id=1JRRNNrprfVjobLCnNRUUvCcRiJ0TkVI0",
       "resultParams": [
         "m-cloning-product",
         "antibiotic-workflow"
@@ -570,6 +593,7 @@
         {
           "id": "m-cloning-product-param",
           "name": "MCloning Product Result",
+          "description": "Result from Gibson Assembly",
           "type": "boolean",
           "paramType": "result",
           "required": true
@@ -580,6 +604,66 @@
           "type": "boolean",
           "paramType": "result",
           "required": true
+        },
+        {
+          "id": "competent-cells",
+          "name": "Competent Cells",
+          "type": "dropdown",
+          "paramType": "input",
+          "required": true,
+          "description": "select from dropdown defauly is DH5alpha",
+          "options": [
+            {
+              "id": "DH5alpha",
+              "name": "DH5alpha"
+            },
+            {
+              "id": "DH10B",
+              "name": "DH10B"
+            },
+            {
+              "id": "e-coli",
+              "name": "E-coli"
+            }
+          ]
+        },
+        {
+          "id": "recovery-media",
+          "name": "Recovery Media",
+          "type": "string",
+          "paramType": "input",
+          "required": true,
+          "description": "select from dropdown default is SOC",
+          "options": [
+            {
+              "id": "SOC",
+              "name": "SOC"
+            },
+            {
+              "id": "LBE",
+              "name": "LBE"
+            },
+            {
+              "id": "TB",
+              "name": "TB"
+            }
+          ]
+        },
+        {
+          "id": "recovery-time",
+          "name": "Recovery Time",
+          "type": "number",
+          "paramType": "input",
+          "required": true,
+          "description": "default is 1 hour, range is 0.5 - 2 hours"
+        },
+        {
+          "id": "recovery-incubation-temp",
+          "name": "Recovery Incubation Temperature",
+          "type": "number",
+          "paramType": "input",
+          "required": true,
+          "description": "default is 37 degrees C and 250RPM, range is 30 - 42 degrees C"
         }
       ],
       "allowedConnections": [
@@ -596,7 +680,7 @@
     {
       "id": "overnight-culture",
       "name": "Overnight Inoculum",
-      "icon": "https://cdn-icons-png.flaticon.com/512/3625/3625162.png",
+      "icon": "https://drive.google.com/uc?id=1Wckp8P3GwvJw-7_tb1DevtSVCFPaevcG",
       "resultParams": [
         "transformation-product",
         "antibiotic-workflow"
@@ -622,6 +706,64 @@
           "type": "boolean",
           "paramType": "result",
           "required": true
+        },
+        {
+          "id": "growth-media",
+          "name": "Growth Media",
+          "type": "string",
+          "paramType": "input",
+          "required": true,
+          "description": "select from dropdown",
+          "options": [
+            {
+              "id": "LBE",
+              "name": "LBE"
+            },
+            {
+              "id": "SOC",
+              "name": "SOC"
+            },
+            {
+              "id": "TB",
+              "name": "TB"
+            },
+            {
+              "id": "M9",
+              "name": "M9"
+            }
+          ]
+        },
+        {
+          "id": "growth-tilt",
+          "name": "Growth Tilt",
+          "type": "number",
+          "paramType": "input",
+          "required": true,
+          "description": "0-45 degrees"
+        },
+        {
+          "id": "rpm",
+          "name": "RPM",
+          "type": "number",
+          "paramType": "input",
+          "required": true,
+          "description": "default is 250RPM, range is 50-300"
+        },
+        {
+          "id": "growth-temp",
+          "name": "Growth Temperature",
+          "type": "number",
+          "paramType": "input",
+          "required": true,
+          "description": "default is 37 degrees C, range is 30 - 42 degrees C"
+        },
+        {
+          "id": "growth-time",
+          "name": "Growth Time",
+          "type": "number",
+          "paramType": "input",
+          "required": true,
+          "description": "default is 16 hours, range is 10 - 48 hours"
         }
       ],
       "allowedConnections": [
@@ -638,7 +780,8 @@
     {
       "id": "miniprep-gs",
       "name": "Miniprep and Glycerol Stock",
-      "icon": "https://cdn-icons-png.flaticon.com/512/1474/1474390.png",
+      "icon": "https://drive.google.com/uc?id=1Lam_nDy2e5CwjAK_TU6L1zPAEAeZGRqw",
+      "description": "we use thermofisher no charge spin switch",
       "resultParams": [
         "overnight-culture-product"
       ],
