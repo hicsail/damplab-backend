@@ -42,10 +42,6 @@ export class Workflow {
   @Prop()
   @Field(() => String, { description: 'The name of the workflow' })
   name: string;
-
-  @Prop()
-  @Field()
-  description: string;
 }
 
 export type WorkflowDocument = Workflow & Document;
