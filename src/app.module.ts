@@ -13,6 +13,7 @@ import { WorkflowModule } from './workflow/workflow.module';
 import { CategoriesModule } from './categories/categories.module';
 import { BundlesModule } from './bundles/bundles.module';
 import { JobModule } from './job/job.module';
+import { ResetModule } from './reset/reset.module';
 
 @Module({
   imports: [
@@ -34,7 +35,11 @@ import { JobModule } from './job/job.module';
     WorkflowModule,
     CategoriesModule,
     BundlesModule,
-    JobModule
+    JobModule,
+
+    // NOTE: The Reset module is for development purposes only and will
+    // be removed in future version
+    ResetModule
   ],
   controllers: [AppController],
   providers: [AppService]
