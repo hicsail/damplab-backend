@@ -51,7 +51,7 @@ export class ResetService {
    * Allowed connections and categories are add in later
    */
   async saveServices(services: ServiceInput[]): Promise<Map<string, ObjectId>> {
-    const serviceMap = new Map<string, ObjectId>;
+    const serviceMap = new Map<string, ObjectId>();
     for (const service of services) {
       const result = await this.serviceModel.create({
         name: service.name,
@@ -96,7 +96,7 @@ export class ResetService {
    * MongoDB IDs
    */
   async insertCategories(categories: CategoryInput[]): Promise<Map<string, ObjectId>> {
-    const categoryMap = new Map<string, ObjectId>;
+    const categoryMap = new Map<string, ObjectId>();
 
     for (const category of categories) {
       const result = await this.categoryModel.create({
@@ -115,10 +115,7 @@ export class ResetService {
    * Update the list of services on category using the category field on
    * the services
    */
-  async updateServiceList(
-    categories: CategoryInput[], categoryMap: Map<string, ObjectId>,
-    services: ServiceInput[], serviceMap: Map<string, ObjectId>
-  ): Promise<void> {
+  async updateServiceList(categories: CategoryInput[], categoryMap: Map<string, ObjectId>, services: ServiceInput[], serviceMap: Map<string, ObjectId>): Promise<void> {
     for (const category of categories) {
       // Get the IDs of the contained services
       const targetServices = services
