@@ -41,7 +41,7 @@ export class DampLabService {
   @Field(() => [String], { description: 'The expected fields in the result of the service', nullable: true })
   resultParams?: string[];
 
-  @Prop({ required: true })
+  @Prop()
   @Field()
   description: string;
 }
