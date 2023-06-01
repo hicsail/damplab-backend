@@ -20,7 +20,7 @@ export class CreateJobPipe implements PipeTransform<CreateJob, Promise<CreateJob
 
   async transform(value: CreateJob): Promise<CreateJobFull> {
     const workflows = await Promise.all(value.workflows.map((workflow) => this.workflowPipe.transform(workflow)));
-    return { ...value, workflows, state: JobState.CREATING };
+    return { ...value, workflows, state: JobState.SUBMITTED };
   }
 }
 
