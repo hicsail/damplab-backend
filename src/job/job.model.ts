@@ -7,6 +7,7 @@ import { Workflow } from '../workflow/models/workflow.model';
 export enum JobState {
   CREATING,
   SUBMITTED,
+  CHANGES_REQUESTED,
   ACCEPTED,
   WAITING_FOR_SOW,
   QUEUED,
