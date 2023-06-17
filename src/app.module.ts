@@ -14,6 +14,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { BundlesModule } from './bundles/bundles.module';
 import { JobModule } from './job/job.module';
 import { ResetModule } from './reset/reset.module';
+import { CommentModule } from './comment/comment.module';
 
 @Module({
   imports: [
@@ -39,7 +40,9 @@ import { ResetModule } from './reset/reset.module';
 
     // NOTE: The Reset module is for development purposes only and will
     // be removed in future version
-    ResetModule
+    ResetModule,
+
+    CommentModule
   ],
   controllers: [AppController],
   providers: [AppService]
