@@ -24,7 +24,6 @@ import { CommentModule } from './comment/comment.module';
       driver: ApolloDriver,
       autoSchemaFile: join(process.cwd(), 'dist/schema.gql')
     }),
-    // Load the MongoDB connection based on the config service
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
