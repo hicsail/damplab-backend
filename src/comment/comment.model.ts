@@ -12,7 +12,7 @@ export class Comment {
     message: string;
 
     @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: Job.name }] })
-    @Field(() => Job,  {description: 'Job which the comment is under'})
+    //@Field(() => Job,  {description: 'Job which the comment is under'})
     job: mongoose.Types.ObjectId;
 }
 

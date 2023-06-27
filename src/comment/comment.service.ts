@@ -3,12 +3,13 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Comment, CommentDocument } from './comment.model';
 import { CreateComment } from './comment.dto';
+import { Job } from '../job/job.model';
 
 @Injectable()
 export class CommentService {
     constructor(@InjectModel(Comment.name) private commentModel: Model<CommentDocument>) {}
 
-    async create(comment: Comment): Promise<Comment> {
+    async create(comment: CreateComment): Promise<Comment> {
         const newComment = new this.commentModel(comment);
         return newComment.save();
     }
@@ -16,7 +17,8 @@ export class CommentService {
     async findAll(): Promise<Comment[]> {
         return this.commentModel.find().exec();
     }
+
+    async findByJob(jobID: string): Promise<Comment[]> {
+        return this.commentModel.find({ job: jobID }).exec();
+    }
 }
-
-
-

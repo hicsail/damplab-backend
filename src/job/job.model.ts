@@ -1,7 +1,7 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
-import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
+import { Field, ObjectType, InputType, ID, registerEnumType } from '@nestjs/graphql';
 import { Workflow } from '../workflow/models/workflow.model';
 
 export enum JobState {
