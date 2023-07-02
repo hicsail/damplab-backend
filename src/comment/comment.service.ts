@@ -7,18 +7,18 @@ import { Job } from '../job/job.model';
 
 @Injectable()
 export class CommentService {
-    constructor(@InjectModel(Comment.name) private commentModel: Model<CommentDocument>) {}
+  constructor(@InjectModel(Comment.name) private commentModel: Model<CommentDocument>) {}
 
-    async create(comment: CreateComment): Promise<Comment> {
-        const newComment = new this.commentModel(comment);
-        return newComment.save();
-    }
+  async create(comment: CreateComment): Promise<Comment> {
+    const newComment = new this.commentModel(comment);
+    return newComment.save();
+  }
 
-    async findAll(): Promise<Comment[]> {
-        return this.commentModel.find().exec();
-    }
+  async findAll(): Promise<Comment[]> {
+    return this.commentModel.find().exec();
+  }
 
-    async findByJob(jobID: string): Promise<Comment[]> {
-        return this.commentModel.find({ job: jobID }).exec();
-    }
+  async findByJob(jobID: string): Promise<Comment[]> {
+    return this.commentModel.find({ job: jobID }).exec();
+  }
 }

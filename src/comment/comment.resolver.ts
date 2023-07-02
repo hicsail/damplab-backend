@@ -5,24 +5,23 @@ import { CommentService } from './comment.service';
 import { CreateComment } from './comment.dto';
 import { Job } from '../job/job.model';
 
-
 @Resolver(() => Comment)
 export class CommentResolver {
-    constructor(private readonly commentService: CommentService) { }
+  constructor(private readonly commentService: CommentService) {}
 
-    // add the create to resolver
-    @Query(() => [Comment])
-    async findAll(): Promise<Comment[]> {
-        return this.commentService.findAll();
-    }
+  // add the create to resolver
+  @Query(() => [Comment])
+  async findAll(): Promise<Comment[]> {
+    return this.commentService.findAll();
+  }
 
-    @Query(() => [Comment])
-    async findByJob(@Args('jobID', {type: () => ID}) jobID: string): Promise<Comment[]> {
-        return this.commentService.findByJob(jobID);
-    }
+  @Query(() => [Comment])
+  async findByJob(@Args('jobID', { type: () => ID }) jobID: string): Promise<Comment[]> {
+    return this.commentService.findByJob(jobID);
+  }
 
-    @Mutation(() => Comment)
-    async createComment(@Args('newComment') newComment: CreateComment): Promise<Comment> {
-        return this.commentService.create(newComment);
-     }
+  @Mutation(() => Comment)
+  async createComment(@Args('newComment') newComment: CreateComment): Promise<Comment> {
+    return this.commentService.create(newComment);
+  }
 }
