@@ -9,7 +9,6 @@ import { Job } from '../job/job.model';
 export class CommentResolver {
   constructor(private readonly commentService: CommentService) {}
 
-  // add the create to resolver
   @Query(() => [Comment])
   async findAll(): Promise<Comment[]> {
     return this.commentService.findAll();
