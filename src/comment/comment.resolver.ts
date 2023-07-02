@@ -1,9 +1,7 @@
-// comment.resolver.ts
 import { Resolver, Query, Mutation, Args, ID } from '@nestjs/graphql';
 import { Comment } from './comment.model';
 import { CommentService } from './comment.service';
 import { CreateComment } from './comment.dto';
-import { Job } from '../job/job.model';
 
 @Resolver(() => Comment)
 export class CommentResolver {

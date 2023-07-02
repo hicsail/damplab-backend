@@ -1,5 +1,4 @@
 import { InputType, Field, ID } from '@nestjs/graphql';
-import { Job } from '../job/job.model';
 import mongoose from 'mongoose';
 
 @InputType()
