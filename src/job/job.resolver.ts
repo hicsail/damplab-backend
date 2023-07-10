@@ -3,12 +3,14 @@ import { CreateJob, CreateJobPipe, CreateJobFull, JobPipe } from './job.dto';
 import { Job, JobState } from './job.model';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
+import { Comment } from '../comment/comment.model';
+import { CommentService } from '../comment/comment.service';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowPipe } from '../workflow/workflow.pipe';
 
 @Resolver(() => Job)
 export class JobResolver {
-  constructor(private readonly jobService: JobService, private readonly workflowService: WorkflowService) {}
+  constructor(private readonly jobService: JobService, private readonly workflowService: WorkflowService, private readonly commentService: CommentService) {}
 
   @Query(() => Job, { nullable: true })
   async jobByName(@Args('name') name: string): Promise<Job | null> {
@@ -38,5 +40,10 @@ export class JobResolver {
   @ResolveField()
   async workflows(@Parent() job: Job): Promise<Workflow[]> {
     return this.workflowService.findByIds(job.workflows.map((workflow) => workflow._id));
+  }
+
+  @ResolveField(() => [Comment])
+  async comments(@Parent() job: Job): Promise<Comment[]> {
+    return this.commentService.findByJob(job._id);
   }
 }
