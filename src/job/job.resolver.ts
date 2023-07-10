@@ -42,7 +42,7 @@ export class JobResolver {
     return this.workflowService.findByIds(job.workflows.map((workflow) => workflow._id));
   }
 
-  @ResolveField(() => Comment)
+  @ResolveField(() => [Comment])
   async comments(@Parent() job: Job): Promise<Comment[]> {
     return this.commentService.findByJob(job._id);
   }
