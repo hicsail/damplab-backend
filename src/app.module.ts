@@ -6,7 +6,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import config from './config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
-import { join } from 'path';
 import { DampLabServicesModule } from './services/damplab-services.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WorkflowModule } from './workflow/workflow.module';
@@ -22,7 +21,6 @@ import { CommentModule } from './comment/comment.module';
     getConfigModule(),
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: join(process.cwd(), 'dist/schema.gql')
     }),
 
     // Load the MongoDB connection based on the config service
