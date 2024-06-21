@@ -21,6 +21,7 @@ import { CommentModule } from './comment/comment.module';
     getConfigModule(),
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
+      autoSchemaFile: true
     }),
 
     // Load the MongoDB connection based on the config service
