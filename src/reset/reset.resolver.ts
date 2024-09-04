@@ -3,6 +3,7 @@ import { CategoryInput } from './dtos/category.dto';
 import { ServiceInput } from './dtos/service.dto';
 import { BundleInput } from './dtos/bundle.dto';
 import { ResetService } from './reset.service';
+import { Logger } from '@nestjs/common';
 
 @Resolver()
 export class ResetResolver {
