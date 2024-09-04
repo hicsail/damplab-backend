@@ -3,6 +3,7 @@ import { DampLabService, DampLabServiceDocument } from './models/damplab-service
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
+import { ServiceChange } from './dtos/update.dto';
 
 @Injectable()
 export class DampLabServices {
@@ -21,5 +22,10 @@ export class DampLabServices {
 
   async findOne(id: string): Promise<DampLabService | null> {
     return this.dampLabServiceModel.findById(id).exec();
+  }
+
+  async update(service: DampLabService, changes: ServiceChange): Promise<DampLabService> {
+    await this.dampLabServiceModel.updateOne({ _id: service._id }, changes);
+    return (await this.dampLabServiceModel.findById(service._id))!;
   }
 }
