@@ -118,8 +118,6 @@ export default class LoadDatabase extends Command {
         return serviceMap.get(id);
       });
 
-      
-
       // Update the service
       await this.client
         ?.db()

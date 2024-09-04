@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import mongoose, { Model } from 'mongoose';
 import { Workflow, WorkflowDocument, WorkflowState } from './models/workflow.model';
@@ -15,8 +15,6 @@ export class WorkflowService {
   ) {}
 
   async create(createWorkflowInput: AddWorkflowInputFull): Promise<Workflow> {
-
-    Logger.log(`Created workflow, ${createWorkflowInput}`);
 
     // Make the nodes
     const nodes = await Promise.all(createWorkflowInput.nodes.map((node) => this.nodeService.create(node)));
