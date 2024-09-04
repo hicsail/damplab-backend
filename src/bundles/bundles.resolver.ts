@@ -5,6 +5,7 @@ import { Bundle } from './bundles.model';
 import { BundlesService } from './bundles.service';
 import { BundlesPipe } from './bundles.pipe';
 import { BundleChange } from './dtos/update.dto';
+import { BundleUpdatePipe } from './update.pipe';
 
 @Resolver(() => Bundle)
 export class BundlesResolver {
@@ -18,7 +19,7 @@ export class BundlesResolver {
   @Mutation(() => Bundle)
   async updateBundle(
     @Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle,
-    @Args('changes') changes: BundleChange
+    @Args('changes', { type: () => BundleChange }, BundleUpdatePipe) changes: BundleChange
   ) {
     return this.bundlesService.update(bundle, changes);
   }

@@ -3,6 +3,7 @@ import { DampLabServicePipe } from './damplab-services.pipe';
 import { DampLabServices } from './damplab-services.services';
 import { ServiceChange } from './dtos/update.dto';
 import { DampLabService } from './models/damplab-service.model';
+import { ServiceUpdatePipe } from './update.pipe';
 
 @Resolver(() => DampLabService)
 export class DampLabServicesResolver {
@@ -16,7 +17,7 @@ export class DampLabServicesResolver {
   @Mutation(() => DampLabService)
   async updateService(
     @Args('service', { type: () => ID }, DampLabServicePipe) service: DampLabService,
-    @Args('changes') changes: ServiceChange): Promise<DampLabService> {
+    @Args('changes', { type: () => ServiceChange }, ServiceUpdatePipe) changes: ServiceChange): Promise<DampLabService> {
     return this.dampLabServices.update(service, changes);
   }
 

@@ -5,6 +5,7 @@ import { DampLabServices } from '../services/damplab-services.services';
 import { DampLabService } from '../services/models/damplab-service.model';
 import { CategoryPipe } from './categories.pipe';
 import { CategoryChange } from './dtos/update.dto';
+import { CategoryUpdatePipe } from './update.pipe';
 
 @Resolver(() => Category)
 export class CategoryResolver {
@@ -18,7 +19,7 @@ export class CategoryResolver {
   @Mutation(() => Category)
   async updateCategory(
     @Args('category', { type: () => ID }, CategoryPipe) category: Category,
-    @Args('changes') changes: CategoryChange
+    @Args('changes', { type: () => CategoryChange }, CategoryUpdatePipe) changes: CategoryChange
   ) {
     return this.categoryService.update(category, changes);
   }
