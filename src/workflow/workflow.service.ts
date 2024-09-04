@@ -15,7 +15,6 @@ export class WorkflowService {
   ) {}
 
   async create(createWorkflowInput: AddWorkflowInputFull): Promise<Workflow> {
-
     // Make the nodes
     const nodes = await Promise.all(createWorkflowInput.nodes.map((node) => this.nodeService.create(node)));
 
