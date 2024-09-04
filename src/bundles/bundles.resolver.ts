@@ -17,10 +17,7 @@ export class BundlesResolver {
   }
 
   @Mutation(() => Bundle)
-  async updateBundle(
-    @Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle,
-    @Args('changes', { type: () => BundleChange }, BundleUpdatePipe) changes: BundleChange
-  ) {
+  async updateBundle(@Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle, @Args('changes', { type: () => BundleChange }, BundleUpdatePipe) changes: BundleChange): Promise<Bundle> {
     return this.bundlesService.update(bundle, changes);
   }
 

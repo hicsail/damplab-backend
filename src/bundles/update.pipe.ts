@@ -9,7 +9,7 @@ export class BundleUpdatePipe implements PipeTransform<BundleChange, Promise<Bun
   async transform(value: BundleChange): Promise<BundleChange> {
     // If services is includes, make sure they are all valid
     if (value.services) {
-      await Promise.all(value.services.map(service => this.damplabServicePipe.transform(service)));
+      await Promise.all(value.services.map((service) => this.damplabServicePipe.transform(service)));
     }
 
     return value;

@@ -6,4 +6,3 @@ export class CategoryChange extends PartialType(OmitType(Category, ['_id', 'serv
   @Field(() => [ID], { nullable: true })
   services: string[];
 }
-

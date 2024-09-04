@@ -9,7 +9,7 @@ export class BundlesPipe implements PipeTransform<string, Promise<Bundle>> {
   async transform(value: string): Promise<Bundle> {
     const bundle = await this.bundleService.find(value);
 
-    if(!bundle) {
+    if (!bundle) {
       throw new NotFoundException(`Bundle with id ${value} not found`);
     }
     return bundle;

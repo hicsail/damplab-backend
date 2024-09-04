@@ -20,7 +20,7 @@ export class CategoryResolver {
   async updateCategory(
     @Args('category', { type: () => ID }, CategoryPipe) category: Category,
     @Args('changes', { type: () => CategoryChange }, CategoryUpdatePipe) changes: CategoryChange
-  ) {
+  ): Promise<Category> {
     return this.categoryService.update(category, changes);
   }
 

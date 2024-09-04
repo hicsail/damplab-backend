@@ -17,7 +17,8 @@ export class DampLabServicesResolver {
   @Mutation(() => DampLabService)
   async updateService(
     @Args('service', { type: () => ID }, DampLabServicePipe) service: DampLabService,
-    @Args('changes', { type: () => ServiceChange }, ServiceUpdatePipe) changes: ServiceChange): Promise<DampLabService> {
+    @Args('changes', { type: () => ServiceChange }, ServiceUpdatePipe) changes: ServiceChange
+  ): Promise<DampLabService> {
     return this.dampLabServices.update(service, changes);
   }
 

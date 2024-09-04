@@ -9,7 +9,7 @@ export class ServiceUpdatePipe implements PipeTransform<ServiceChange, Promise<S
   async transform(value: ServiceChange): Promise<ServiceChange> {
     // If services is includes, make sure they are all valid
     if (value.allowedConnections) {
-      await Promise.all(value.allowedConnections.map(service => this.damplabServicePipe.transform(service)));
+      await Promise.all(value.allowedConnections.map((service) => this.damplabServicePipe.transform(service)));
     }
 
     return value;
