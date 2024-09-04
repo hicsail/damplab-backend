@@ -29,6 +29,10 @@ export class DampLabService {
   @Field(() => JSON, { description: 'Parameters that are part of the service' })
   parameters: any;
 
+  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
+  @Field(() => JSON, { description: 'If there are grouped parameters', nullable: true })
+  paramGroups: any[];
+
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: DampLabService.name }] })
   @Field(() => [DampLabService], { description: 'List of services this service can connect to' })
   allowedConnections: mongoose.Types.ObjectId[];

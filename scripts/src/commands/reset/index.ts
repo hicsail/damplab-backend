@@ -17,6 +17,7 @@ export default class Reset extends Command {
     const { flags } = await this.parse(Reset);
 
     // Connect to the database
+    console.log(`${flags.db} connection url`);
     const client = await MongoClient.connect(flags.db);
     await client.connect();
 

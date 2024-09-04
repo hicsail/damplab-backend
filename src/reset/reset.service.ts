@@ -60,7 +60,8 @@ export class ResetService {
         allowedConnections: [],
         result: service.result,
         description: service.description,
-        resultParams: service.resultParams
+        resultParams: service.resultParams,
+        paramGroups: service.paramGroups
       });
 
       // Update the map
