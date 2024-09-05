@@ -1,6 +1,9 @@
-import { Resolver, Query, ResolveField, Parent } from '@nestjs/graphql';
+import { Resolver, Query, ResolveField, Parent, ID, Args, Mutation } from '@nestjs/graphql';
+import { DampLabServicePipe } from './damplab-services.pipe';
 import { DampLabServices } from './damplab-services.services';
+import { ServiceChange } from './dtos/update.dto';
 import { DampLabService } from './models/damplab-service.model';
+import { ServiceUpdatePipe } from './update.pipe';
 
 @Resolver(() => DampLabService)
 export class DampLabServicesResolver {
@@ -9,6 +12,14 @@ export class DampLabServicesResolver {
   @Query(() => [DampLabService])
   async services(): Promise<DampLabService[]> {
     return this.dampLabServices.findAll();
+  }
+
+  @Mutation(() => DampLabService)
+  async updateService(
+    @Args('service', { type: () => ID }, DampLabServicePipe) service: DampLabService,
+    @Args('changes', { type: () => ServiceChange }, ServiceUpdatePipe) changes: ServiceChange
+  ): Promise<DampLabService> {
+    return this.dampLabServices.update(service, changes);
   }
 
   /**
