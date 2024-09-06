@@ -20,4 +20,8 @@ export class CategoryService {
     await this.categoryModel.updateOne({ _id: category._id }, change);
     return (await this.find(category._id))!;
   }
+
+  async delete(category: Category): Promise<void> {
+    await this.categoryModel.deleteOne({ _id: category._id });
+  }
 }

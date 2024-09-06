@@ -24,6 +24,12 @@ export class CategoryResolver {
     return this.categoryService.update(category, changes);
   }
 
+  @Mutation(() => Boolean)
+  async deleteCategory(@Args('category', { type: () => ID }, CategoryPipe) category: Category): Promise<boolean> {
+    await this.categoryService.delete(category);
+    return true;
+  }
+
   /**
    * Resolver for the services field of the Category type
    */
