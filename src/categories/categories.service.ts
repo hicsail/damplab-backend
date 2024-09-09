@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Category, CategoryDocument } from './category.model';
 import { Model } from 'mongoose';
 import { CategoryChange } from './dtos/update.dto';
+import { CreateCategory } from './dtos/create.dto';
 
 @Injectable()
 export class CategoryService {
@@ -23,5 +24,9 @@ export class CategoryService {
 
   async delete(category: Category): Promise<void> {
     await this.categoryModel.deleteOne({ _id: category._id });
+  }
+
+  async create(category: CreateCategory): Promise<Category> {
+    return this.categoryModel.create(category);
   }
 }
