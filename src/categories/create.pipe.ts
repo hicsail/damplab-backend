@@ -1,5 +1,5 @@
 import { Injectable, PipeTransform } from '@nestjs/common';
-import { DampLabServicePipe } from 'src/services/damplab-services.pipe';
+import { DampLabServicePipe } from '../services/damplab-services.pipe';
 import { CreateCategory } from './dtos/create.dto';
 
 @Injectable()
