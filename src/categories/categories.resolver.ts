@@ -6,6 +6,8 @@ import { DampLabService } from '../services/models/damplab-service.model';
 import { CategoryPipe } from './categories.pipe';
 import { CategoryChange } from './dtos/update.dto';
 import { CategoryUpdatePipe } from './update.pipe';
+import { CreateCategory } from './dtos/create.dto';
+import { CreateCategoryPipe } from './create.pipe';
 
 @Resolver(() => Category)
 export class CategoryResolver {
@@ -22,6 +24,17 @@ export class CategoryResolver {
     @Args('changes', { type: () => CategoryChange }, CategoryUpdatePipe) changes: CategoryChange
   ): Promise<Category> {
     return this.categoryService.update(category, changes);
+  }
+
+  @Mutation(() => Boolean)
+  async deleteCategory(@Args('category', { type: () => ID }, CategoryPipe) category: Category): Promise<boolean> {
+    await this.categoryService.delete(category);
+    return true;
+  }
+
+  @Mutation(() => Category)
+  async createCategory(@Args('category', CreateCategoryPipe) category: CreateCategory): Promise<Category> {
+    return this.categoryService.create(category);
   }
 
   /**
