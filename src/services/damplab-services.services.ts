@@ -28,4 +28,13 @@ export class DampLabServices {
     await this.dampLabServiceModel.updateOne({ _id: service._id }, changes);
     return (await this.dampLabServiceModel.findById(service._id))!;
   }
+
+  async delete(service: DampLabService): Promise<void> {
+    // Remove all allowed connections first
+    await this.dampLabServiceModel.updateMany({}, {
+        $pull: { allowedConnections: service._id }
+    });
+
+    await this.dampLabServiceModel.deleteOne({ _id: service._id });
+  }
 }

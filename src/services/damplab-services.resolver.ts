@@ -22,6 +22,12 @@ export class DampLabServicesResolver {
     return this.dampLabServices.update(service, changes);
   }
 
+  @Mutation(() => Boolean)
+  async deleteService(@Args('service', { type: () => ID }, DampLabServicePipe) service: DampLabService): Promise<boolean> {
+    await this.dampLabServices.delete(service);
+    return true;
+  }
+
   /**
    * Resolver which the `allowedConnections` field of the `DampLabService`
    * type. Allows for the recursive search on possible connections.
