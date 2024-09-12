@@ -4,6 +4,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { ServiceChange } from './dtos/update.dto';
+import { CreateService } from './dtos/create.dto';
 
 @Injectable()
 export class DampLabServices {
@@ -36,5 +37,9 @@ export class DampLabServices {
     });
 
     await this.dampLabServiceModel.deleteOne({ _id: service._id });
+  }
+
+  async create(service: CreateService): Promise<DampLabService> {
+    return this.dampLabServiceModel.create(service);
   }
 }
