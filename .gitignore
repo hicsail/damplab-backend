@@ -6,3 +6,5 @@
 # Scripts
 /scripts/node_modules/
 /scripts/dist/
+
+/.vscode/
