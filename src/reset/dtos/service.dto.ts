@@ -29,4 +29,7 @@ export class ServiceInput {
 
   @Field(() => [String], { nullable: true })
   resultParams?: string[];
+
+  @Field(() => JSON, { nullable: true })
+  paramGroups?: any[];
 }

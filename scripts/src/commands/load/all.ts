@@ -92,7 +92,6 @@ export default class LoadDatabase extends Command {
   async insertServices(services: any[]): Promise<Map<string, ObjectId>> {
     /** Maps the ID as defined in the JSON file to the ID in the database */
     const serviceMap = new Map<string, ObjectId>();
-
     // For each of the services, save the info not including
     // the allowed connections
     for (const service of services) {

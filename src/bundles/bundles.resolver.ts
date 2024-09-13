@@ -1,8 +1,11 @@
-import { Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
+import { Parent, Query, ResolveField, Resolver, Args, Mutation, ID } from '@nestjs/graphql';
 import { DampLabServices } from '../services/damplab-services.services';
 import { DampLabService } from '../services/models/damplab-service.model';
 import { Bundle } from './bundles.model';
 import { BundlesService } from './bundles.service';
+import { BundlesPipe } from './bundles.pipe';
+import { BundleChange } from './dtos/update.dto';
+import { BundleUpdatePipe } from './update.pipe';
 
 @Resolver(() => Bundle)
 export class BundlesResolver {
@@ -11,6 +14,11 @@ export class BundlesResolver {
   @Query(() => [Bundle])
   async bundles(): Promise<Bundle[]> {
     return this.bundlesService.findAll();
+  }
+
+  @Mutation(() => Bundle)
+  async updateBundle(@Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle, @Args('changes', { type: () => BundleChange }, BundleUpdatePipe) changes: BundleChange): Promise<Bundle> {
+    return this.bundlesService.update(bundle, changes);
   }
 
   @ResolveField()
