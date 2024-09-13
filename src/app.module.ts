@@ -14,6 +14,7 @@ import { BundlesModule } from './bundles/bundles.module';
 import { JobModule } from './job/job.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
+import { MPIModule } from './mpi/mpi.module';
 
 @Module({
   imports: [
@@ -42,7 +43,9 @@ import { CommentModule } from './comment/comment.module';
     // be removed in future version
     ResetModule,
 
-    CommentModule
+    CommentModule,
+
+    MPIModule
   ],
   controllers: [AppController],
   providers: [AppService]
