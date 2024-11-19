@@ -1,32 +1,7 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
 import axios from 'axios';
 
-// type ELabsStudyResponse = {
-//   studyID      : number;
-//   projectID    : number;
-//   groupID      : number;
-//   subGroupID   : number;
-//   userID       : number;
-//   name         : string;
-//   statusChanged: string;
-//   description  : string;
-//   notes        : string;
-//   approve      : string;
-//   created      : string;
-//   deleted      : boolean;
-// };
-
 type eLabsStatus = 'PENDING' | 'PROGRESS' | 'COMPLETED';
-
-// type ELabsExperimentResponse = {
-//   bearerToken     : string,
-//   experimentID    : number,
-//   studyID         : number,
-//   name            : string,
-//   status          : eLabsStatus,
-//   templateID?     : number,
-//   autoCollaborate?: boolean
-// }
 
 @Injectable()
 export class MPIService {
@@ -35,20 +10,19 @@ export class MPIService {
   // TODO: this should be the actual user id, got from DAMP LAB auth?
   private currentUserId = 'mpitest';
 
-  // To log in use:
-  // NOTE THAT THIS SERVER IS RUNNING ON PORT 5100
-  // https://mpi-demo.us.auth0.com/authorize?response_type=code&scope=offline_access&client_id=tZSXM9f8WUiPIpNGt1kXlGqzZVYvWNEF&redirect_uri=http://127.0.0.1:5100/mpi/auth0_redirect&audience=https://mpi-demo.com
+  // To log in use (update uri as needed):
+  // https://mpi-demo.us.auth0.com/authorize?response_type=code&scope=offline_access&client_id=<MPI_CLIENT_ID>&redirect_uri=http://127.0.0.1:5100/mpi/auth0_redirect&audience=https://mpi-demo.com
   // To log out use:
-  // https://mpi-demo.us.auth0.com/oidc/logout?post_logout_redirect_uri=http://127.0.0.1:5100/mpi/auth0_logout&client_id=tZSXM9f8WUiPIpNGt1kXlGqzZVYvWNEF
+  // https://mpi-demo.us.auth0.com/oidc/logout?post_logout_redirect_uri=http://127.0.0.1:5100/mpi/auth0_logout&client_id=<MPI_CLIENT_ID>
 
   async exchangeCodeForToken(code: string): Promise<string> {
-    const tokenUrl = `https://mpi-demo.us.auth0.com/oauth/token`;
+    const tokenUrl = process.env.MPI_TOKEN_URL || '';
     const payload = {
       grant_type: 'authorization_code',
       client_id: process.env.MPI_CLIENT_ID,
       client_secret: process.env.MPI_CLIENT_SECRET,
       code,
-      redirect_uri: 'http://127.0.0.1:5100/mpi/auth0_redirect' // URL in this server that was used to redirect to after Auth0 login
+      redirect_uri: process.env.MPI_REDIRECT_URL // URL in this server that was used to redirect to after Auth0 login
     };
 
     const response = await axios.post(tokenUrl, payload, {
@@ -74,7 +48,7 @@ export class MPIService {
   async exchangeRefreshTokenForToken(): Promise<void> {
     const refreshToken = this.tokenStore.get(this.currentUserId)!.refreshToken;
 
-    const tokenUrl = `https://mpi-demo.us.auth0.com/oauth/token`;
+    const tokenUrl = process.env.MPI_TOKEN_URL || '';
     const payload = {
       grant_type: 'refresh_token',
       client_id: process.env.MPI_CLIENT_ID,
@@ -131,9 +105,9 @@ export class MPIService {
   async createSequence(): Promise<any> {
     const token = await this.getAccessToken();
     if (!token) {
-      return new BadRequestException('No token found, log in to MPI first');
+      return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const sequences = await axios.get('http://localhost:5000/sequences', {
+    const sequences = await axios.get(`${process.env.MPI_BACKEND}/sequences`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -144,9 +118,9 @@ export class MPIService {
   async getSequences(): Promise<any> {
     const token = await this.getAccessToken();
     if (!token) {
-      return new BadRequestException('No token found, log in to MPI first');
+      return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const sequences = await axios.get('http://localhost:5000/sequences', {
+    const sequences = await axios.get(`${process.env.MPI_BACKEND}/sequences`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -158,9 +132,9 @@ export class MPIService {
   async azentaSeqOrder(id: string): Promise<any> {
     const token = await this.getAccessToken();
     if (!token) {
-      return new BadRequestException('No token found, log in to MPI first');
+      return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const azentaSeqOrder = await axios.get(`http://localhost:5000/azenta/seqOrder/${id}`, {
+    const azentaSeqOrder = await axios.get(`${process.env.MPI_BACKEND}/azenta/seqOrder/${id}`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -171,9 +145,9 @@ export class MPIService {
   async azentaSeqOrders(): Promise<any> {
     const token = await this.getAccessToken();
     if (!token) {
-      return new BadRequestException('No token found, log in to MPI first');
+      return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const azentaSeqOrders = await axios.get('http://localhost:5000/azenta/seqOrder', {
+    const azentaSeqOrders = await axios.get(`${process.env.MPI_BACKEND}/azenta/seqOrder`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -187,9 +161,9 @@ export class MPIService {
       orderName: 'DAMP_Azenta_Order'
     };
     if (!token) {
-      throw new BadRequestException('No token found, log in to MPI first');
+      throw new UnauthorizedException('No token found, log in to MPI first');
     }
-    const azentaSeqOrders = await axios.post('http://localhost:5000/azenta/seqOrder', order, {
+    const azentaSeqOrders = await axios.post(`${process.env.MPI_BACKEND}/azenta/seqOrder`, order, {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json'
@@ -202,11 +176,11 @@ export class MPIService {
   async createELabsStudy(bearerToken: string, projectID: number, name: string): Promise<number | undefined> {
     const token = await this.getAccessToken();
     if (!token) {
-      throw new BadRequestException('No token found, log in to MPI first');
+      throw new UnauthorizedException('No token found, log in to MPI first');
     }
     try {
       const response = await axios.post(
-        'http://localhost:5000/e-labs/create-study',
+        `${process.env.MPI_BACKEND}/e-labs/create-study`,
         { bearerToken, projectID, name },
         {
           headers: {
@@ -230,11 +204,11 @@ export class MPIService {
   async createELabsExperiment(bearerToken: string, studyID: number, name: string, status: eLabsStatus, templateID?: number, autoCollaborate?: boolean): Promise<number | undefined> {
     const token = await this.getAccessToken();
     if (!token) {
-      throw new BadRequestException('No token found, log in to MPI first');
+      throw new UnauthorizedException('No token found, log in to MPI first');
     }
     try {
       const response = await axios.post(
-        'http://localhost:5000/e-labs/create-experiment',
+        `${process.env.MPI_BACKEND}/e-labs/create-experiment`,
         { bearerToken, studyID, name, status, templateID, autoCollaborate },
         {
           headers: {
@@ -259,9 +233,9 @@ export class MPIService {
   async getAclidScreenings(): Promise<any> {
     const token = await this.getAccessToken();
     if (!token) {
-      return new BadRequestException('No token found, log in to MPI first');
+      return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const aclid = await axios.get('http://localhost:5000/aclid/screens', {
+    const aclid = await axios.get(`${process.env.MPI_BACKEND}aclid/screens`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -272,9 +246,9 @@ export class MPIService {
   async getAclidScreening(id: string): Promise<any> {
     const token = await this.getAccessToken();
     if (!token) {
-      return new BadRequestException('No token found, log in to MPI first');
+      return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const aclid = await axios.get(`http://localhost:5000/aclid/screens/${id}/details`, {
+    const aclid = await axios.get(`${process.env.MPI_BACKEND}/aclid/screens/${id}/details`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -286,10 +260,10 @@ export class MPIService {
     // sequences: [{name: string, sequence: string}]
     const token = await this.getAccessToken();
     if (!token) {
-      return new BadRequestException('No token found, log in to MPI first');
+      return new UnauthorizedException('No token found, log in to MPI first');
     }
     const aclid = await axios.post(
-      'http://localhost:5000/aclid/screen',
+      `${process.env.MPI_BACKEND}/aclid/screen`,
       { submissionName, sequences },
       {
         headers: {
