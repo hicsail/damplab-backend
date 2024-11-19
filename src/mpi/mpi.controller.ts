@@ -58,4 +58,19 @@ export class MPIController {
   ): Promise<number | undefined> {
     return this.mpiService.createELabsExperiment(bearerToken, studyID, name, status, templateID, autoCollaborate);
   }
+
+  @Get('aclid/screens')
+  async getAclidScreenings(): Promise<JSON> {
+    return this.mpiService.getAclidScreenings();
+  }
+
+  @Get('aclid/screen/:id')
+  async getAclidScreening(id: string): Promise<JSON> {
+    return this.mpiService.getAclidScreening(id);
+  }
+
+  @Post('aclid/run-screening')
+  async createAclidScreening(@Body('submissionName') submissionName: string, @Body('sequences') sequences: JSON): Promise<JSON> {
+    return this.mpiService.runAclidScreening(submissionName, sequences);
+  }
 }

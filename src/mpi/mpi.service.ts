@@ -32,25 +32,21 @@ type eLabsStatus = 'PENDING' | 'PROGRESS' | 'COMPLETED';
 export class MPIService {
   private tokenStore = new Map<string, { accessToken: string; refreshToken: string; accessTokenExpiration: Date }>();
 
-  // TODO: put this in an env file.
-  private client_id = 'tZSXM9f8WUiPIpNGt1kXlGqzZVYvWNEF'; // Auth0 Damp Canvas app client ID
-  private client_secret = 'uHw3eZ4XrYcBW1zJJqWt1dbLC6YuwCT-v0AeXa1npLuhiEkw-Ayq1wwDcw3FSgnh'; // Auth0 Damp Canvas app client secret
-
   // TODO: this should be the actual user id, got from DAMP LAB auth?
   private currentUserId = 'mpitest';
 
   // To log in use:
   // NOTE THAT THIS SERVER IS RUNNING ON PORT 5100
-  // https://mpi-dev.us.auth0.com/authorize?response_type=code&scope=offline_access&client_id=tZSXM9f8WUiPIpNGt1kXlGqzZVYvWNEF&redirect_uri=http://127.0.0.1:5100/mpi/auth0_redirect&audience=https://mpi.com
+  // https://mpi-demo.us.auth0.com/authorize?response_type=code&scope=offline_access&client_id=tZSXM9f8WUiPIpNGt1kXlGqzZVYvWNEF&redirect_uri=http://127.0.0.1:5100/mpi/auth0_redirect&audience=https://mpi-demo.com
   // To log out use:
-  // https://mpi-dev.us.auth0.com/oidc/logout?post_logout_redirect_uri=http://127.0.0.1:5100/mpi/auth0_logout&client_id=tZSXM9f8WUiPIpNGt1kXlGqzZVYvWNEF
+  // https://mpi-demo.us.auth0.com/oidc/logout?post_logout_redirect_uri=http://127.0.0.1:5100/mpi/auth0_logout&client_id=tZSXM9f8WUiPIpNGt1kXlGqzZVYvWNEF
 
   async exchangeCodeForToken(code: string): Promise<string> {
-    const tokenUrl = `https://mpi-dev.us.auth0.com/oauth/token`;
+    const tokenUrl = `https://mpi-demo.us.auth0.com/oauth/token`;
     const payload = {
       grant_type: 'authorization_code',
-      client_id: this.client_id,
-      client_secret: this.client_secret,
+      client_id: process.env.MPI_CLIENT_ID,
+      client_secret: process.env.MPI_CLIENT_SECRET,
       code,
       redirect_uri: 'http://127.0.0.1:5100/mpi/auth0_redirect' // URL in this server that was used to redirect to after Auth0 login
     };
@@ -78,11 +74,11 @@ export class MPIService {
   async exchangeRefreshTokenForToken(): Promise<void> {
     const refreshToken = this.tokenStore.get(this.currentUserId)!.refreshToken;
 
-    const tokenUrl = `https://mpi-dev.us.auth0.com/oauth/token`;
+    const tokenUrl = `https://mpi-demo.us.auth0.com/oauth/token`;
     const payload = {
       grant_type: 'refresh_token',
-      client_id: this.client_id,
-      client_secret: this.client_secret,
+      client_id: process.env.MPI_CLIENT_ID,
+      client_secret: process.env.MPI_CLIENT_SECRET,
       refresh_token: refreshToken
     };
 
@@ -257,5 +253,51 @@ export class MPIService {
       console.error(error);
       return undefined;
     }
+  }
+
+  // aclid
+  async getAclidScreenings(): Promise<any> {
+    const token = await this.getAccessToken();
+    if (!token) {
+      return new BadRequestException('No token found, log in to MPI first');
+    }
+    const aclid = await axios.get('http://localhost:5000/aclid/screens', {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+    return aclid.data;
+  }
+
+  async getAclidScreening(id: string): Promise<any> {
+    const token = await this.getAccessToken();
+    if (!token) {
+      return new BadRequestException('No token found, log in to MPI first');
+    }
+    const aclid = await axios.get(`http://localhost:5000/aclid/screens/${id}/details`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+    return aclid.data;
+  }
+
+  async runAclidScreening(submissionName: string, sequences: JSON): Promise<any> {
+    // sequences: [{name: string, sequence: string}]
+    const token = await this.getAccessToken();
+    if (!token) {
+      return new BadRequestException('No token found, log in to MPI first');
+    }
+    const aclid = await axios.post(
+      'http://localhost:5000/aclid/screen',
+      { submissionName, sequences },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    return aclid.data;
   }
 }
