@@ -8,3 +8,5 @@
 /scripts/dist/
 
 /.vscode/
+.codebuddy/*
+.env.dev

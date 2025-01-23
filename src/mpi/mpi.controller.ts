@@ -1,7 +1,6 @@
-import { Controller, Get, Query, Post, Body } from '@nestjs/common';
+import { Controller, Get, Query, Post, Patch, Body, Param } from '@nestjs/common';
 import { MPIService } from './mpi.service';
-
-type eLabsStatus = 'PENDING' | 'PROGRESS' | 'COMPLETED';
+import { Sequence, AclidSequence, eLabsStatus } from './types';
 
 @Controller('mpi')
 export class MPIController {
@@ -25,6 +24,24 @@ export class MPIController {
   @Get('sequences')
   async getSequences(): Promise<string> {
     return this.mpiService.getSequences();
+  }
+
+  @Post('sequences')
+  async createSequence(@Body() sequence: Sequence): Promise<string> {
+    return this.mpiService.createSequence(sequence);
+  }
+
+  @Post('sequences/batch')
+  async createSequences(@Body() sequences: Sequence[]): Promise<any> {
+    // Start the processing in the background
+    this.mpiService.createSequences(sequences).catch((error) => console.error('Batch sequence creation failed:', error));
+
+    // Return immediately with acknowledgment
+    return {
+      message: `Processing ${sequences.length} sequences`,
+      status: 'PROCESSING',
+      timestamp: new Date().toISOString()
+    };
   }
 
   @Get('azentaSeqOrder/:id')
@@ -59,6 +76,34 @@ export class MPIController {
     return this.mpiService.createELabsExperiment(bearerToken, studyID, name, status, templateID, autoCollaborate);
   }
 
+  @Get('securedna/screens')
+  async getGenomes(): Promise<object> {
+    return this.mpiService.getGenomes();
+  }
+
+  @Patch('securedna/screen/:id')
+  async updateGenome(@Param('id') id: string, @Body('adminStatus') adminStatus: string): Promise<object> {
+    return this.mpiService.updateGenome(id, adminStatus);
+  }
+
+  @Patch('securedna/run-screening')
+  async runBiosecurityCheck(@Body('ids') ids: string[]): Promise<object> {
+    return this.mpiService.runBiosecurityCheck(ids);
+  }
+
+  @Patch('securedna/run-screening/batch')
+  async runBiosecurityChecks(@Body('ids') ids: string[]): Promise<any> {
+    // Start the processing in the background
+    this.mpiService.runBiosecurityChecks(ids).catch((error) => console.error('Batch biosecurity check failed:', error));
+
+    // Return immediately with acknowledgment
+    return {
+      message: `Processing ${ids.length} biosecurity checks`,
+      status: 'PROCESSING',
+      timestamp: new Date().toISOString()
+    };
+  }
+
   @Get('aclid/screens')
   async getAclidScreenings(): Promise<JSON> {
     return this.mpiService.getAclidScreenings();
@@ -70,7 +115,7 @@ export class MPIController {
   }
 
   @Post('aclid/run-screening')
-  async createAclidScreening(@Body('submissionName') submissionName: string, @Body('sequences') sequences: JSON): Promise<JSON> {
+  async createAclidScreening(@Body('submissionName') submissionName: string, @Body('sequences') sequences: AclidSequence[]): Promise<JSON> {
     return this.mpiService.runAclidScreening(submissionName, sequences);
   }
 }

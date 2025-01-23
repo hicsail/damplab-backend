@@ -1,7 +1,26 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import axios from 'axios';
+import { Sequence, AclidSequence, BiosecurityResponse, ScreenSequencesDTO, eLabsStatus } from './types';
 
-type eLabsStatus = 'PENDING' | 'PROGRESS' | 'COMPLETED';
+interface BatchCreateResponse {
+  results: any[];
+  errors: any[];
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+  };
+}
+
+interface BiosecurityBatchResponse {
+  results: any[];
+  errors: any[];
+  summary: {
+    total: number;
+    successful: number;
+    failed: number;
+  };
+}
 
 @Injectable()
 export class MPIService {
@@ -82,10 +101,10 @@ export class MPIService {
     const user = this.tokenStore.get(this.currentUserId);
     if (user && user.accessToken && user.accessTokenExpiration) {
       if (user.accessTokenExpiration > new Date(Date.now())) {
-        console.log('user ', user, ' has valid token');
+        console.log('user has valid token');
         return user.accessToken;
       } else {
-        console.log('user ', user, ' has expired token; requesting refreshed token');
+        console.log('user has expired token; requesting refreshed token');
         await this.exchangeRefreshTokenForToken();
         return this.tokenStore.get(this.currentUserId)!.accessToken;
       }
@@ -96,23 +115,57 @@ export class MPIService {
   isLoggedIn(): boolean {
     const user = this.tokenStore.get(this.currentUserId);
     if (user && user.accessToken && user.accessTokenExpiration) {
-      console.log('user ', user, ' is already logged in');
+      console.log('user is already logged in');
       return user.accessTokenExpiration > new Date();
     }
     return false;
   }
 
-  async createSequence(): Promise<any> {
+  async createSequence(sequence: Sequence): Promise<any> {
     const token = await this.getAccessToken();
     if (!token) {
       return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const sequences = await axios.get(`${process.env.MPI_BACKEND}/sequences`, {
+    const response = await axios.post(`${process.env.MPI_BACKEND}/sequences`, sequence, {
       headers: {
         Authorization: `Bearer ${token}`
       }
     });
-    return sequences.data;
+    return response.data;
+  }
+
+  async createSequences(sequences: Sequence[]): Promise<BatchCreateResponse> {
+    const results = [];
+    const errors = [];
+
+    for (const sequence of sequences) {
+      try {
+        const result = await this.createSequence(sequence);
+        results.push({
+          success: true,
+          sequence: result,
+          name: sequence.name // Including name for easier identification
+        });
+      } catch (error) {
+        errors.push({
+          success: false,
+          error: error.message,
+          name: sequence.name,
+          sequence: sequence
+        });
+        console.error(`Failed to create sequence ${sequence.name}:`, error);
+      }
+    }
+
+    return {
+      results,
+      errors,
+      summary: {
+        total: sequences.length,
+        successful: results.length,
+        failed: errors.length
+      }
+    };
   }
 
   async getSequences(): Promise<any> {
@@ -229,13 +282,90 @@ export class MPIService {
     }
   }
 
+  // securedna
+  async getGenomes(): Promise<object> {
+    const token = await this.getAccessToken();
+    if (!token) {
+      throw new UnauthorizedException('No token found, log in to MPI first');
+    }
+    const response = await axios.get(`${process.env.MPI_BACKEND}/biosecurity/genomes`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    return response.data;
+  }
+
+  async updateGenome(id: string, adminStatus: string): Promise<object> {
+    const token = await this.getAccessToken();
+    if (!token) {
+      throw new UnauthorizedException('No token found, log in to MPI first');
+    }
+    const response = await axios.patch(
+      `${process.env.MPI_BACKEND}/biosecurity/genomes/${id}`,
+      { adminStatus },
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+    return response.data;
+  }
+
+  async runBiosecurityCheck(seq_ids: string[]): Promise<BiosecurityResponse> {
+    const token = await this.getAccessToken();
+    console.log('Initiated security check', seq_ids);
+    if (!token) {
+      throw new UnauthorizedException('No token found, log in to MPI first');
+    }
+    const response = await axios.patch(
+      `${process.env.MPI_BACKEND}/biosecurity`,
+      { ids: seq_ids },
+      {
+        headers: { Authorization: `Bearer ${token}` }
+      }
+    );
+    console.log('Biosecurity check response:', response.data);
+    return response.data;
+  }
+
+  async runBiosecurityChecks(seq_ids: string[]): Promise<BiosecurityBatchResponse> {
+    const results = [];
+    const errors = [];
+
+    for (const id of seq_ids) {
+      try {
+        const result = await this.runBiosecurityCheck([id]);
+        results.push({
+          success: true,
+          sequence_id: id,
+          result
+        });
+      } catch (error) {
+        errors.push({
+          success: false,
+          sequence_id: id,
+          error: error.message
+        });
+        console.error(`Failed to run biosecurity check for sequence ${id}:`, error);
+      }
+    }
+
+    return {
+      results,
+      errors,
+      summary: {
+        total: seq_ids.length,
+        successful: results.length,
+        failed: errors.length
+      }
+    };
+  }
+
   // aclid
   async getAclidScreenings(): Promise<any> {
     const token = await this.getAccessToken();
     if (!token) {
       return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const aclid = await axios.get(`${process.env.MPI_BACKEND}aclid/screens`, {
+    const aclid = await axios.get(`${process.env.MPI_BACKEND}/aclid/screens`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -256,22 +386,34 @@ export class MPIService {
     return aclid.data;
   }
 
-  async runAclidScreening(submissionName: string, sequences: JSON): Promise<any> {
+  async runAclidScreening(submissionName: string, sequences: AclidSequence[]): Promise<any> {
     // sequences: [{name: string, sequence: string}]
     const token = await this.getAccessToken();
     if (!token) {
       return new UnauthorizedException('No token found, log in to MPI first');
     }
-    const aclid = await axios.post(
-      `${process.env.MPI_BACKEND}/aclid/screen`,
-      { submissionName, sequences },
-      {
+
+    const requestBody: ScreenSequencesDTO = {
+      submissionName,
+      sequences
+    };
+    console.log('runAclidScreening request:', requestBody);
+
+    try {
+      const aclid = await axios.post(`${process.env.MPI_BACKEND}/aclid/screen`, requestBody, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
+      });
+      console.log('aclid data', aclid.data);
+      return aclid.data;
+    } catch (error) {
+      if (error.response) {
+        console.error('Error response:', error.response.data);
+        throw new Error(`ACLID screening failed: ${error.response.data.message || 'Unknown error'}`);
       }
-    );
-    return aclid.data;
+      throw error;
+    }
   }
 }
