@@ -1,19 +1,44 @@
-import { Controller, Get, Query, Post, Patch, Body, Param } from '@nestjs/common';
+import { Controller, Get, Query, Post, Patch, Body, Param, UseGuards, Req, HttpStatus, HttpException } from '@nestjs/common';
 import { MPIService } from './mpi.service';
 import { Sequence, AclidSequence, eLabsStatus } from './types';
+import { AuthGuard } from '../auth/auth.guard';
+import { Request } from 'express';
+
+interface AuthenticatedRequest extends Request {
+  user: {
+    userId: string;
+    name?: string;
+    email?: string;
+  };
+}
 
 @Controller('mpi')
 export class MPIController {
   constructor(private readonly mpiService: MPIService) {}
 
   @Get('auth0_redirect')
-  async callback(@Query('code') code: string): Promise<string> {
-    return await this.mpiService.exchangeCodeForToken(code);
+  async callback(@Query('code') code: string, @Query('state') state: string): Promise<{ token: string; userInfo: any }> {
+    try {
+      return await this.mpiService.exchangeCodeForToken(code, state);
+    } catch (error) {
+      throw new HttpException(`Authentication failed: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+
+  @Get('user-info')
+  @UseGuards(AuthGuard)
+  async getUserInfo(@Req() req: AuthenticatedRequest): Promise<any> {
+    try {
+      const userId = req.user.userId;
+      return await this.mpiService.getUserData(userId);
+    } catch (error) {
+      throw new HttpException(`Failed to get user data: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 
   @Get('is_logged_in')
-  isLoggedIn(): { loggedIn: boolean } {
-    return { loggedIn: this.mpiService.isLoggedIn() };
+  async isLoggedIn(): Promise<{ loggedIn: boolean }> {
+    return { loggedIn: await this.mpiService.isLoggedIn() };
   }
 
   @Get('auth0_logout')
@@ -22,19 +47,26 @@ export class MPIController {
   }
 
   @Get('sequences')
-  async getSequences(): Promise<string> {
-    return this.mpiService.getSequences();
+  @UseGuards(AuthGuard)
+  async getSequences(@Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+    return this.mpiService.getSequences(userId);
   }
 
   @Post('sequences')
-  async createSequence(@Body() sequence: Sequence): Promise<string> {
-    return this.mpiService.createSequence(sequence);
+  @UseGuards(AuthGuard)
+  async createSequence(@Body() sequence: Sequence, @Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+    return this.mpiService.createSequence(sequence, userId);
   }
 
   @Post('sequences/batch')
-  async createSequences(@Body() sequences: Sequence[]): Promise<any> {
+  @UseGuards(AuthGuard)
+  async createSequences(@Body() sequences: Sequence[], @Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+
     // Start the processing in the background
-    this.mpiService.createSequences(sequences).catch((error) => console.error('Batch sequence creation failed:', error));
+    this.mpiService.createSequences(sequences, userId).catch((error) => console.error('Batch sequence creation failed:', error));
 
     // Return immediately with acknowledgment
     return {
@@ -45,56 +77,76 @@ export class MPIController {
   }
 
   @Get('azentaSeqOrder/:id')
-  async azentaSeqOrder(id: string): Promise<string> {
-    return this.mpiService.azentaSeqOrder(id);
+  @UseGuards(AuthGuard)
+  async azentaSeqOrder(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+    return this.mpiService.azentaSeqOrder(id, userId);
   }
 
   @Get('azentaSeqOrders')
-  async azentaSeqOrders(): Promise<string> {
-    return this.mpiService.azentaSeqOrders();
+  @UseGuards(AuthGuard)
+  async azentaSeqOrders(@Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+    return this.mpiService.azentaSeqOrders(userId);
   }
 
   @Get('azentaCreateSeqOrder')
-  async azentaCreateSeqOrder(): Promise<string> {
-    return this.mpiService.azentaCreateSeqOrder();
+  @UseGuards(AuthGuard)
+  async azentaCreateSeqOrder(@Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+    return this.mpiService.azentaCreateSeqOrder(userId);
   }
 
   @Post('e-labs/create-study')
-  async createELabsStudy(@Body('bearerToken') bearerToken: string, @Body('projectID') projectID: number, @Body('name') name: string): Promise<number | undefined> {
-    return this.mpiService.createELabsStudy(bearerToken, projectID, name);
+  @UseGuards(AuthGuard)
+  async createELabsStudy(@Body('bearerToken') bearerToken: string, @Body('projectID') projectID: number, @Body('name') name: string, @Req() req: AuthenticatedRequest): Promise<number | undefined> {
+    const userId = req.user.userId;
+    return this.mpiService.createELabsStudy(bearerToken, projectID, name, userId);
   }
 
   @Post('e-labs/create-experiment')
+  @UseGuards(AuthGuard)
   async createELabsExperiment(
     @Body('bearerToken') bearerToken: string,
     @Body('studyID') studyID: number,
     @Body('name') name: string,
     @Body('status') status: eLabsStatus,
     @Body('templateID') templateID?: number,
-    @Body('autoCollaborate') autoCollaborate?: boolean
+    @Body('autoCollaborate') autoCollaborate?: boolean,
+    @Req() req?: AuthenticatedRequest
   ): Promise<number | undefined> {
-    return this.mpiService.createELabsExperiment(bearerToken, studyID, name, status, templateID, autoCollaborate);
+    const userId = req?.user?.userId;
+    return this.mpiService.createELabsExperiment(bearerToken, studyID, name, status, templateID, autoCollaborate, userId);
   }
 
   @Get('securedna/screens')
-  async getGenomes(): Promise<object> {
-    return this.mpiService.getGenomes();
+  @UseGuards(AuthGuard)
+  async getGenomes(@Req() req: AuthenticatedRequest): Promise<object> {
+    const userId = req.user.userId;
+    return this.mpiService.getGenomes(userId);
   }
 
   @Patch('securedna/screen/:id')
-  async updateGenome(@Param('id') id: string, @Body('adminStatus') adminStatus: string): Promise<object> {
-    return this.mpiService.updateGenome(id, adminStatus);
+  @UseGuards(AuthGuard)
+  async updateGenome(@Param('id') id: string, @Body('adminStatus') adminStatus: string, @Req() req: AuthenticatedRequest): Promise<object> {
+    const userId = req.user.userId;
+    return this.mpiService.updateGenome(id, adminStatus, userId);
   }
 
   @Patch('securedna/run-screening')
-  async runBiosecurityCheck(@Body('ids') ids: string[]): Promise<object> {
-    return this.mpiService.runBiosecurityCheck(ids);
+  @UseGuards(AuthGuard)
+  async runBiosecurityCheck(@Body('ids') ids: string[], @Req() req: AuthenticatedRequest): Promise<object> {
+    const userId = req.user.userId;
+    return this.mpiService.runBiosecurityCheck(ids, userId);
   }
 
   @Patch('securedna/run-screening/batch')
-  async runBiosecurityChecks(@Body('ids') ids: string[]): Promise<any> {
+  @UseGuards(AuthGuard)
+  async runBiosecurityChecks(@Body('ids') ids: string[], @Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+
     // Start the processing in the background
-    this.mpiService.runBiosecurityChecks(ids).catch((error) => console.error('Batch biosecurity check failed:', error));
+    this.mpiService.runBiosecurityChecks(ids, userId).catch((error) => console.error('Batch biosecurity check failed:', error));
 
     // Return immediately with acknowledgment
     return {
@@ -105,17 +157,23 @@ export class MPIController {
   }
 
   @Get('aclid/screens')
-  async getAclidScreenings(): Promise<JSON> {
-    return this.mpiService.getAclidScreenings();
+  @UseGuards(AuthGuard)
+  async getAclidScreenings(@Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+    return this.mpiService.getAclidScreenings(userId);
   }
 
   @Get('aclid/screen/:id')
-  async getAclidScreening(id: string): Promise<JSON> {
-    return this.mpiService.getAclidScreening(id);
+  @UseGuards(AuthGuard)
+  async getAclidScreening(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+    return this.mpiService.getAclidScreening(id, userId);
   }
 
   @Post('aclid/run-screening')
-  async createAclidScreening(@Body('submissionName') submissionName: string, @Body('sequences') sequences: AclidSequence[]): Promise<JSON> {
-    return this.mpiService.runAclidScreening(submissionName, sequences);
+  @UseGuards(AuthGuard)
+  async createAclidScreening(@Body('submissionName') submissionName: string, @Body('sequences') sequences: AclidSequence[], @Req() req: AuthenticatedRequest): Promise<any> {
+    const userId = req.user.userId;
+    return this.mpiService.runAclidScreening(submissionName, sequences, userId);
   }
 }
