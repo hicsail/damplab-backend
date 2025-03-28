@@ -3,15 +3,22 @@ import { MPIController } from './mpi.controller';
 import { MPIService } from './mpi.service';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthGuard } from '../auth/auth.guard';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { SecureDNAController } from './secure-dna.controller';
 
 @Module({
   imports: [
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'default_jwt_secret',
-      signOptions: { expiresIn: '1d' }
+    ConfigModule,
+    JwtModule.registerAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+        secret: configService.get('JWT_SECRET'),
+        signOptions: { expiresIn: '24h' }
+      }),
+      inject: [ConfigService]
     })
   ],
-  controllers: [MPIController],
+  controllers: [MPIController, SecureDNAController],
   providers: [MPIService, AuthGuard],
   exports: [MPIService]
 })

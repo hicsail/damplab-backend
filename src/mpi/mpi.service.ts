@@ -1,7 +1,7 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, HttpException, HttpStatus } from '@nestjs/common';
 import axios from 'axios';
-import { Sequence, AclidSequence, BiosecurityResponse, ScreenSequencesDTO, eLabsStatus } from './types';
-import * as jwt from 'jsonwebtoken';
+import { Sequence, ScreeningInput, ScreeningResult, Region } from './types';
+import { JwtService } from '@nestjs/jwt';
 
 interface BatchCreateResponse {
   results: any[];
@@ -13,18 +13,10 @@ interface BatchCreateResponse {
   };
 }
 
-interface BiosecurityBatchResponse {
-  results: any[];
-  errors: any[];
-  summary: {
-    total: number;
-    successful: number;
-    failed: number;
-  };
-}
-
 @Injectable()
 export class MPIService {
+  constructor(private readonly jwtService: JwtService) {}
+
   private tokenStore = new Map<
     string,
     {
@@ -40,79 +32,52 @@ export class MPIService {
 
   async getUserData(userId: string): Promise<any> {
     const userData = this.tokenStore.get(userId);
-    if (!userData) {
-      throw new UnauthorizedException('User not found');
+    if (!userData?.userInfo) {
+      throw new HttpException('User data not found', HttpStatus.NOT_FOUND);
     }
-    return userData.userInfo || {};
+    return userData.userInfo;
   }
 
   async isLoggedIn(userId?: string): Promise<boolean> {
     const id = userId || this.defaultUserId;
     const userData = this.tokenStore.get(id);
-    if (userData && userData.accessToken && userData.accessTokenExpiration) {
-      return userData.accessTokenExpiration > new Date();
-    }
-    return false;
+    return Boolean(userData?.accessToken && userData.accessTokenExpiration > new Date());
   }
 
-  async exchangeCodeForToken(code: string, state?: string): Promise<{ token: string; userInfo: any }> {
-    const tokenUrl = `https://${process.env.AUTH0_DOMAIN}/oauth/token`;
-    const payload = {
-      grant_type: 'authorization_code',
-      client_id: process.env.AUTH0_CLIENT_ID,
-      client_secret: process.env.AUTH0_CLIENT_SECRET,
-      code,
-      redirect_uri: process.env.AUTH0_CALLBACK_URL
-    };
-
+  async exchangeCodeForToken(code: string, state: string): Promise<{ token: string; userInfo: any }> {
     try {
-      // Exchange code for tokens
-      const tokenResponse = await axios.post(tokenUrl, payload, {
-        headers: { 'Content-Type': 'application/json' }
+      const tokenResponse = await axios.post(`https://${process.env.AUTH0_DOMAIN}/oauth/token`, {
+        grant_type: 'authorization_code',
+        client_id: process.env.AUTH0_CLIENT_ID,
+        client_secret: process.env.AUTH0_CLIENT_SECRET,
+        code: code,
+        redirect_uri: process.env.AUTH0_CALLBACK_URL,
+        state: state
       });
 
-      const { access_token, refresh_token, expires_in, id_token } = tokenResponse.data;
-      const accessTokenExpiration = new Date(Date.now() + expires_in * 1000);
+      const { access_token } = tokenResponse.data;
 
-      // Get user info
       const userInfoResponse = await axios.get(`https://${process.env.AUTH0_DOMAIN}/userinfo`, {
         headers: { Authorization: `Bearer ${access_token}` }
       });
 
       const userInfo = userInfoResponse.data;
-      const userId = userInfo.sub || this.defaultUserId; // Auth0 user ID
 
-      // Store tokens with user ID
-      this.tokenStore.set(userId, {
+      this.tokenStore.set(userInfo.sub, {
         accessToken: access_token,
-        refreshToken: refresh_token,
-        accessTokenExpiration,
-        userInfo
+        refreshToken: tokenResponse.data.refresh_token,
+        accessTokenExpiration: new Date(Date.now() + tokenResponse.data.expires_in * 1000),
+        userInfo: userInfo
       });
 
-      // Create a session token for the frontend
-      const jwtSecret = process.env.JWT_SECRET || 'default_jwt_secret';
-      const sessionToken = jwt.sign(
-        {
-          userId,
-          name: userInfo.name,
-          email: userInfo.email
-        },
-        jwtSecret,
-        { expiresIn: '1d' }
-      );
+      const sessionToken = this.jwtService.sign({ userId: userInfo.sub }, { expiresIn: '24h' });
 
       return {
         token: sessionToken,
-        userInfo: {
-          name: userInfo.name,
-          email: userInfo.email,
-          picture: userInfo.picture
-        }
+        userInfo: userInfo
       };
     } catch (error) {
-      console.error('Token exchange error:', error.response?.data || error.message);
-      throw new Error('Failed to exchange code for token');
+      throw new HttpException('Failed to exchange code for token', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
@@ -186,11 +151,12 @@ export class MPIService {
   async createSequence(sequence: Sequence, userId?: string): Promise<any> {
     const token = await this.getAccessToken(userId);
     if (!token) {
-      return new UnauthorizedException('No token found, log in to MPI first');
+      throw new UnauthorizedException('No token found, log in to MPI first');
     }
     const response = await axios.post(`${process.env.MPI_BACKEND}/sequences`, sequence, {
       headers: {
-        Authorization: `Bearer ${token}`
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
       }
     });
     return response.data;
@@ -231,9 +197,10 @@ export class MPIService {
   }
 
   async getSequences(userId?: string): Promise<any> {
+    console.log('getSequences', userId);
     const token = await this.getAccessToken(userId);
     if (!token) {
-      return new UnauthorizedException('No token found, log in to MPI first');
+      throw new UnauthorizedException('No token found, log in to MPI first');
     }
     const sequences = await axios.get(`${process.env.MPI_BACKEND}/sequences`, {
       headers: {
@@ -243,239 +210,121 @@ export class MPIService {
     return sequences.data;
   }
 
-  // Azenta endpoints
-  async azentaSeqOrder(id: string, userId?: string): Promise<any> {
+  async getSequence(id: string, userId?: string): Promise<any> {
     const token = await this.getAccessToken(userId);
-    if (!token) {
-      return new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const azentaSeqOrder = await axios.get(`${process.env.MPI_BACKEND}/azenta/seqOrder/${id}`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-    return azentaSeqOrder.data;
-  }
-
-  async azentaSeqOrders(userId?: string): Promise<any> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      return new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const azentaSeqOrders = await axios.get(`${process.env.MPI_BACKEND}/azenta/seqOrder`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-    return azentaSeqOrders.data;
-  }
-
-  async azentaCreateSeqOrder(userId?: string): Promise<any> {
-    const token = await this.getAccessToken(userId);
-    const order = {
-      orderName: 'DAMP_Azenta_Order'
-    };
     if (!token) {
       throw new UnauthorizedException('No token found, log in to MPI first');
     }
-    const azentaSeqOrders = await axios.post(`${process.env.MPI_BACKEND}/azenta/seqOrder`, order, {
+    const sequence = await axios.get(`${process.env.MPI_BACKEND}/sequences/${id}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+    return sequence.data;
+  }
+
+  async updateSequence(id: string, sequence: Partial<Sequence>, userId?: string): Promise<any> {
+    const token = await this.getAccessToken(userId);
+    if (!token) {
+      throw new UnauthorizedException('No token found, log in to MPI first');
+    }
+    const response = await axios.patch(`${process.env.MPI_BACKEND}/sequences/${id}`, sequence, {
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json'
       }
     });
-    return azentaSeqOrders.data;
+    return response.data;
   }
 
-  // eLabs
-  async createELabsStudy(bearerToken: string, projectID: number, name: string, userId?: string): Promise<number | undefined> {
+  async deleteSequence(id: string, userId?: string): Promise<any> {
     const token = await this.getAccessToken(userId);
     if (!token) {
       throw new UnauthorizedException('No token found, log in to MPI first');
     }
-    try {
-      const response = await axios.post(
-        `${process.env.MPI_BACKEND}/e-labs/create-study`,
-        { bearerToken, projectID, name },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json; charset=utf-8'
-          }
-        }
-      );
-
-      if (!response.data || !response.data.studyID) {
-        throw new Error('Error creating eLabs Study from Canvas Workflow...');
+    const response = await axios.delete(`${process.env.MPI_BACKEND}/sequences/${id}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
       }
-
-      return response.data.studyID;
-    } catch (error) {
-      console.error(error);
-      return undefined;
-    }
-  }
-
-  async createELabsExperiment(bearerToken: string, studyID: number, name: string, status: eLabsStatus, templateID?: number, autoCollaborate?: boolean, userId?: string): Promise<number | undefined> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
-    try {
-      const response = await axios.post(
-        `${process.env.MPI_BACKEND}/e-labs/create-experiment`,
-        { bearerToken, studyID, name, status, templateID, autoCollaborate },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json; charset=utf-8'
-          }
-        }
-      );
-
-      if (!response.data || !response.data.experimentID) {
-        throw new Error('Error creating eLabs Experiment from Canvas Service...');
-      }
-
-      return response.data.experimentID;
-    } catch (error) {
-      console.error(error);
-      return undefined;
-    }
-  }
-
-  // securedna
-  async getGenomes(userId?: string): Promise<object> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const response = await axios.get(`${process.env.MPI_BACKEND}/biosecurity/genomes`, {
-      headers: { Authorization: `Bearer ${token}` }
     });
     return response.data;
   }
 
-  async updateGenome(id: string, adminStatus: string, userId?: string): Promise<object> {
+  async screenSequence(screeningRequest: ScreeningInput, userId?: string): Promise<ScreeningResult> {
     const token = await this.getAccessToken(userId);
     if (!token) {
       throw new UnauthorizedException('No token found, log in to MPI first');
     }
-    const response = await axios.patch(
-      `${process.env.MPI_BACKEND}/biosecurity/genomes/${id}`,
-      { adminStatus },
-      {
-        headers: { Authorization: `Bearer ${token}` }
+    const response = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen`, screeningRequest, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
       }
-    );
+    });
     return response.data;
   }
 
-  async runBiosecurityCheck(seq_ids: string[], userId?: string): Promise<BiosecurityResponse> {
+  async getScreeningResults(sequenceId: string, userId?: string): Promise<ScreeningResult[]> {
     const token = await this.getAccessToken(userId);
-    console.log('Initiated security check', seq_ids);
     if (!token) {
       throw new UnauthorizedException('No token found, log in to MPI first');
     }
-    const response = await axios.patch(
-      `${process.env.MPI_BACKEND}/biosecurity`,
-      { ids: seq_ids },
-      {
-        headers: { Authorization: `Bearer ${token}` }
+    const response = await axios.get(`${process.env.MPI_BACKEND}/secure-dna/screen/${sequenceId}`, {
+      headers: {
+        Authorization: `Bearer ${token}`
       }
-    );
-    console.log('Biosecurity check response:', response.data);
+    });
     return response.data;
   }
 
-  async runBiosecurityChecks(seq_ids: string[], userId?: string): Promise<BiosecurityBatchResponse> {
+  async getUserScreenings(userId?: string): Promise<ScreeningResult[]> {
+    const token = await this.getAccessToken(userId);
+    if (!token) {
+      throw new UnauthorizedException('No token found, log in to MPI first');
+    }
+    const response = await axios.get(`${process.env.MPI_BACKEND}/secure-dna/screenings`, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+    return response.data;
+  }
+
+  async screenSequencesBatch(sequenceIds: string[], region: string, userId?: string): Promise<void> {
     const results = [];
     const errors = [];
 
-    for (const id of seq_ids) {
+    for (const sequenceId of sequenceIds) {
       try {
-        const result = await this.runBiosecurityCheck([id], userId);
+        const result = await this.screenSequence(
+          {
+            sequenceId,
+            region: region as Region
+          },
+          userId
+        );
         results.push({
           success: true,
-          sequence_id: id,
+          sequenceId,
           result
         });
       } catch (error) {
         errors.push({
           success: false,
-          sequence_id: id,
+          sequenceId,
           error: error.message
         });
-        console.error(`Failed to run biosecurity check for sequence ${id}:`, error);
+        console.error(`Failed to screen sequence ${sequenceId}:`, error);
       }
     }
 
-    return {
+    // Log the final results
+    console.log('Batch screening completed:', {
+      total: sequenceIds.length,
+      successful: results.length,
+      failed: errors.length,
       results,
-      errors,
-      summary: {
-        total: seq_ids.length,
-        successful: results.length,
-        failed: errors.length
-      }
-    };
-  }
-
-  // aclid
-  async getAclidScreenings(userId?: string): Promise<any> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      return new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const aclid = await axios.get(`${process.env.MPI_BACKEND}/aclid/screens`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
+      errors
     });
-    return aclid.data;
-  }
-
-  async getAclidScreening(id: string, userId?: string): Promise<any> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      return new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const aclid = await axios.get(`${process.env.MPI_BACKEND}/aclid/screens/${id}/details`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-    return aclid.data;
-  }
-
-  async runAclidScreening(submissionName: string, sequences: AclidSequence[], userId?: string): Promise<any> {
-    // sequences: [{name: string, sequence: string}]
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      return new UnauthorizedException('No token found, log in to MPI first');
-    }
-
-    const requestBody: ScreenSequencesDTO = {
-      submissionName,
-      sequences
-    };
-    console.log('runAclidScreening request:', requestBody);
-
-    try {
-      const aclid = await axios.post(`${process.env.MPI_BACKEND}/aclid/screen`, requestBody, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      console.log('aclid data', aclid.data);
-      return aclid.data;
-    } catch (error) {
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        throw new Error(`ACLID screening failed: ${error.response.data.message || 'Unknown error'}`);
-      }
-      throw error;
-    }
   }
 }

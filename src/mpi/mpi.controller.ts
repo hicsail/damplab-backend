@@ -1,8 +1,9 @@
-import { Controller, Get, Query, Post, Patch, Body, Param, UseGuards, Req, HttpStatus, HttpException } from '@nestjs/common';
+import { Controller, Get, Query, Post, Patch, Body, Param, UseGuards, Req, HttpStatus, HttpException, Res, UnauthorizedException, Delete } from '@nestjs/common';
 import { MPIService } from './mpi.service';
-import { Sequence, AclidSequence, eLabsStatus } from './types';
+import { Sequence } from './types';
 import { AuthGuard } from '../auth/auth.guard';
-import { Request } from 'express';
+import { Request, Response } from 'express';
+import { JwtService } from '@nestjs/jwt';
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -14,36 +15,95 @@ interface AuthenticatedRequest extends Request {
 
 @Controller('mpi')
 export class MPIController {
-  constructor(private readonly mpiService: MPIService) {}
+  constructor(private readonly mpiService: MPIService, private readonly jwtService: JwtService) {}
+
+  @Get('login')
+  async login(@Query('state') state: string, @Res() res: Response): Promise<void> {
+    if (!state || state === 'undefined') {
+      throw new HttpException('Invalid state parameter', HttpStatus.BAD_REQUEST);
+    }
+
+    const authUrl =
+      `https://${process.env.AUTH0_DOMAIN}/authorize` +
+      `?response_type=code` +
+      `&scope=${encodeURIComponent('openid profile email offline_access')}` +
+      `&client_id=${encodeURIComponent(process.env.AUTH0_CLIENT_ID || '')}` +
+      `&redirect_uri=${encodeURIComponent(process.env.AUTH0_CALLBACK_URL || '')}` +
+      `&audience=${encodeURIComponent(process.env.AUTH0_AUDIENCE || '')}` +
+      `&state=${encodeURIComponent(state)}`;
+
+    res.redirect(authUrl);
+  }
 
   @Get('auth0_redirect')
-  async callback(@Query('code') code: string, @Query('state') state: string): Promise<{ token: string; userInfo: any }> {
+  async callback(@Query('code') code: string, @Query('state') state: string, @Req() req: Request, @Res() res: Response): Promise<void> {
     try {
-      return await this.mpiService.exchangeCodeForToken(code, state);
+      if (!state || state === 'undefined') {
+        throw new HttpException('Invalid state parameter', HttpStatus.BAD_REQUEST);
+      }
+
+      const { token } = await this.mpiService.exchangeCodeForToken(code, state);
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3100';
+      const redirectUrl = `${frontendUrl}?token=${encodeURIComponent(token)}`;
+      res.redirect(redirectUrl);
     } catch (error) {
-      throw new HttpException(`Authentication failed: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+      res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3100'}?error=auth_failed`);
     }
   }
 
-  @Get('user-info')
-  @UseGuards(AuthGuard)
-  async getUserInfo(@Req() req: AuthenticatedRequest): Promise<any> {
+  @Get('logout')
+  async logout(@Req() req: Request, @Res() res: Response): Promise<void> {
     try {
-      const userId = req.user.userId;
-      return await this.mpiService.getUserData(userId);
+      const sessionToken = req.headers.authorization?.split(' ')[1];
+      if (sessionToken) {
+        try {
+          const payload = this.jwtService.verify(sessionToken);
+          await this.mpiService.logout(payload.userId);
+        } catch (error) {
+          // Ignore errors when clearing session
+        }
+      }
+
+      const logoutUrl =
+        `https://${process.env.AUTH0_DOMAIN}/v2/logout?` +
+        `client_id=${encodeURIComponent(process.env.AUTH0_CLIENT_ID || '')}&` +
+        `returnTo=${encodeURIComponent(process.env.FRONTEND_URL || 'http://localhost:3100')}&` +
+        `federated`;
+
+      res.redirect(logoutUrl);
     } catch (error) {
-      throw new HttpException(`Failed to get user data: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+      res.status(HttpStatus.INTERNAL_SERVER_ERROR).json({ error: 'Logout failed' });
     }
   }
 
   @Get('is_logged_in')
-  async isLoggedIn(): Promise<{ loggedIn: boolean }> {
-    return { loggedIn: await this.mpiService.isLoggedIn() };
+  async isLoggedIn(@Req() req: Request): Promise<{ loggedIn: boolean }> {
+    const sessionToken = req.headers.authorization?.split(' ')[1];
+    if (!sessionToken) {
+      return { loggedIn: false };
+    }
+
+    try {
+      this.jwtService.verify(sessionToken);
+      return { loggedIn: true };
+    } catch (error) {
+      return { loggedIn: false };
+    }
   }
 
-  @Get('auth0_logout')
-  async logout(): Promise<string> {
-    return this.mpiService.logout();
+  @Get('user-info')
+  async getUserInfo(@Req() req: Request): Promise<any> {
+    const sessionToken = req.headers.authorization?.split(' ')[1];
+    if (!sessionToken) {
+      throw new UnauthorizedException('No session token');
+    }
+
+    try {
+      const payload = this.jwtService.verify(sessionToken);
+      return await this.mpiService.getUserData(payload.userId);
+    } catch (error) {
+      throw new UnauthorizedException('Invalid session token');
+    }
   }
 
   @Get('sequences')
@@ -76,104 +136,24 @@ export class MPIController {
     };
   }
 
-  @Get('azentaSeqOrder/:id')
+  @Get('sequences/:id')
   @UseGuards(AuthGuard)
-  async azentaSeqOrder(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<any> {
+  async getSequence(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<any> {
     const userId = req.user.userId;
-    return this.mpiService.azentaSeqOrder(id, userId);
+    return this.mpiService.getSequence(id, userId);
   }
 
-  @Get('azentaSeqOrders')
+  @Patch('sequences/:id')
   @UseGuards(AuthGuard)
-  async azentaSeqOrders(@Req() req: AuthenticatedRequest): Promise<any> {
+  async updateSequence(@Param('id') id: string, @Body() sequence: Partial<Sequence>, @Req() req: AuthenticatedRequest): Promise<any> {
     const userId = req.user.userId;
-    return this.mpiService.azentaSeqOrders(userId);
+    return this.mpiService.updateSequence(id, sequence, userId);
   }
 
-  @Get('azentaCreateSeqOrder')
+  @Delete('sequences/:id')
   @UseGuards(AuthGuard)
-  async azentaCreateSeqOrder(@Req() req: AuthenticatedRequest): Promise<any> {
+  async deleteSequence(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<any> {
     const userId = req.user.userId;
-    return this.mpiService.azentaCreateSeqOrder(userId);
-  }
-
-  @Post('e-labs/create-study')
-  @UseGuards(AuthGuard)
-  async createELabsStudy(@Body('bearerToken') bearerToken: string, @Body('projectID') projectID: number, @Body('name') name: string, @Req() req: AuthenticatedRequest): Promise<number | undefined> {
-    const userId = req.user.userId;
-    return this.mpiService.createELabsStudy(bearerToken, projectID, name, userId);
-  }
-
-  @Post('e-labs/create-experiment')
-  @UseGuards(AuthGuard)
-  async createELabsExperiment(
-    @Body('bearerToken') bearerToken: string,
-    @Body('studyID') studyID: number,
-    @Body('name') name: string,
-    @Body('status') status: eLabsStatus,
-    @Body('templateID') templateID?: number,
-    @Body('autoCollaborate') autoCollaborate?: boolean,
-    @Req() req?: AuthenticatedRequest
-  ): Promise<number | undefined> {
-    const userId = req?.user?.userId;
-    return this.mpiService.createELabsExperiment(bearerToken, studyID, name, status, templateID, autoCollaborate, userId);
-  }
-
-  @Get('securedna/screens')
-  @UseGuards(AuthGuard)
-  async getGenomes(@Req() req: AuthenticatedRequest): Promise<object> {
-    const userId = req.user.userId;
-    return this.mpiService.getGenomes(userId);
-  }
-
-  @Patch('securedna/screen/:id')
-  @UseGuards(AuthGuard)
-  async updateGenome(@Param('id') id: string, @Body('adminStatus') adminStatus: string, @Req() req: AuthenticatedRequest): Promise<object> {
-    const userId = req.user.userId;
-    return this.mpiService.updateGenome(id, adminStatus, userId);
-  }
-
-  @Patch('securedna/run-screening')
-  @UseGuards(AuthGuard)
-  async runBiosecurityCheck(@Body('ids') ids: string[], @Req() req: AuthenticatedRequest): Promise<object> {
-    const userId = req.user.userId;
-    return this.mpiService.runBiosecurityCheck(ids, userId);
-  }
-
-  @Patch('securedna/run-screening/batch')
-  @UseGuards(AuthGuard)
-  async runBiosecurityChecks(@Body('ids') ids: string[], @Req() req: AuthenticatedRequest): Promise<any> {
-    const userId = req.user.userId;
-
-    // Start the processing in the background
-    this.mpiService.runBiosecurityChecks(ids, userId).catch((error) => console.error('Batch biosecurity check failed:', error));
-
-    // Return immediately with acknowledgment
-    return {
-      message: `Processing ${ids.length} biosecurity checks`,
-      status: 'PROCESSING',
-      timestamp: new Date().toISOString()
-    };
-  }
-
-  @Get('aclid/screens')
-  @UseGuards(AuthGuard)
-  async getAclidScreenings(@Req() req: AuthenticatedRequest): Promise<any> {
-    const userId = req.user.userId;
-    return this.mpiService.getAclidScreenings(userId);
-  }
-
-  @Get('aclid/screen/:id')
-  @UseGuards(AuthGuard)
-  async getAclidScreening(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<any> {
-    const userId = req.user.userId;
-    return this.mpiService.getAclidScreening(id, userId);
-  }
-
-  @Post('aclid/run-screening')
-  @UseGuards(AuthGuard)
-  async createAclidScreening(@Body('submissionName') submissionName: string, @Body('sequences') sequences: AclidSequence[], @Req() req: AuthenticatedRequest): Promise<any> {
-    const userId = req.user.userId;
-    return this.mpiService.runAclidScreening(submissionName, sequences, userId);
+    return this.mpiService.deleteSequence(id, userId);
   }
 }
