@@ -5,10 +5,13 @@ import { JwtModule } from '@nestjs/jwt';
 import { AuthGuard } from '../auth/auth.guard';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SecureDNAController } from './secure-dna.controller';
+import { MongooseModule } from '@nestjs/mongoose';
+import { TokenStoreSchema } from './models/token-store.model';
 
 @Module({
   imports: [
     ConfigModule,
+    MongooseModule.forFeature([{ name: 'TokenStore', schema: TokenStoreSchema }]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({

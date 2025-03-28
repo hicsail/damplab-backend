@@ -2,6 +2,9 @@ import { Injectable, UnauthorizedException, HttpException, HttpStatus } from '@n
 import axios from 'axios';
 import { Sequence, ScreeningInput, ScreeningResult, Region } from './types';
 import { JwtService } from '@nestjs/jwt';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { TokenStoreDocument } from './models/token-store.model';
 
 interface BatchCreateResponse {
   results: any[];
@@ -13,25 +16,20 @@ interface BatchCreateResponse {
   };
 }
 
+type TokenStoreModelName = 'TokenStore';
+
 @Injectable()
 export class MPIService {
-  constructor(private readonly jwtService: JwtService) {}
-
-  private tokenStore = new Map<
-    string,
-    {
-      accessToken: string;
-      refreshToken: string;
-      accessTokenExpiration: Date;
-      userInfo?: any; // Store user profile info
-    }
-  >();
+  constructor(private readonly jwtService: JwtService, @InjectModel('TokenStore' as TokenStoreModelName) private tokenStoreModel: Model<TokenStoreDocument>) {}
 
   // Default user ID for backward compatibility
   private defaultUserId = 'default_user';
 
+  // Token refresh threshold (5 minutes)
+  private readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
+
   async getUserData(userId: string): Promise<any> {
-    const userData = this.tokenStore.get(userId);
+    const userData = await this.tokenStoreModel.findOne({ userId });
     if (!userData?.userInfo) {
       throw new HttpException('User data not found', HttpStatus.NOT_FOUND);
     }
@@ -40,7 +38,7 @@ export class MPIService {
 
   async isLoggedIn(userId?: string): Promise<boolean> {
     const id = userId || this.defaultUserId;
-    const userData = this.tokenStore.get(id);
+    const userData = await this.tokenStoreModel.findOne({ userId: id });
     return Boolean(userData?.accessToken && userData.accessTokenExpiration > new Date());
   }
 
@@ -63,12 +61,17 @@ export class MPIService {
 
       const userInfo = userInfoResponse.data;
 
-      this.tokenStore.set(userInfo.sub, {
-        accessToken: access_token,
-        refreshToken: tokenResponse.data.refresh_token,
-        accessTokenExpiration: new Date(Date.now() + tokenResponse.data.expires_in * 1000),
-        userInfo: userInfo
-      });
+      // Store in MongoDB instead of in-memory
+      await this.tokenStoreModel.findOneAndUpdate(
+        { userId: userInfo.sub },
+        {
+          accessToken: access_token,
+          refreshToken: tokenResponse.data.refresh_token,
+          accessTokenExpiration: new Date(Date.now() + tokenResponse.data.expires_in * 1000),
+          userInfo: userInfo
+        },
+        { upsert: true }
+      );
 
       const sessionToken = this.jwtService.sign({ userId: userInfo.sub }, { expiresIn: '24h' });
 
@@ -77,38 +80,46 @@ export class MPIService {
         userInfo: userInfo
       };
     } catch (error) {
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 400) {
+          throw new HttpException('Invalid authorization code', HttpStatus.BAD_REQUEST);
+        } else if (error.response?.status === 401) {
+          throw new HttpException('Authentication failed', HttpStatus.UNAUTHORIZED);
+        }
+      }
       throw new HttpException('Failed to exchange code for token', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 
   async getAccessToken(userId?: string): Promise<string> {
     const id = userId || this.defaultUserId;
-    const userData = this.tokenStore.get(id);
+    const userData = await this.tokenStoreModel.findOne({ userId: id });
 
     if (!userData) {
       throw new UnauthorizedException('No token found, log in to MPI first');
     }
 
-    if (userData.accessTokenExpiration > new Date()) {
-      return userData.accessToken;
-    } else {
+    // Check if token needs refresh (within 5 minutes of expiration)
+    const fiveMinutesFromNow = new Date(Date.now() + this.TOKEN_REFRESH_THRESHOLD);
+    if (userData.accessTokenExpiration < fiveMinutesFromNow) {
       try {
         await this.refreshToken(id);
-        const refreshedData = this.tokenStore.get(id);
-
+        const refreshedData = await this.tokenStoreModel.findOne({ userId: id });
         if (!refreshedData) {
           throw new UnauthorizedException('Failed to refresh token');
         }
-
         return refreshedData.accessToken;
       } catch (error) {
+        console.error('Token refresh failed:', error);
         throw new UnauthorizedException('Failed to refresh token');
       }
     }
+
+    return userData.accessToken;
   }
 
   async refreshToken(userId: string): Promise<void> {
-    const userData = this.tokenStore.get(userId);
+    const userData = await this.tokenStoreModel.findOne({ userId });
     if (!userData || !userData.refreshToken) {
       throw new UnauthorizedException('No refresh token found');
     }
@@ -129,22 +140,28 @@ export class MPIService {
       const { access_token, refresh_token, expires_in } = response.data;
       const accessTokenExpiration = new Date(Date.now() + expires_in * 1000);
 
-      // Update token in store
-      this.tokenStore.set(userId, {
-        ...userData,
-        accessToken: access_token,
-        refreshToken: refresh_token || userData.refreshToken,
-        accessTokenExpiration
-      });
+      // Update token in MongoDB
+      await this.tokenStoreModel.findOneAndUpdate(
+        { userId },
+        {
+          accessToken: access_token,
+          refreshToken: refresh_token || userData.refreshToken,
+          accessTokenExpiration
+        }
+      );
     } catch (error) {
       console.error('Token refresh error:', error.response?.data || error.message);
+      if (axios.isAxiosError(error) && error.response?.status === 401) {
+        // If refresh token is invalid, clear the token store
+        await this.tokenStoreModel.deleteOne({ userId });
+      }
       throw new Error('Failed to refresh token');
     }
   }
 
   async logout(userId?: string): Promise<string> {
     const id = userId || this.defaultUserId;
-    this.tokenStore.delete(id);
+    await this.tokenStoreModel.deleteOne({ userId: id });
     return 'Successfully logged out, you can close this tab now.';
   }
 
