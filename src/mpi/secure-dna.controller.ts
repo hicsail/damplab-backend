@@ -1,6 +1,6 @@
 import { Controller, Post, Body, Get, Param, UseGuards, Req } from '@nestjs/common';
 import { MPIService } from './mpi.service';
-import { ScreeningInput, ScreeningResult } from './types';
+import { ScreeningInput, ScreeningResult, Region } from './types';
 import { AuthGuard } from '../auth/auth.guard';
 import { Request } from 'express';
 
@@ -14,7 +14,7 @@ interface AuthenticatedRequest extends Request {
 
 interface BatchScreeningRequest {
   sequenceIds: string[];
-  region: string;
+  region: Region;
 }
 
 @Controller('secure-dna')
@@ -34,9 +34,17 @@ export class SecureDNAController {
     const userId = req.user.userId;
 
     // Start the processing in the background
-    this.mpiService.screenSequencesBatch(request.sequenceIds, request.region, userId).catch((error) => {
-      console.error('Batch screening failed:', error);
-    });
+    this.mpiService
+      .screenSequencesBatch(
+        {
+          sequenceIds: request.sequenceIds,
+          region: request.region
+        },
+        userId
+      )
+      .catch((error) => {
+        console.error('Batch screening failed:', error);
+      });
 
     // Return immediately with acknowledgment
     return {

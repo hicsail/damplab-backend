@@ -16,6 +16,7 @@ import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
 import { MPIModule } from './mpi/mpi.module';
 import { JwtModule } from '@nestjs/jwt';
+import { join } from 'path';
 
 @Module({
   imports: [
@@ -23,7 +24,12 @@ import { JwtModule } from '@nestjs/jwt';
     getConfigModule(),
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: true
+      autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
+      installSubscriptionHandlers: true,
+      subscriptions: {
+        'graphql-ws': true,
+        'subscriptions-transport-ws': true
+      }
     }),
 
     // Load the MongoDB connection based on the config service

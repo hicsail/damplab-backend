@@ -1,9 +1,10 @@
-import { Controller, Get, Query, Post, Patch, Body, Param, UseGuards, Req, HttpStatus, HttpException, Res, UnauthorizedException, Delete } from '@nestjs/common';
+import { Controller, Get, Query, Post, Patch, Body, Param, UseGuards, Req, HttpStatus, HttpException, Res, UnauthorizedException, Delete, NotFoundException } from '@nestjs/common';
 import { MPIService } from './mpi.service';
-import { Sequence } from './types';
+import { Sequence, ScreeningResult } from './types';
 import { AuthGuard } from '../auth/auth.guard';
 import { Request, Response } from 'express';
 import { JwtService } from '@nestjs/jwt';
+import { CreateSequenceInput } from './dtos/mpi.dto';
 
 interface AuthenticatedRequest extends Request {
   user: {
@@ -11,6 +12,18 @@ interface AuthenticatedRequest extends Request {
     name?: string;
     email?: string;
   };
+}
+
+interface CreateSequenceRequest {
+  name: string;
+  type: 'dna' | 'rna' | 'aa' | 'unknown';
+  seq: string;
+  annotations?: Array<{
+    start: number;
+    end: number;
+    type: string;
+    description?: string;
+  }>;
 }
 
 @Controller('mpi')
@@ -115,14 +128,14 @@ export class MPIController {
 
   @Get('sequences')
   @UseGuards(AuthGuard)
-  async getSequences(@Req() req: AuthenticatedRequest): Promise<any> {
+  async getSequences(@Req() req: AuthenticatedRequest): Promise<Sequence[]> {
     const userId = req.user.userId;
     return this.mpiService.getSequences(userId);
   }
 
   @Post('sequences')
   @UseGuards(AuthGuard)
-  async createSequence(@Body() sequence: Sequence, @Req() req: AuthenticatedRequest): Promise<any> {
+  async createSequence(@Body() sequence: CreateSequenceInput, @Req() req: AuthenticatedRequest): Promise<Sequence> {
     const userId = req.user.userId;
     return this.mpiService.createSequence(sequence, userId);
   }
@@ -145,9 +158,13 @@ export class MPIController {
 
   @Get('sequences/:id')
   @UseGuards(AuthGuard)
-  async getSequence(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<any> {
+  async getSequence(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<Sequence> {
     const userId = req.user.userId;
-    return this.mpiService.getSequence(id, userId);
+    const sequence = await this.mpiService.getSequence(id, userId);
+    if (!sequence) {
+      throw new NotFoundException(`Sequence with ID ${id} not found`);
+    }
+    return sequence;
   }
 
   @Patch('sequences/:id')
@@ -159,8 +176,15 @@ export class MPIController {
 
   @Delete('sequences/:id')
   @UseGuards(AuthGuard)
-  async deleteSequence(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<any> {
+  async deleteSequence(@Param('id') id: string, @Req() req: AuthenticatedRequest): Promise<boolean> {
     const userId = req.user.userId;
     return this.mpiService.deleteSequence(id, userId);
+  }
+
+  @Get('screenings')
+  @UseGuards(AuthGuard)
+  async getUserScreenings(@Req() req: AuthenticatedRequest): Promise<ScreeningResult[]> {
+    const userId = req.user.userId;
+    return this.mpiService.getUserScreenings(userId);
   }
 }

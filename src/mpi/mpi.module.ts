@@ -7,11 +7,18 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { SecureDNAController } from './secure-dna.controller';
 import { MongooseModule } from '@nestjs/mongoose';
 import { TokenStoreSchema } from './models/token-store.model';
+import { MPIResolver } from './mpi.resolver';
+import { SequenceSchema } from './models/sequence.schema';
+import { ScreeningResultSchema } from './models/screening-result.schema';
 
 @Module({
   imports: [
     ConfigModule,
-    MongooseModule.forFeature([{ name: 'TokenStore', schema: TokenStoreSchema }]),
+    MongooseModule.forFeature([
+      { name: 'TokenStore', schema: TokenStoreSchema },
+      { name: 'Sequence', schema: SequenceSchema },
+      { name: 'ScreeningResult', schema: ScreeningResultSchema }
+    ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
@@ -22,7 +29,7 @@ import { TokenStoreSchema } from './models/token-store.model';
     })
   ],
   controllers: [MPIController, SecureDNAController],
-  providers: [MPIService, AuthGuard],
+  providers: [MPIService, AuthGuard, MPIResolver],
   exports: [MPIService]
 })
 export class MPIModule {}

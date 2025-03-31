@@ -1,10 +1,16 @@
 import { Injectable, UnauthorizedException, HttpException, HttpStatus } from '@nestjs/common';
-import axios from 'axios';
-import { Sequence, ScreeningInput, ScreeningResult, Region } from './types';
-import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { TokenStoreDocument } from './models/token-store.model';
+import axios from 'axios';
+import { Sequence, ScreeningResult, HazardHits } from './types';
+import { TokenStore, TokenStoreDocument } from './models/token-store.model';
+import { ScreeningInput, Region } from './types';
+import { JwtService } from '@nestjs/jwt';
+import { CreateSequenceInput } from './dtos/mpi.dto';
+
+const TOKEN_STORE_MODEL = 'TokenStore';
+const SEQUENCE_MODEL = 'Sequence';
+const SCREENING_RESULT_MODEL = 'ScreeningResult';
 
 interface BatchCreateResponse {
   results: any[];
@@ -16,11 +22,14 @@ interface BatchCreateResponse {
   };
 }
 
-type TokenStoreModelName = 'TokenStore';
-
 @Injectable()
 export class MPIService {
-  constructor(private readonly jwtService: JwtService, @InjectModel('TokenStore' as TokenStoreModelName) private tokenStoreModel: Model<TokenStoreDocument>) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    @InjectModel(TOKEN_STORE_MODEL) private tokenStoreModel: Model<TokenStore>,
+    @InjectModel('Sequence') private sequenceModel: Model<Sequence>,
+    @InjectModel('ScreeningResult') private screeningResultModel: Model<ScreeningResult>
+  ) {}
 
   // Default user ID for backward compatibility
   private defaultUserId = 'default_user';
@@ -165,18 +174,35 @@ export class MPIService {
     return 'Successfully logged out, you can close this tab now.';
   }
 
-  async createSequence(sequence: Sequence, userId?: string): Promise<any> {
+  async createSequence(input: CreateSequenceInput, userId?: string): Promise<Sequence> {
+    // First create in MPI backend
     const token = await this.getAccessToken(userId);
     if (!token) {
       throw new UnauthorizedException('No token found, log in to MPI first');
     }
-    const response = await axios.post(`${process.env.MPI_BACKEND}/sequences`, sequence, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    return response.data;
+
+    try {
+      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/sequences`, input, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      // Then create in our database with the MPI ID
+      const sequence = new this.sequenceModel({
+        ...input,
+        type: input.type || 'unknown',
+        annotations: input.annotations || [],
+        userId: userId || 'system',
+        mpiId: mpiResponse.data.id // Store the MPI ID
+      });
+      const savedSequence = await sequence.save();
+      return savedSequence.toJSON();
+    } catch (error) {
+      console.error('Failed to create sequence in MPI:', error);
+      throw new HttpException('Failed to create sequence in MPI', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 
   async createSequences(sequences: Sequence[], userId?: string): Promise<BatchCreateResponse> {
@@ -213,31 +239,14 @@ export class MPIService {
     };
   }
 
-  async getSequences(userId?: string): Promise<any> {
-    console.log('getSequences', userId);
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const sequences = await axios.get(`${process.env.MPI_BACKEND}/sequences`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-    return sequences.data;
+  async getSequences(userId?: string): Promise<Sequence[]> {
+    const query = userId ? { userId } : {};
+    return this.sequenceModel.find(query).lean().exec();
   }
 
-  async getSequence(id: string, userId?: string): Promise<any> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const sequence = await axios.get(`${process.env.MPI_BACKEND}/sequences/${id}`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-    return sequence.data;
+  async getSequence(id: string, userId?: string): Promise<Sequence | null> {
+    const query = userId ? { _id: id, userId } : { _id: id };
+    return this.sequenceModel.findOne(query).lean().exec();
   }
 
   async updateSequence(id: string, sequence: Partial<Sequence>, userId?: string): Promise<any> {
@@ -254,31 +263,69 @@ export class MPIService {
     return response.data;
   }
 
-  async deleteSequence(id: string, userId?: string): Promise<any> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const response = await axios.delete(`${process.env.MPI_BACKEND}/sequences/${id}`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-    return response.data;
+  async deleteSequence(id: string, userId?: string): Promise<boolean> {
+    const query = userId ? { _id: id, userId } : { _id: id };
+    const result = await this.sequenceModel.findOneAndDelete(query).exec();
+    return !!result;
   }
 
-  async screenSequence(screeningRequest: ScreeningInput, userId?: string): Promise<ScreeningResult> {
+  async screenSequence(input: ScreeningInput, userId?: string): Promise<ScreeningResult> {
+    // First get the sequence from our database
+    const sequence = await this.getSequence(input.sequenceId, userId);
+    if (!sequence) {
+      throw new HttpException('Sequence not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Create screening result in our database
+    const result = new this.screeningResultModel({
+      sequence: sequence._id, // Use the MongoDB _id
+      region: input.region,
+      status: 'pending',
+      userId: userId || sequence.userId
+    });
+    const savedResult = await result.save();
+
+    // Get MPI token
     const token = await this.getAccessToken(userId);
     if (!token) {
       throw new UnauthorizedException('No token found, log in to MPI first');
     }
-    const response = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen`, screeningRequest, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    return response.data;
+
+    try {
+      // Call MPI backend for screening
+      const mpiResponse = await axios.post(
+        `${process.env.MPI_BACKEND}/secure-dna/screen`,
+        {
+          sequenceId: sequence.mpiId, // Use the MPI ID
+          region: input.region
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      // Format threats to match our schema
+      const formattedThreats = (mpiResponse.data.threats || []).map((threat: any) => ({
+        name: threat.name || 'Unknown Threat',
+        description: threat.description || 'No description available',
+        is_wild_type: threat.is_wild_type || false,
+        references: threat.references || []
+      }));
+
+      // Update screening result with MPI response
+      savedResult.status = 'completed';
+      savedResult.threats = formattedThreats;
+      const updatedResult = await savedResult.save();
+      return updatedResult.toJSON();
+    } catch (error) {
+      // Update screening result with error status
+      savedResult.status = 'failed';
+      await savedResult.save();
+      throw new HttpException('Failed to screen sequence in MPI', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
   }
 
   async getScreeningResults(sequenceId: string, userId?: string): Promise<ScreeningResult[]> {
@@ -307,41 +354,18 @@ export class MPIService {
     return response.data;
   }
 
-  async screenSequencesBatch(sequenceIds: string[], region: string, userId?: string): Promise<void> {
-    const results = [];
-    const errors = [];
-
-    for (const sequenceId of sequenceIds) {
-      try {
-        const result = await this.screenSequence(
-          {
-            sequenceId,
-            region: region as Region
-          },
-          userId
-        );
-        results.push({
-          success: true,
+  async screenSequencesBatch(input: { sequenceIds: string[]; region: Region }, userId?: string): Promise<ScreeningResult[]> {
+    const results: ScreeningResult[] = [];
+    for (const sequenceId of input.sequenceIds) {
+      const result = await this.screenSequence(
+        {
           sequenceId,
-          result
-        });
-      } catch (error) {
-        errors.push({
-          success: false,
-          sequenceId,
-          error: error.message
-        });
-        console.error(`Failed to screen sequence ${sequenceId}:`, error);
-      }
+          region: input.region
+        },
+        userId
+      );
+      results.push(result);
     }
-
-    // Log the final results
-    console.log('Batch screening completed:', {
-      total: sequenceIds.length,
-      successful: results.length,
-      failed: errors.length,
-      results,
-      errors
-    });
+    return results;
   }
 }

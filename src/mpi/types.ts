@@ -1,16 +1,6 @@
-export interface Sequence {
-  name: string;
-  type: 'dna' | 'rna' | 'aa' | 'unknown';
-  seq: string;
-  annotations: {
-    name: string;
-    start: number;
-    end: number;
-    direction?: number;
-    color?: string;
-    type?: string;
-  }[];
-}
+import { Sequence, ScreeningResult, HazardHits } from './models/mpi.model';
+
+export type { Sequence, ScreeningResult, HazardHits };
 
 export type eLabsStatus = 'PENDING' | 'PROGRESS' | 'COMPLETED';
 
@@ -57,14 +47,6 @@ export interface Organism {
   tags: string[];
 }
 
-export interface HazardHits {
-  type: 'nuc' | 'aa';
-  is_wild_type: boolean | null;
-  hit_regions: HitRegion[];
-  most_likely_organism: Organism;
-  organisms: Organism[];
-}
-
 export interface RecordHit {
   fasta_header: string;
   line_number_range: number[];
@@ -78,16 +60,10 @@ export interface ScreeningResponse {
   hits_by_record?: RecordHit[];
 }
 
-export interface ScreeningResult {
-  sequenceId: string;
-  sequence: {
-    id: string;
-    name: string;
-  };
-  status: 'granted' | 'denied';
-  threats: HazardHits[];
-  region: string;
-  createdAt: Date;
-  warning?: string;
-  originalSeq: string;
+// Extend the Sequence type from mpi.model.ts
+declare module './models/mpi.model' {
+  interface Sequence {
+    _id: string;
+    mpiId: string;
+  }
 }
