@@ -1,4 +1,4 @@
-import { Args, Mutation, Query, Resolver, Subscription } from '@nestjs/graphql';
+import { Args, Mutation, Query, Resolver, Subscription, Context } from '@nestjs/graphql';
 import { Injectable } from '@nestjs/common';
 import { PubSub } from 'graphql-subscriptions';
 import { MPIService } from './mpi.service';
@@ -6,6 +6,8 @@ import { Sequence } from './models/mpi.model';
 import { ScreeningResult } from './models/mpi.model';
 import { CreateSequenceInput, ScreeningInput, BatchScreeningInput } from './dtos/mpi.dto';
 import { Region } from './types';
+import { JwtService } from '@nestjs/jwt';
+import { UserInfo, AuthResponse, LoginStatus } from './models/auth.model';
 
 interface ScreeningStatusPayload {
   id: string;
@@ -22,12 +24,20 @@ interface ScreeningStatusPayload {
   updated_at: Date;
 }
 
+interface Context {
+  req: {
+    headers: {
+      authorization?: string;
+    };
+  };
+}
+
 @Injectable()
 @Resolver(() => Sequence)
 export class MPIResolver {
   private pubSub: PubSub;
 
-  constructor(private readonly mpiService: MPIService) {
+  constructor(private readonly mpiService: MPIService, private readonly jwtService: JwtService) {
     this.pubSub = new PubSub();
   }
 
@@ -39,6 +49,26 @@ export class MPIResolver {
   @Query(() => Sequence, { nullable: true })
   async sequence(@Args('id') id: string): Promise<Sequence | null> {
     return this.mpiService.getSequence(id);
+  }
+
+  @Query(() => [ScreeningResult])
+  async getUserScreenings(@Context() context: Context): Promise<ScreeningResult[]> {
+    const authHeader = context.req.headers.authorization;
+    if (!authHeader) {
+      throw new Error('No authorization header');
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      throw new Error('No token provided');
+    }
+
+    try {
+      const payload = this.jwtService.verify(token);
+      return this.mpiService.getUserScreenings(payload.userId);
+    } catch (error) {
+      throw new Error('Invalid token');
+    }
   }
 
   @Mutation(() => Sequence)
@@ -90,9 +120,84 @@ export class MPIResolver {
   @Subscription(() => ScreeningResult, {
     filter: (payload: { screeningStatus: ScreeningStatusPayload }, variables: { sequenceId: string }) => {
       return payload.screeningStatus.sequence.id === variables.sequenceId;
+    },
+    resolve: (payload: { screeningStatus: ScreeningStatusPayload }) => {
+      if (!payload?.screeningStatus) {
+        return null;
+      }
+      return payload.screeningStatus;
     }
   })
   screeningStatus(@Args('sequenceId') sequenceId: string): AsyncIterator<unknown> {
     return this.pubSub.asyncIterator('screeningStatus');
+  }
+
+  @Query(() => LoginStatus)
+  async isLoggedIn(@Context() context: Context): Promise<LoginStatus> {
+    const authHeader = context.req.headers.authorization;
+    if (!authHeader) {
+      return { loggedIn: false };
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return { loggedIn: false };
+    }
+
+    try {
+      const payload = this.jwtService.verify(token);
+      const userData = await this.mpiService.getUserData(payload.userId);
+      return {
+        loggedIn: true,
+        userInfo: userData
+      };
+    } catch (error) {
+      return { loggedIn: false };
+    }
+  }
+
+  @Query(() => UserInfo)
+  async getUserInfo(@Context() context: Context): Promise<UserInfo> {
+    const authHeader = context.req.headers.authorization;
+    if (!authHeader) {
+      throw new Error('No authorization header');
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      throw new Error('No token provided');
+    }
+
+    try {
+      const payload = this.jwtService.verify(token);
+      return await this.mpiService.getUserData(payload.userId);
+    } catch (error) {
+      throw new Error('Invalid token');
+    }
+  }
+
+  @Mutation(() => AuthResponse)
+  async exchangeCodeForToken(@Args('code') code: string, @Args('state') state: string): Promise<AuthResponse> {
+    return this.mpiService.exchangeCodeForToken(code, state);
+  }
+
+  @Mutation(() => String)
+  async logout(@Context() context: Context): Promise<string> {
+    const authHeader = context.req.headers.authorization;
+    if (!authHeader) {
+      throw new Error('No authorization header');
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      throw new Error('No token provided');
+    }
+
+    try {
+      const payload = this.jwtService.verify(token);
+      return await this.mpiService.logout(payload.userId);
+    } catch (error) {
+      throw new Error('Invalid token');
+    }
   }
 }

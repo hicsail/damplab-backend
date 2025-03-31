@@ -241,12 +241,15 @@ export class MPIService {
 
   async getSequences(userId?: string): Promise<Sequence[]> {
     const query = userId ? { userId } : {};
-    return this.sequenceModel.find(query).lean().exec();
+    const sequences = await this.sequenceModel.find(query).exec();
+    return sequences.map((seq) => seq.toJSON());
   }
 
   async getSequence(id: string, userId?: string): Promise<Sequence | null> {
     const query = userId ? { _id: id, userId } : { _id: id };
-    return this.sequenceModel.findOne(query).lean().exec();
+    const sequence = await this.sequenceModel.findOne(query).exec();
+    if (!sequence) return null;
+    return sequence;
   }
 
   async updateSequence(id: string, sequence: Partial<Sequence>, userId?: string): Promise<any> {
@@ -281,7 +284,9 @@ export class MPIService {
       sequence: sequence._id, // Use the MongoDB _id
       region: input.region,
       status: 'pending',
-      userId: userId || sequence.userId
+      userId: userId || sequence.userId,
+      created_at: new Date(),
+      updated_at: new Date()
     });
     const savedResult = await result.save();
 
@@ -318,11 +323,20 @@ export class MPIService {
       // Update screening result with MPI response
       savedResult.status = 'completed';
       savedResult.threats = formattedThreats;
+      savedResult.updated_at = new Date();
       const updatedResult = await savedResult.save();
-      return updatedResult.toJSON();
+
+      // Populate the sequence field before returning
+      const populatedResult = await this.screeningResultModel.findById(updatedResult._id).populate('sequence').exec();
+
+      if (!populatedResult) {
+        throw new HttpException('Failed to retrieve populated screening result', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+      return populatedResult.toJSON();
     } catch (error) {
       // Update screening result with error status
       savedResult.status = 'failed';
+      savedResult.updated_at = new Date();
       await savedResult.save();
       throw new HttpException('Failed to screen sequence in MPI', HttpStatus.INTERNAL_SERVER_ERROR);
     }
@@ -351,21 +365,66 @@ export class MPIService {
         Authorization: `Bearer ${token}`
       }
     });
-    return response.data;
+
+    // Format the data to ensure all required fields are present
+    const formattedData = response.data.map((result: ScreeningResult) => ({
+      ...result,
+      id: result.id || '',
+      sequence: result.sequence || { id: '', name: '' },
+      status: result.status || 'pending',
+      threats: (result.threats || []).map((threat: any) => ({
+        name: threat.name || 'Unknown Threat',
+        description: threat.description || 'No description available',
+        is_wild_type: threat.is_wild_type || false,
+        references: threat.references || []
+      })),
+      region: result.region || 'all',
+      created_at: result.created_at ? new Date(result.created_at) : new Date(),
+      updated_at: result.updated_at ? new Date(result.updated_at) : new Date(),
+      userId: result.userId || userId || 'system'
+    }));
+
+    return formattedData;
   }
 
   async screenSequencesBatch(input: { sequenceIds: string[]; region: Region }, userId?: string): Promise<ScreeningResult[]> {
     const results: ScreeningResult[] = [];
-    for (const sequenceId of input.sequenceIds) {
-      const result = await this.screenSequence(
+
+    // First verify all sequences exist
+    const sequences = await Promise.all(input.sequenceIds.map((id) => this.getSequence(id, userId)));
+
+    // Check if any sequences were not found
+    const missingSequences = sequences.filter((seq) => !seq);
+    if (missingSequences.length > 0) {
+      throw new HttpException('One or more sequences not found', HttpStatus.NOT_FOUND);
+    }
+
+    // Create screening results for all sequences
+    for (const sequence of sequences) {
+      if (!sequence) continue; // Skip if sequence not found
+
+      const result = new this.screeningResultModel({
+        sequence: sequence._id,
+        region: input.region,
+        status: 'pending',
+        userId: userId || sequence.userId,
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+      await result.save();
+
+      // Start screening process
+      this.screenSequence(
         {
-          sequenceId,
+          sequenceId: sequence._id!.toString(),
           region: input.region
         },
         userId
-      );
-      results.push(result);
+      ).catch((error) => {
+        console.error(`Failed to screen sequence ${sequence._id}:`, error);
+      });
     }
+
     return results;
   }
 }

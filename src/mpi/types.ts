@@ -63,7 +63,7 @@ export interface ScreeningResponse {
 // Extend the Sequence type from mpi.model.ts
 declare module './models/mpi.model' {
   interface Sequence {
-    _id: string;
+    _id?: string;
     mpiId: string;
   }
 }

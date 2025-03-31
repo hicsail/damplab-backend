@@ -218,6 +218,23 @@ type ScreeningResult {
   updated_at: DateTime!
 }
 
+type UserInfo {
+  sub: String!
+  name: String!
+  email: String!
+  picture: String
+}
+
+type AuthResponse {
+  token: String!
+  userInfo: UserInfo!
+}
+
+type LoginStatus {
+  loggedIn: Boolean!
+  userInfo: UserInfo
+}
+
 type Query {
   services: [DampLabService!]!
   workflowById(id: ID!): Workflow
@@ -229,6 +246,9 @@ type Query {
   jobByWorkflowId(workflow: ID!): Job!
   sequences: [Sequence!]!
   sequence(id: String!): Sequence
+  getUserScreenings: [ScreeningResult!]!
+  isLoggedIn: LoginStatus!
+  getUserInfo: UserInfo!
 }
 
 type Mutation {
@@ -254,6 +274,8 @@ type Mutation {
   screenSequence(input: ScreeningInput!): ScreeningResult!
   screenSequencesBatch(input: BatchScreeningInput!): [ScreeningResult!]!
   deleteSequence(id: String!): Boolean!
+  exchangeCodeForToken(code: String!, state: String!): AuthResponse!
+  logout: String!
 }
 
 input ServiceChange {
