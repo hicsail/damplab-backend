@@ -190,12 +190,15 @@ export class MPIService {
       });
 
       // Then create in our database with the MPI ID
+      const now = new Date();
       const sequence = new this.sequenceModel({
         ...input,
         type: input.type || 'unknown',
         annotations: input.annotations || [],
         userId: userId || 'system',
-        mpiId: mpiResponse.data.id // Store the MPI ID
+        mpiId: mpiResponse.data.id, // Store the MPI ID
+        created_at: now,
+        updated_at: now
       });
       const savedSequence = await sequence.save();
       return savedSequence.toJSON();
@@ -279,17 +282,6 @@ export class MPIService {
       throw new HttpException('Sequence not found', HttpStatus.NOT_FOUND);
     }
 
-    // Create screening result in our database
-    const result = new this.screeningResultModel({
-      sequence: sequence._id, // Use the MongoDB _id
-      region: input.region,
-      status: 'pending',
-      userId: userId || sequence.userId,
-      created_at: new Date(),
-      updated_at: new Date()
-    });
-    const savedResult = await result.save();
-
     // Get MPI token
     const token = await this.getAccessToken(userId);
     if (!token) {
@@ -312,32 +304,40 @@ export class MPIService {
         }
       );
 
+      console.log('MPI Response:', JSON.stringify(mpiResponse.data, null, 2));
+
       // Format threats to match our schema
       const formattedThreats = (mpiResponse.data.threats || []).map((threat: any) => ({
-        name: threat.name || 'Unknown Threat',
-        description: threat.description || 'No description available',
+        name: threat.most_likely_organism?.name || 'Unknown Organism',
+        hit_regions:
+          threat.hit_regions?.map((region: any) => ({
+            seq: region.seq,
+            seq_range_start: region.seq_range_start,
+            seq_range_end: region.seq_range_end
+          })) || [],
         is_wild_type: threat.is_wild_type || false,
-        references: threat.references || []
+        references: threat.organisms?.map((org: any) => org.name) || []
       }));
 
-      // Update screening result with MPI response
-      savedResult.status = 'completed';
-      savedResult.threats = formattedThreats;
-      savedResult.updated_at = new Date();
-      const updatedResult = await savedResult.save();
+      // Create screening result with MPI response
+      const result = new this.screeningResultModel({
+        sequence: sequence._id,
+        region: input.region,
+        status: mpiResponse.data.status,
+        threats: formattedThreats,
+        userId: userId || sequence.userId
+      });
+      const savedResult = await result.save();
 
       // Populate the sequence field before returning
-      const populatedResult = await this.screeningResultModel.findById(updatedResult._id).populate('sequence').exec();
+      const populatedResult = await this.screeningResultModel.findById(savedResult._id).populate('sequence').exec();
 
       if (!populatedResult) {
         throw new HttpException('Failed to retrieve populated screening result', HttpStatus.INTERNAL_SERVER_ERROR);
       }
       return populatedResult.toJSON();
     } catch (error) {
-      // Update screening result with error status
-      savedResult.status = 'failed';
-      savedResult.updated_at = new Date();
-      await savedResult.save();
+      console.error('Error in screenSequence:', error);
       throw new HttpException('Failed to screen sequence in MPI', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
@@ -360,31 +360,10 @@ export class MPIService {
     if (!token) {
       throw new UnauthorizedException('No token found, log in to MPI first');
     }
-    const response = await axios.get(`${process.env.MPI_BACKEND}/secure-dna/screenings`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
 
-    // Format the data to ensure all required fields are present
-    const formattedData = response.data.map((result: ScreeningResult) => ({
-      ...result,
-      id: result.id || '',
-      sequence: result.sequence || { id: '', name: '' },
-      status: result.status || 'pending',
-      threats: (result.threats || []).map((threat: any) => ({
-        name: threat.name || 'Unknown Threat',
-        description: threat.description || 'No description available',
-        is_wild_type: threat.is_wild_type || false,
-        references: threat.references || []
-      })),
-      region: result.region || 'all',
-      created_at: result.created_at ? new Date(result.created_at) : new Date(),
-      updated_at: result.updated_at ? new Date(result.updated_at) : new Date(),
-      userId: result.userId || userId || 'system'
-    }));
-
-    return formattedData;
+    // Get screenings from our local MongoDB
+    const localScreenings = await this.screeningResultModel.find({ userId }).populate('sequence').exec();
+    return localScreenings.map((screening) => screening.toJSON());
   }
 
   async screenSequencesBatch(input: { sequenceIds: string[]; region: Region }, userId?: string): Promise<ScreeningResult[]> {
@@ -399,30 +378,22 @@ export class MPIService {
       throw new HttpException('One or more sequences not found', HttpStatus.NOT_FOUND);
     }
 
-    // Create screening results for all sequences
+    // Start screening process for all sequences
     for (const sequence of sequences) {
       if (!sequence) continue; // Skip if sequence not found
 
-      const result = new this.screeningResultModel({
-        sequence: sequence._id,
-        region: input.region,
-        status: 'pending',
-        userId: userId || sequence.userId,
-        created_at: new Date(),
-        updated_at: new Date()
-      });
-      await result.save();
-
-      // Start screening process
-      this.screenSequence(
-        {
-          sequenceId: sequence._id!.toString(),
-          region: input.region
-        },
-        userId
-      ).catch((error) => {
+      try {
+        const result = await this.screenSequence(
+          {
+            sequenceId: sequence._id!.toString(),
+            region: input.region
+          },
+          userId
+        );
+        results.push(result);
+      } catch (error) {
         console.error(`Failed to screen sequence ${sequence._id}:`, error);
-      });
+      }
     }
 
     return results;

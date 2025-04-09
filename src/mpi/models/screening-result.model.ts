@@ -32,7 +32,7 @@ export class ScreeningResult {
   threats: HazardHits[];
 
   @Field()
-  status: 'pending' | 'completed' | 'failed';
+  status: 'granted' | 'denied';
 
   @Field()
   userId: string;

@@ -25,11 +25,7 @@ import { join } from 'path';
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
       autoSchemaFile: join(process.cwd(), 'src/schema.gql'),
-      installSubscriptionHandlers: true,
-      subscriptions: {
-        'graphql-ws': true,
-        'subscriptions-transport-ws': true
-      }
+      installSubscriptionHandlers: false
     }),
 
     // Load the MongoDB connection based on the config service

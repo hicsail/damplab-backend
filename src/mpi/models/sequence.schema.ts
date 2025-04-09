@@ -14,10 +14,11 @@ export const SequenceSchema = new Schema(
     seq: { type: String, required: true },
     annotations: { type: [AnnotationSchema], default: [] },
     userId: { type: String, required: true },
-    mpiId: { type: String, required: true }
+    mpiId: { type: String, required: true },
+    created_at: { type: Date, default: Date.now },
+    updated_at: { type: Date, default: Date.now }
   },
   {
-    timestamps: true,
     toJSON: {
       transform: function (doc: any, ret: any): any {
         ret.id = ret._id.toString();

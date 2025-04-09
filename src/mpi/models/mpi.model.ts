@@ -84,8 +84,8 @@ export class HazardHits {
   @Field()
   name: string;
 
-  @Field()
-  description: string;
+  @Field(() => [HitRegion])
+  hit_regions: HitRegion[];
 
   @Field()
   is_wild_type: boolean;

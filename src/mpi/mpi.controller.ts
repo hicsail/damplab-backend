@@ -1,7 +1,8 @@
-import { Controller, Get, Query, Req, HttpStatus, HttpException, Res } from '@nestjs/common';
+import { Controller, Get, Query, Req, HttpStatus, HttpException, Res, Post } from '@nestjs/common';
 import { MPIService } from './mpi.service';
 import { Request, Response } from 'express';
 import { JwtService } from '@nestjs/jwt';
+import { Body } from '@nestjs/common';
 
 @Controller('mpi')
 export class MPIController {
@@ -45,6 +46,55 @@ export class MPIController {
     } catch (error) {
       const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3100';
       res.redirect(`${frontendUrl}?error=auth_failed`);
+    }
+  }
+
+  @Get('status')
+  async isLoggedIn(@Req() req: Request): Promise<{ loggedIn: boolean; userInfo?: any }> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return { loggedIn: false };
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      return { loggedIn: false };
+    }
+
+    try {
+      const payload = this.jwtService.verify(token);
+      const userData = await this.mpiService.getUserData(payload.userId);
+      return {
+        loggedIn: true,
+        userInfo: userData
+      };
+    } catch (error) {
+      return { loggedIn: false };
+    }
+  }
+
+  @Post('token')
+  async exchangeCodeForToken(@Body('code') code: string, @Body('state') state: string): Promise<{ token: string; userInfo: any }> {
+    return this.mpiService.exchangeCodeForToken(code, state);
+  }
+
+  @Post('logout')
+  async logout(@Req() req: Request): Promise<string> {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      throw new HttpException('No authorization header', HttpStatus.UNAUTHORIZED);
+    }
+
+    const token = authHeader.split(' ')[1];
+    if (!token) {
+      throw new HttpException('No token provided', HttpStatus.UNAUTHORIZED);
+    }
+
+    try {
+      const payload = this.jwtService.verify(token);
+      return await this.mpiService.logout(payload.userId);
+    } catch (error) {
+      throw new HttpException('Invalid token', HttpStatus.UNAUTHORIZED);
     }
   }
 }
