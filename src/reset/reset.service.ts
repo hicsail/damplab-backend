@@ -9,13 +9,17 @@ import { DampLabService } from '../services/models/damplab-service.model';
 import { Category } from '../categories/category.model';
 import { Bundle } from '../bundles/bundles.model';
 
+const DAMP_LAB_SERVICE_MODEL = 'DampLabService';
+const CATEGORY_MODEL = 'Category';
+const BUNDLE_MODEL = 'Bundle';
+
 @Injectable()
 export class ResetService {
   constructor(
     @InjectConnection() private readonly connection: Connection,
-    @InjectModel(DampLabService.name) private readonly serviceModel: Model<any>,
-    @InjectModel(Category.name) private readonly categoryModel: Model<any>,
-    @InjectModel(Bundle.name) private readonly bundleModel: Model<any>
+    @InjectModel(DAMP_LAB_SERVICE_MODEL) private readonly serviceModel: Model<DampLabService>,
+    @InjectModel(CATEGORY_MODEL) private readonly categoryModel: Model<Category>,
+    @InjectModel(BUNDLE_MODEL) private readonly bundleModel: Model<Bundle>
   ) {}
 
   async clearDatabase(): Promise<void> {
