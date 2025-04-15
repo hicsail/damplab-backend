@@ -12,6 +12,6 @@ async function bootstrap(): Promise<void> {
     exposedHeaders: ['Set-Cookie']
   });
   app.use(cookieParser());
-  await app.listen(5100);
+  await app.listen(3000);
 }
 bootstrap();

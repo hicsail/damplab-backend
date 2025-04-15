@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { InjectConnection, InjectModel } from '@nestjs/mongoose';
 import { Connection, Types, Model } from 'mongoose';
 import { ServiceInput } from './dtos/service.dto';
 import { CategoryInput } from './dtos/category.dto';
@@ -8,24 +9,14 @@ import { DampLabService } from '../services/models/damplab-service.model';
 import { Category } from '../categories/category.model';
 import { Bundle } from '../bundles/bundles.model';
 
-// Define a generic type for any model
-type AnyModel = Model<any>;
-
 @Injectable()
 export class ResetService {
-  // Temporary solution to avoid decorator errors
-  private readonly connection: any;
-  private readonly serviceModel: any;
-  private readonly categoryModel: any;
-  private readonly bundleModel: any;
-
-  constructor() {
-    // This is a temporary solution - in production, use proper dependency injection
-    this.connection = null;
-    this.serviceModel = null;
-    this.categoryModel = null;
-    this.bundleModel = null;
-  }
+  constructor(
+    @InjectConnection() private readonly connection: Connection,
+    @InjectModel(DampLabService.name) private readonly serviceModel: Model<any>,
+    @InjectModel(Category.name) private readonly categoryModel: Model<any>,
+    @InjectModel(Bundle.name) private readonly bundleModel: Model<any>
+  ) {}
 
   async clearDatabase(): Promise<void> {
     await this.connection.dropDatabase();
@@ -42,13 +33,14 @@ export class ResetService {
     // Next, using the map determine the allowed connections
     await this.updateAllowedConnections(services, serviceMap);
 
-    // Next, create the categories
+    // Insert the categories
     const categoryMap = await this.insertCategories(categories);
 
-    // Next, update the categories with the services
+    // Update the categories to have the service list using the categories
+    // field on the service
     await this.updateServiceList(categories, categoryMap, services, serviceMap);
 
-    // Finally, create the bundles
+    // Save the bundles
     await this.saveBundles(bundles, serviceMap);
   }
 
@@ -60,7 +52,6 @@ export class ResetService {
    */
   async saveServices(services: ServiceInput[]): Promise<Map<string, Types.ObjectId>> {
     const serviceMap = new Map<string, Types.ObjectId>();
-
     for (const service of services) {
       const result = await this.serviceModel.create({
         name: service.name,
@@ -73,7 +64,7 @@ export class ResetService {
         paramGroups: service.paramGroups
       });
 
-      // Convert string ID to ObjectId and store in map
+      // Update the map with proper ObjectId
       serviceMap.set(service.id, new Types.ObjectId(result._id));
     }
 
@@ -114,7 +105,7 @@ export class ResetService {
         services: []
       });
 
-      // Convert string ID to ObjectId and store in map
+      // Update the map with proper ObjectId
       categoryMap.set(category.id, new Types.ObjectId(result._id));
     }
 
