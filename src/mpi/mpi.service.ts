@@ -304,8 +304,6 @@ export class MPIService {
         }
       );
 
-      console.log('MPI Response:', JSON.stringify(mpiResponse.data, null, 2));
-
       // Format threats to match our schema
       const formattedThreats = (mpiResponse.data.threats || []).map((threat: any) => ({
         name: threat.most_likely_organism?.name || 'Unknown Organism',
