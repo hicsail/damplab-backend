@@ -5,21 +5,17 @@ import { ServiceInput } from './dtos/service.dto';
 import { CategoryInput } from './dtos/category.dto';
 import { BundleInput } from './dtos/bundle.dto';
 // Import only the interfaces, not the document types
-import { DampLabService } from '../services/models/damplab-service.model';
-import { Category } from '../categories/category.model';
-import { Bundle } from '../bundles/bundles.model';
-
-const DAMP_LAB_SERVICE_MODEL = 'DampLabService';
-const CATEGORY_MODEL = 'Category';
-const BUNDLE_MODEL = 'Bundle';
+import { DampLabService, DampLabServiceDocument } from '../services/models/damplab-service.model';
+import { Category, CategoryDocument } from '../categories/category.model';
+import { Bundle, BundleDocument } from '../bundles/bundles.model';
 
 @Injectable()
 export class ResetService {
   constructor(
     @InjectConnection() private readonly connection: Connection,
-    @InjectModel(DAMP_LAB_SERVICE_MODEL) private readonly serviceModel: Model<DampLabService>,
-    @InjectModel(CATEGORY_MODEL) private readonly categoryModel: Model<Category>,
-    @InjectModel(BUNDLE_MODEL) private readonly bundleModel: Model<Bundle>
+    @InjectModel(DampLabService.name) private readonly serviceModel: Model<DampLabServiceDocument>,
+    @InjectModel(Category.name) private readonly categoryModel: Model<CategoryDocument>,
+    @InjectModel(Bundle.name) private readonly bundleModel: Model<BundleDocument>
   ) {}
 
   async clearDatabase(): Promise<void> {
