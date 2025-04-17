@@ -1,10 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection } from 'mongoose';
+import { Connection, Types, Model } from 'mongoose';
 import { ServiceInput } from './dtos/service.dto';
 import { CategoryInput } from './dtos/category.dto';
 import { BundleInput } from './dtos/bundle.dto';
-import { Model, ObjectId } from 'mongoose';
+// Import only the interfaces, not the document types
 import { DampLabService, DampLabServiceDocument } from '../services/models/damplab-service.model';
 import { Category, CategoryDocument } from '../categories/category.model';
 import { Bundle, BundleDocument } from '../bundles/bundles.model';
@@ -50,8 +50,8 @@ export class ResetService {
    *
    * Allowed connections and categories are add in later
    */
-  async saveServices(services: ServiceInput[]): Promise<Map<string, ObjectId>> {
-    const serviceMap = new Map<string, ObjectId>();
+  async saveServices(services: ServiceInput[]): Promise<Map<string, Types.ObjectId>> {
+    const serviceMap = new Map<string, Types.ObjectId>();
     for (const service of services) {
       const result = await this.serviceModel.create({
         name: service.name,
@@ -64,8 +64,8 @@ export class ResetService {
         paramGroups: service.paramGroups
       });
 
-      // Update the map
-      serviceMap.set(service.id, result._id);
+      // Update the map with proper ObjectId
+      serviceMap.set(service.id, new Types.ObjectId(result._id));
     }
 
     return serviceMap;
@@ -75,7 +75,7 @@ export class ResetService {
    * Using the map that matches human readable IDs to MongoDB IDs, update
    * the allowed connections to use the MongoDB IDs
    */
-  async updateAllowedConnections(services: ServiceInput[], serviceMap: Map<string, ObjectId>): Promise<void> {
+  async updateAllowedConnections(services: ServiceInput[], serviceMap: Map<string, Types.ObjectId>): Promise<void> {
     for (const service of services) {
       // Generate the list of allowed connections
       const allowedConnections = service.allowedConnections.map((id: string) => {
@@ -96,8 +96,8 @@ export class ResetService {
    * Insert the categories generating a map matching human assigned IDs to
    * MongoDB IDs
    */
-  async insertCategories(categories: CategoryInput[]): Promise<Map<string, ObjectId>> {
-    const categoryMap = new Map<string, ObjectId>();
+  async insertCategories(categories: CategoryInput[]): Promise<Map<string, Types.ObjectId>> {
+    const categoryMap = new Map<string, Types.ObjectId>();
 
     for (const category of categories) {
       const result = await this.categoryModel.create({
@@ -105,8 +105,8 @@ export class ResetService {
         services: []
       });
 
-      // Update the map
-      categoryMap.set(category.id, result._id);
+      // Update the map with proper ObjectId
+      categoryMap.set(category.id, new Types.ObjectId(result._id));
     }
 
     return categoryMap;
@@ -116,7 +116,7 @@ export class ResetService {
    * Update the list of services on category using the category field on
    * the services
    */
-  async updateServiceList(categories: CategoryInput[], categoryMap: Map<string, ObjectId>, services: ServiceInput[], serviceMap: Map<string, ObjectId>): Promise<void> {
+  async updateServiceList(categories: CategoryInput[], categoryMap: Map<string, Types.ObjectId>, services: ServiceInput[], serviceMap: Map<string, Types.ObjectId>): Promise<void> {
     for (const category of categories) {
       // Get the IDs of the contained services
       const targetServices = services
@@ -137,7 +137,7 @@ export class ResetService {
   /**
    * Save the bundles
    */
-  async saveBundles(bundles: BundleInput[], serviceMap: Map<string, ObjectId>): Promise<void> {
+  async saveBundles(bundles: BundleInput[], serviceMap: Map<string, Types.ObjectId>): Promise<void> {
     for (const bundle of bundles) {
       // Get the service MongoDB IDs the bundle is associated with
       const targetServices = bundle.services.map((serviceHumanID: string) => {

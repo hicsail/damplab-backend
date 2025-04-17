@@ -6,3 +6,7 @@
 # Scripts
 /scripts/node_modules/
 /scripts/dist/
+
+/.vscode/
+.codebuddy/*
+.env.dev

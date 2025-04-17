@@ -14,6 +14,8 @@ import { BundlesModule } from './bundles/bundles.module';
 import { JobModule } from './job/job.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
+import { MPIModule } from './mpi/mpi.module';
+import { JwtModule } from '@nestjs/jwt';
 
 @Module({
   imports: [
@@ -42,7 +44,14 @@ import { CommentModule } from './comment/comment.module';
     // be removed in future version
     ResetModule,
 
-    CommentModule
+    CommentModule,
+
+    MPIModule,
+
+    JwtModule.register({
+      secret: process.env.JWT_SECRET,
+      signOptions: { expiresIn: '7d' }
+    })
   ],
   controllers: [AppController],
   providers: [AppService]
