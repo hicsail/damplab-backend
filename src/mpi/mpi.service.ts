@@ -201,7 +201,7 @@ export class MPIService {
         updated_at: now
       });
       const savedSequence = await sequence.save();
-      return savedSequence.toJSON();
+      return savedSequence.toJSON() as unknown as Sequence;
     } catch (error) {
       console.error('Failed to create sequence in MPI:', error);
       throw new HttpException('Failed to create sequence in MPI', HttpStatus.INTERNAL_SERVER_ERROR);
@@ -245,7 +245,7 @@ export class MPIService {
   async getSequences(userId?: string): Promise<Sequence[]> {
     const query = userId ? { userId } : {};
     const sequences = await this.sequenceModel.find(query).exec();
-    return sequences.map((seq) => seq.toJSON());
+    return sequences.map((seq) => seq.toJSON() as unknown as Sequence);
   }
 
   async getSequence(id: string, userId?: string): Promise<Sequence | null> {
@@ -333,7 +333,7 @@ export class MPIService {
       if (!populatedResult) {
         throw new HttpException('Failed to retrieve populated screening result', HttpStatus.INTERNAL_SERVER_ERROR);
       }
-      return populatedResult.toJSON();
+      return populatedResult.toJSON() as unknown as ScreeningResult;
     } catch (error) {
       console.error('Error in screenSequence:', error);
       throw new HttpException('Failed to screen sequence in MPI', HttpStatus.INTERNAL_SERVER_ERROR);
@@ -361,7 +361,7 @@ export class MPIService {
 
     // Get screenings from our local MongoDB
     const localScreenings = await this.screeningResultModel.find({ userId }).populate('sequence').exec();
-    return localScreenings.map((screening) => screening.toJSON());
+    return localScreenings.map((screening) => screening.toJSON() as unknown as ScreeningResult);
   }
 
   async screenSequencesBatch(input: { sequenceIds: string[]; region: Region }, userId?: string): Promise<ScreeningResult[]> {
