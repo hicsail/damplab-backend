@@ -1,24 +1,24 @@
-//schema for announcement feature
-
-import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
+import { ObjectType, Field } from '@nestjs/graphql';
+import { Schema } from '@nestjs/mongoose';
+import { Prop } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-import { Field, ID, ObjectType } from '@nestjs/graphql';
-import mongoose from 'mongoose';
 
 @Schema()
 @ObjectType()
-export class Announcement extends Document{
+export class Announcement extends Document {
+    @Prop()
+    @Field()
+    label: string;
 
-  @Prop()
-  @Field({ description: 'body text of announcement' })
-  text: string;
+    @Prop()
+    @Field(() => String,{  description: 'body text of announcement' })
+    text: string;
 
-  @Prop()
-  @Field({ description: 'timestamp' })
-  timestamp: string;
+    @Prop()
+    @Field(() => Date, { description: 'time of creation' })
+    timestamp: Date;
 
-  @Prop()
-  @Field()
-  is_display: boolean;
-
+    @Prop({default: true})
+    @Field(() => Boolean)
+    is_displayed: boolean;
 }
