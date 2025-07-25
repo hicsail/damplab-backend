@@ -2,6 +2,7 @@ import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from
 import { GqlContextType, GqlExecutionContext } from '@nestjs/graphql';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
+import { User } from './user.interface';
 
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -21,7 +22,7 @@ export class AuthGuard implements CanActivate {
     }
     try {
       const payload = await this.jwtService.verifyAsync(token);
-      request['user'] = payload;
+      request['user'] = payload as User;
     } catch (error) {
       throw new UnauthorizedException('Token verification failed: ', error);
     }
