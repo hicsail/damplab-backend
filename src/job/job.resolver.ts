@@ -1,5 +1,7 @@
-import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
-import { CreateJob, CreateJobPipe, CreateJobFull, JobPipe } from './job.dto';
+import { UseGuards } from '@nestjs/common';
+import { Context, Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
+import { Request } from 'express';
+import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobPipe } from './job.dto';
 import { Job, JobState } from './job.model';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -7,6 +9,8 @@ import { Comment } from '../comment/comment.model';
 import { CommentService } from '../comment/comment.service';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowPipe } from '../workflow/workflow.pipe';
+import { AuthGuard } from '../auth/auth.guard';
+import { User } from '../auth/user.interface';
 
 @Resolver(() => Job)
 export class JobResolver {
@@ -28,8 +32,9 @@ export class JobResolver {
   }
 
   @Mutation(() => Job)
-  async createJob(@Args('createJobInput', { type: () => CreateJob }, CreateJobPipe) createJobInput: CreateJobFull): Promise<Job> {
-    return this.jobService.create(createJobInput);
+  @UseGuards(AuthGuard)
+  async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @Context('req') req: Request & { user: User }): Promise<Job> {
+    return this.jobService.create({ ...createJobInput, username: req.user.preferred_username, sub: req.user.sub, email: req.user.email });
   }
 
   @Mutation(() => Job)
