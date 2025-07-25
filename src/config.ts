@@ -7,7 +7,7 @@ export default (): any => ({
   },
   database: {
     /** The URI to connect to the database */
-    uri: process.env.MONGO_URI || 'mongodb+srv://liuky:g8ScP9atx6uAVoRc@cluster0.blwjoi9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0'
+    uri: process.env.MONGO_URI || 'mongodb://localhost:27017/damplab'
 
   }
 });
