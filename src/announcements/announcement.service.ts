@@ -3,6 +3,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Announcement } from './announcement.model';
 import { CreateAnnouncementInput } from './dto/create-announcement.input';
+import { UpdateAnnouncementInput } from './dto/update-announcement.input';
+import { NotFoundException } from '@nestjs/common';
 
 @Injectable()
 export class AnnouncementService {
@@ -23,5 +25,18 @@ export class AnnouncementService {
     return this.announcementModel.find().sort({ timestamp: -1 }).exec();
   }
 
+  async updateByTimestamp(timestamp: string, input: UpdateAnnouncementInput): Promise<Announcement> {
+    const announcement = await this.announcementModel.findOne({ timestamp });
+
+    if (!announcement) {
+      throw new NotFoundException('Announcement not found');
+    }
+
+    if (input.is_displayed !== undefined) {
+      announcement.is_displayed = input.is_displayed;
+    }
+
+    return announcement.save(); 
+  }
 
 }
