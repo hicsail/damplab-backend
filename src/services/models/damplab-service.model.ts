@@ -49,9 +49,11 @@ export class DampLabService {
   @Field()
   description: string;
 
-  @Prop()
-  @Field(() => String, { description: 'The total cost to use this service. ~ if approximate/unknown, contact DampLab services for final markdown' })
-  price: string;
+  @Prop({ required: false })
+  @Field(() => String, { 
+    nullable: true,
+    description: 'The total cost to use this service. ~ if approximate/unknown, contact DampLab services for final markdown' })
+    price?: string;
 }
 
 export type DampLabServiceDocument = DampLabService & Document;
