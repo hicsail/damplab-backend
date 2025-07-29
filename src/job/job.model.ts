@@ -45,7 +45,7 @@ export class Job {
   @Field(() => [Workflow], { description: 'The workflows that were submitted together' })
   workflows: mongoose.Types.ObjectId[];
 
-  @Prop({ default: new Date() })
+  @Prop({ default: () => new Date() })
   @Field({ description: 'The date the job was submitted' })
   submitted: Date;
 
