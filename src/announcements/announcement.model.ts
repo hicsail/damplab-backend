@@ -13,7 +13,7 @@ export class Announcement extends Document {
     @Field(() => Date, { description: 'time of creation' })
     timestamp: Date;
 
-    @Prop({default: true})
+    @Prop({default: true, required: true})
     @Field(() => Boolean)
     is_displayed: boolean;
 }
