@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { BadRequestException, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, JwtSecretRequestType } from '@nestjs/jwt';
 import * as jwksClient from 'jwks-rsa';
@@ -22,10 +22,15 @@ the configured keys endpoint. It does not issue tokens or deal with IdPs.
 
         return {
           secretOrKeyProvider: async (requestType: JwtSecretRequestType, tokenOrPayload: string): Promise<jwt.Secret> => {
-            const kid = jwt.decode(tokenOrPayload, { complete: true })?.header.kid;
-            const key = await client.getSigningKey(kid);
-            const signingKey = key.getPublicKey();
-            return signingKey;
+            switch (requestType) {
+              case JwtSecretRequestType.VERIFY:
+                const kid = jwt.decode(tokenOrPayload, { complete: true })?.header.kid;
+                const key = await client.getSigningKey(kid);
+                const signingKey = key.getPublicKey();
+                return signingKey;
+              default:
+                throw new BadRequestException('Invalid JWT secret request type');
+            }
           }
         };
       },
