@@ -5,8 +5,8 @@ import * as jwksClient from 'jwks-rsa';
 import * as jwt from 'jsonwebtoken';
 
 /*
-This auth module extracts JWTs from request headers and verifies them
-at KEYCLOAK_JWKS_ENDPOINT. It does not issue tokens or deal with IdPs.
+This auth module extracts JWTs from request headers and verifies them with
+the configured keys endpoint. It does not issue tokens or deal with IdPs.
 */
 
 @Module({
@@ -16,7 +16,7 @@ at KEYCLOAK_JWKS_ENDPOINT. It does not issue tokens or deal with IdPs.
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => {
         const client = jwksClient({
-          jwksUri: configService.getOrThrow('KEYCLOAK_JWKS_ENDPOINT'),
+          jwksUri: configService.getOrThrow('auth.jwksEndpoint'),
           timeout: 30000
         });
 
