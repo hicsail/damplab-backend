@@ -48,11 +48,6 @@ export class DampLabService {
   @Prop()
   @Field()
   description: string;
-
-  @Prop()
-  @Field(() => Number, { description: 'The cost to use this service' })
-  price: number;
-
 }
 
 export type DampLabServiceDocument = DampLabService & Document;
