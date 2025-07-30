@@ -1,6 +1,5 @@
 import { UseGuards } from '@nestjs/common';
-import { Context, Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
-import { Request } from 'express';
+import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobPipe } from './job.dto';
 import { Job, JobState } from './job.model';
 import { JobService } from './job.service';
@@ -11,6 +10,7 @@ import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowPipe } from '../workflow/workflow.pipe';
 import { AuthGuard } from '../auth/auth.guard';
 import { User } from '../auth/user.interface';
+import { CurrentUser } from '../auth/user.decorator';
 
 @Resolver(() => Job)
 export class JobResolver {
@@ -33,8 +33,8 @@ export class JobResolver {
 
   @Mutation(() => Job)
   @UseGuards(AuthGuard)
-  async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @Context('req') req: Request & { user: User }): Promise<Job> {
-    return this.jobService.create({ ...createJobInput, username: req.user.preferred_username, sub: req.user.sub, email: req.user.email });
+  async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
+    return this.jobService.create({ ...createJobInput, username: user.preferred_username, sub: user.sub, email: user.email });
   }
 
   @Mutation(() => Job)
