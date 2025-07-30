@@ -21,7 +21,7 @@ the configured keys endpoint. It does not issue tokens or deal with IdPs.
         });
 
         return {
-          secretOrKeyProvider: async (requestType: JwtSecretRequestType /* unused */, tokenOrPayload: string, verifyOrSignOrOptions?: jwt.VerifyOptions | jwt.SignOptions /* unused */) => {
+          secretOrKeyProvider: async (requestType: JwtSecretRequestType, tokenOrPayload: string): Promise<jwt.Secret> => {
             const kid = jwt.decode(tokenOrPayload, { complete: true })?.header.kid;
             const key = await client.getSigningKey(kid);
             const signingKey = key.getPublicKey();
