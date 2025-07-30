@@ -1,6 +1,7 @@
 import { Module, DynamicModule } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import config from './config';
@@ -32,6 +33,7 @@ import { CommentModule } from './comment/comment.module';
       }),
       inject: [ConfigService]
     }),
+    AuthModule,
     DampLabServicesModule,
     WorkflowModule,
     CategoriesModule,
