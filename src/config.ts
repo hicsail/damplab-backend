@@ -8,6 +8,9 @@ export default (): any => ({
   database: {
     /** The URI to connect to the database */
     uri: process.env.MONGO_URI || 'mongodb://localhost:27017/damplab'
-
+  },
+  auth: {
+    /* The JWKs endpoint at which to fetch keys for verifying JWTs */
+    jwksEndpoint: process.env.JWKS_ENDPOINT
   }
 });
