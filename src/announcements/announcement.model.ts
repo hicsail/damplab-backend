@@ -5,17 +5,17 @@ import { Document } from 'mongoose';
 @Schema()
 @ObjectType()
 export class Announcement extends Document {
-    @Prop()
-    @Field(() => String,{  description: 'body text of announcement' })
-    text: string;
+  @Prop()
+  @Field(() => String, { description: 'body text of announcement' })
+  text: string;
 
-    @Prop()
-    @Field(() => Date, { description: 'time of creation' })
-    timestamp: Date;
+  @Prop()
+  @Field(() => Date, { description: 'time of creation' })
+  timestamp: Date;
 
-    @Prop({default: true})
-    @Field(() => Boolean)
-    is_displayed: boolean;
+  @Prop({ default: true })
+  @Field(() => Boolean)
+  is_displayed: boolean;
 }
 
 export const AnnouncementSchema = SchemaFactory.createForClass(Announcement);

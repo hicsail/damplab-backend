@@ -10,13 +10,13 @@ import { NotFoundException } from '@nestjs/common';
 export class AnnouncementService {
   constructor(
     @InjectModel(Announcement.name)
-    private readonly announcementModel: Model<Announcement>,
+    private readonly announcementModel: Model<Announcement>
   ) {}
 
   async create(input: CreateAnnouncementInput): Promise<Announcement> {
     const created = new this.announcementModel({
       ...input,
-      timestamp: input.timestamp ?? new Date(),
+      timestamp: input.timestamp ?? new Date()
     });
     return created.save();
   }
@@ -36,7 +36,6 @@ export class AnnouncementService {
       announcement.is_displayed = input.is_displayed;
     }
 
-    return announcement.save(); 
+    return announcement.save();
   }
-
 }

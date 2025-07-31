@@ -2,7 +2,6 @@ import { InputType, Field } from '@nestjs/graphql';
 
 @InputType()
 export class CreateAnnouncementInput {
-
   @Field()
   text: string;
 
@@ -12,4 +11,3 @@ export class CreateAnnouncementInput {
   @Field(() => Boolean, { nullable: true })
   is_displayed?: boolean;
 }
-

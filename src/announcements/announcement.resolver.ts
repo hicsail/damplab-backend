@@ -13,19 +13,13 @@ export class AnnouncementResolver {
     return this.announcementService.findAll();
   }
 
-
   @Mutation(() => Announcement)
-  async createAnnouncement(
-    @Args('input') input: CreateAnnouncementInput,
-  ): Promise<Announcement> {
+  async createAnnouncement(@Args('input') input: CreateAnnouncementInput): Promise<Announcement> {
     return this.announcementService.create(input);
   }
 
   @Mutation(() => Announcement)
-  async updateAnnouncement(
-    @Args('timestamp', { type: () => String }) timestamp: string,
-    @Args('input') input: UpdateAnnouncementInput,
-  ): Promise<Announcement> {
+  async updateAnnouncement(@Args('timestamp', { type: () => String }) timestamp: string, @Args('input') input: UpdateAnnouncementInput): Promise<Announcement> {
     return this.announcementService.updateByTimestamp(timestamp, input);
   }
 }
