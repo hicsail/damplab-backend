@@ -50,30 +50,28 @@ import { CommentModule } from './comment/comment.module';
 export class AppModule {}
 
 /**
-* Dynamically load the ConfigModule based on an environment variable.
-*
-* This allows:
-*   - Easy switching between multiple environment configs (dev, staging, prod).
-*   - Compatibility with containerized or cloud environments (like Docker or Kubernetes),
-*     where variables are injected at runtime. In these cases, runtime environment
-*     variables still take precedence over values in `.env`, ensuring no break in behavior.
-*
-* Examples:
-*   ENV_FILE=staging npm run start
-*   → Loads `.env.staging`
-*   
-*   If no ENV_FILE is provided:
-*   → Loads `.env`
-*/
+ * Dynamically load the ConfigModule based on an environment variable.
+ *
+ * This allows:
+ *   - Easy switching between multiple environment configs (dev, staging, prod).
+ *   - Compatibility with containerized or cloud environments (like Docker or Kubernetes),
+ *     where variables are injected at runtime. In these cases, runtime environment
+ *     variables still take precedence over values in `.env`, ensuring no break in behavior.
+ *
+ * Examples:
+ *   ENV_FILE=staging npm run start
+ *   → Loads `.env.staging`
+ *
+ *   If no ENV_FILE is provided:
+ *   → Loads `.env`
+ */
 function getConfigModule(): DynamicModule {
   // Determine which .env file to load
-  const envFile = process.env.ENV_FILE
-    ? `.env.${process.env.ENV_FILE}`
-    : '.env';
+  const envFile = process.env.ENV_FILE ? `.env.${process.env.ENV_FILE}` : '.env';
 
   console.info(`Loading config from: ${envFile}`);
   return ConfigModule.forRoot({
     envFilePath: envFile,
-    load: [config],
+    load: [config]
   });
 }
