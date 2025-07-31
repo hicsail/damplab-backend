@@ -44,7 +44,7 @@ import { AnnouncementModule } from './announcements/announcement.module';
     ResetModule,
 
     CommentModule,
-    
+
     AnnouncementModule
   ],
   controllers: [AppController],
