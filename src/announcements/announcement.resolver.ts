@@ -19,7 +19,7 @@ export class AnnouncementResolver {
   }
 
   @Mutation(() => Announcement)
-  async updateAnnouncement(@Args('timestamp', { type: () => String }) timestamp: string, @Args('input') input: UpdateAnnouncementInput): Promise<Announcement> {
-    return this.announcementService.updateByTimestamp(timestamp, input);
+  async updateAnnouncement(@Args('input') input: UpdateAnnouncementInput): Promise<Announcement> {
+    return this.announcementService.updateByTimestamp(input);
   }
 }

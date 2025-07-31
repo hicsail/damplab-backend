@@ -9,7 +9,7 @@ export class Announcement extends Document {
   @Field(() => String, { description: 'body text of announcement' })
   text: string;
 
-  @Prop()
+  @Prop({ required: true })
   @Field(() => Date, { description: 'time of creation' })
   timestamp: Date;
 
