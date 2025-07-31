@@ -26,7 +26,7 @@ export class AnnouncementService {
   }
 
   async updateByTimestamp(input: UpdateAnnouncementInput): Promise<Announcement> {
-    const announcement = await this.announcementModel.findOne({ timestamp: input.timestamp});
+    const announcement = await this.announcementModel.findOne({ timestamp: input.timestamp });
 
     if (!announcement) {
       throw new NotFoundException('Announcement not found');
