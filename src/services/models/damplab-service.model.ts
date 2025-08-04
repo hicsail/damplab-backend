@@ -50,10 +50,11 @@ export class DampLabService {
   description: string;
 
   @Prop({ required: false })
-  @Field(() => Float, { 
+  @Field(() => Float, {
     nullable: true,
-    description: 'The approximate cost to use this service.' })
-    price?: number;
+    description: 'The approximate cost to use this service.'
+  })
+  price?: number;
 }
 
 export type DampLabServiceDocument = DampLabService & Document;
