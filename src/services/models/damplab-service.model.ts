@@ -1,6 +1,6 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-import { Field, ID, ObjectType } from '@nestjs/graphql';
+import { Field, ID, ObjectType, Float } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 import mongoose from 'mongoose';
 
@@ -48,6 +48,13 @@ export class DampLabService {
   @Prop()
   @Field()
   description: string;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'The approximate cost to use this service.'
+  })
+  price?: number;
 }
 
 export type DampLabServiceDocument = DampLabService & Document;
