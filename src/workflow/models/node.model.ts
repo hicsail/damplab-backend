@@ -54,8 +54,6 @@ export class WorkflowNode {
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'Snapshot of service price at submission time' })
   price?: number;
-
-
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;
