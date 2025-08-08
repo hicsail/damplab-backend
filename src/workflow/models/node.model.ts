@@ -2,7 +2,7 @@ import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { DampLabService } from '../../services/models/damplab-service.model';
-import { Field, ID, ObjectType, registerEnumType } from '@nestjs/graphql';
+import { Field, ID, ObjectType, registerEnumType, Float } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 
 export enum WorkflowNodeState {
@@ -50,6 +50,10 @@ export class WorkflowNode {
   @Prop({ requied: true, default: WorkflowNodeState.QUEUED })
   @Field(() => WorkflowNodeState, { description: 'Where in the process is the current node' })
   state: WorkflowNodeState;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Snapshot of service price at submission time' })
+  price?: number;
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;
