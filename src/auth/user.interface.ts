@@ -3,4 +3,7 @@ export interface User {
   preferred_username: string;
   sub: string;
   email: string;
+  realm_access: {
+    roles: string[];
+  };
 }
