@@ -29,9 +29,6 @@ export class AuthRolesGuard implements CanActivate {
     try {
       const payload = await this.jwtService.verifyAsync(token);
 
-      payload.realm_access.roles = [];
-
-      console.log('JWT Payload:', payload);
       request['user'] = payload as User;
 
       const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [context.getHandler(), context.getClass()]);
@@ -40,16 +37,12 @@ export class AuthRolesGuard implements CanActivate {
       }
 
       const roles = payload.realm_access?.roles ?? [];
-      if (!roles.length) {
-        throw new ForbiddenException('Not authenticated');
-      }
-
       const hasRole = requiredRoles.some((role) => roles.includes(role));
       if (!hasRole) {
         throw new ForbiddenException('You do not have the required role');
       }
     } catch (error) {
-      throw new UnauthorizedException(`Token verification failed: ${error.message || error}`);
+      throw new UnauthorizedException(`${error.name}: ${error.message || error}`);
     }
 
     return true;
