@@ -1,3 +1,4 @@
+import { UseGuards } from '@nestjs/common';
 import { Args, Mutation, Query, ResolveField, Resolver, ID } from '@nestjs/graphql';
 import { Category } from './category.model';
 import { CategoryService } from './categories.service';
@@ -9,7 +10,12 @@ import { CategoryUpdatePipe } from './update.pipe';
 import { CreateCategory } from './dtos/create.dto';
 import { CreateCategoryPipe } from './create.pipe';
 
+import { AuthRolesGuard } from '../auth/auth.guard';
+import { Roles } from '../auth/roles/roles.decorator';
+import { Role } from '../auth/roles/roles.enum';
+
 @Resolver(() => Category)
+@UseGuards(AuthRolesGuard)
 export class CategoryResolver {
   constructor(private readonly categoryService: CategoryService, private readonly damplabServices: DampLabServices) {}
 
@@ -19,6 +25,7 @@ export class CategoryResolver {
   }
 
   @Mutation(() => Category)
+  @Roles(Role.DamplabStaff)
   async updateCategory(
     @Args('category', { type: () => ID }, CategoryPipe) category: Category,
     @Args('changes', { type: () => CategoryChange }, CategoryUpdatePipe) changes: CategoryChange
@@ -27,12 +34,14 @@ export class CategoryResolver {
   }
 
   @Mutation(() => Boolean)
+  @Roles(Role.DamplabStaff)
   async deleteCategory(@Args('category', { type: () => ID }, CategoryPipe) category: Category): Promise<boolean> {
     await this.categoryService.delete(category);
     return true;
   }
 
   @Mutation(() => Category)
+  @Roles(Role.DamplabStaff)
   async createCategory(@Args('category', CreateCategoryPipe) category: CreateCategory): Promise<Category> {
     return this.categoryService.create(category);
   }

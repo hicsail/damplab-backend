@@ -1,9 +1,12 @@
+import { UseGuards } from '@nestjs/common';
 import { Resolver, Mutation, Args } from '@nestjs/graphql';
 import { Comment } from './comment.model';
 import { CommentService } from './comment.service';
 import { CreateComment } from './comment.dto';
+import { AuthRolesGuard } from '../auth/auth.guard';
 
 @Resolver(() => Comment)
+@UseGuards(AuthRolesGuard)
 export class CommentResolver {
   constructor(private readonly commentService: CommentService) {}
 

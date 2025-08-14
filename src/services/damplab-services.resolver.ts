@@ -1,3 +1,4 @@
+import { UseGuards } from '@nestjs/common';
 import { Resolver, Query, ResolveField, Parent, ID, Args, Mutation } from '@nestjs/graphql';
 import { CreateServicePipe } from './create.pipe';
 import { DampLabServicePipe } from './damplab-services.pipe';
@@ -7,7 +8,12 @@ import { ServiceChange } from './dtos/update.dto';
 import { DampLabService } from './models/damplab-service.model';
 import { ServiceUpdatePipe } from './update.pipe';
 
+import { AuthRolesGuard } from '../auth/auth.guard';
+import { Roles } from '../auth/roles/roles.decorator';
+import { Role } from '../auth/roles/roles.enum';
+
 @Resolver(() => DampLabService)
+@UseGuards(AuthRolesGuard)
 export class DampLabServicesResolver {
   constructor(private readonly dampLabServices: DampLabServices) {}
 
@@ -17,6 +23,7 @@ export class DampLabServicesResolver {
   }
 
   @Mutation(() => DampLabService)
+  @Roles(Role.DamplabStaff)
   async updateService(
     @Args('service', { type: () => ID }, DampLabServicePipe) service: DampLabService,
     @Args('changes', { type: () => ServiceChange }, ServiceUpdatePipe) changes: ServiceChange
@@ -25,12 +32,14 @@ export class DampLabServicesResolver {
   }
 
   @Mutation(() => Boolean)
+  @Roles(Role.DamplabStaff)
   async deleteService(@Args('service', { type: () => ID }, DampLabServicePipe) service: DampLabService): Promise<boolean> {
     await this.dampLabServices.delete(service);
     return true;
   }
 
   @Mutation(() => DampLabService)
+  @Roles(Role.DamplabStaff)
   async createService(@Args('service', CreateServicePipe) service: CreateService): Promise<DampLabService> {
     return this.dampLabServices.create(service);
   }
