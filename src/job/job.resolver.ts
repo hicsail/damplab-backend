@@ -13,6 +13,7 @@ import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 
 @Resolver(() => Job)
+@UseGuards(AuthRolesGuard)
 export class JobResolver {
   constructor(private readonly jobService: JobService, private readonly workflowService: WorkflowService, private readonly commentService: CommentService) {}
 
@@ -32,7 +33,6 @@ export class JobResolver {
   }
 
   @Mutation(() => Job)
-  @UseGuards(AuthRolesGuard)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
     return this.jobService.create({ ...createJobInput, username: user.preferred_username, sub: user.sub, email: user.email });
   }
