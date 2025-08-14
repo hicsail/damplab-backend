@@ -42,7 +42,7 @@ export class AuthRolesGuard implements CanActivate {
         throw new ForbiddenException('You do not have the required role');
       }
     } catch (error) {
-      throw new UnauthorizedException(`${error.name}: ${error.message || error}`);
+      throw new UnauthorizedException(`${error.name}: ${error.message}`);
     }
 
     return true;
