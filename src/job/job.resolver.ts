@@ -8,7 +8,7 @@ import { Comment } from '../comment/comment.model';
 import { CommentService } from '../comment/comment.service';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowPipe } from '../workflow/workflow.pipe';
-import { AuthGuard } from '../auth/auth.guard';
+import { AuthRolesGuard } from '../auth/auth.guard';
 import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 
@@ -32,7 +32,7 @@ export class JobResolver {
   }
 
   @Mutation(() => Job)
-  @UseGuards(AuthGuard)
+  @UseGuards(AuthRolesGuard)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
     return this.jobService.create({ ...createJobInput, username: user.preferred_username, sub: user.sub, email: user.email });
   }
