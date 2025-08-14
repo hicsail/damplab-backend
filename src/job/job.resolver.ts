@@ -8,7 +8,7 @@ import { Comment } from '../comment/comment.model';
 import { CommentService } from '../comment/comment.service';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowPipe } from '../workflow/workflow.pipe';
-import { AuthRolesGuard } from 'src/auth/auth.guard';
+import { AuthRolesGuard } from '../auth/auth.guard';
 import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 

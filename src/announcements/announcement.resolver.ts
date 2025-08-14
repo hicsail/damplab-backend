@@ -7,7 +7,7 @@ import { UpdateAnnouncementInput } from './dto/update-announcement.input';
 
 import { Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
-import { AuthRolesGuard } from 'src/auth/auth.guard';
+import { AuthRolesGuard } from '../auth/auth.guard';
 
 @Resolver(() => Announcement)
 export class AnnouncementResolver {
