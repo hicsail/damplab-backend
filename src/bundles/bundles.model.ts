@@ -10,13 +10,13 @@ export class Bundle {
   @Field(() => ID, { name: 'id', description: 'unique database generated id' })
   id: string;
 
-  @Prop()
+  @Prop({ required: true })
   @Field()
   label: string;
 
   @Prop()
-  @Field()
-  icon: string;
+  @Field({ nullable: true })
+  icon?: string;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: DampLabService.name }] })
   @Field(() => [DampLabService])
