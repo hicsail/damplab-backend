@@ -16,6 +16,7 @@ import { JobModule } from './job/job.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
 import { AnnouncementModule } from './announcements/announcement.module';
+import { TemplateModule } from './template/template.module';
 
 @Module({
   imports: [
@@ -47,7 +48,9 @@ import { AnnouncementModule } from './announcements/announcement.module';
 
     CommentModule,
 
-    AnnouncementModule
+    AnnouncementModule,
+
+    TemplateModule
   ],
   controllers: [AppController],
   providers: [AppService]
