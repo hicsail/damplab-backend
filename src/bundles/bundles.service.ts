@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Bundle } from './bundles.model';
+import { Bundle } from './models/bundle.model';
 import { Model } from 'mongoose';
 import { BundleChange } from './dtos/update.dto';
 import { CreateBundleInput } from './dtos/create.dto';

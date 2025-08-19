@@ -4,7 +4,7 @@ import { DampLabService, DampLabServiceSchema } from '../services/models/damplab
 import { ResetResolver } from './reset.resolver';
 import { ResetService } from './reset.service';
 import { Category, CategorySchema } from '../categories/category.model';
-import { Bundle, BundleSchema } from '../bundles/bundles.model';
+import { Bundle, BundleSchema } from '../bundles/models/bundle.model';
 
 @Module({
   imports: [

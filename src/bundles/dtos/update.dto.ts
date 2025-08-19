@@ -1,4 +1,4 @@
-import { Bundle } from '../bundles.model';
+import { Bundle } from '../models/bundle.model';
 import { ID, InputType, OmitType, PartialType, Field } from '@nestjs/graphql';
 
 @InputType()
