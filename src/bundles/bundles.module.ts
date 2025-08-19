@@ -11,8 +11,6 @@ import { DampLabServicesModule } from '../services/damplab-services.module';
 import { BundleEdgeResolver } from './resolvers/edge.resolver';
 import { BundlesPipe } from './bundles.pipe';
 import { BundleNodeResolver } from './resolvers/node.resolver';
-import { CreateBundleInput } from './dtos/create.dto';
-import { BundleChange } from './dtos/update.dto';
 import { AddNodeInputPipe } from './dtos/add-node.input';
 
 @Module({
@@ -24,7 +22,7 @@ import { AddNodeInputPipe } from './dtos/add-node.input';
     ]),
     DampLabServicesModule
   ],
-  providers: [BundlesResolver, BundlesService, BundleNodeService, BundleEdgeService, BundleEdgeResolver, BundlesPipe, BundleNodeResolver, AddBundleInputPipe, AddNodeInputPipe],
-  exports: [BundlesPipe, BundlesService, CreateBundleInput, BundleChange]
+  providers: [BundlesResolver, BundlesService, BundleNodeService, BundleEdgeService, BundleEdgeResolver, BundlesPipe, BundleNodeResolver, AddNodeInputPipe, AddNodeInputPipe],
+  exports: [BundlesPipe, BundlesService]
 })
 export class BundleModule {}

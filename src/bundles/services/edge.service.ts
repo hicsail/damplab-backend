@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { BundleEdge, BundleEdgeDocument } from '../models/edge.model';
-import { AddEdgeInput } from '../dtos/add-edge.input';
+import { AddBundleEdgeInput } from '../dtos/add-edge.input';
 
 @Injectable()
 export class BundleEdgeService {
@@ -20,7 +20,7 @@ export class BundleEdgeService {
    * the Bundle IDs to the database IDs for the source and target
    * nodes
    */
-  async create(newEdge: AddEdgeInput, nodeIDMap: Map<string, string>): Promise<BundleEdge> {
+  async create(newEdge: AddBundleEdgeInput, nodeIDMap: Map<string, string>): Promise<BundleEdge> {
     const edge = { ...newEdge };
 
     // Make sure the source and target are valid

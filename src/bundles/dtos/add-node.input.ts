@@ -4,7 +4,7 @@ import { BundleNode } from '../models/node.model';
 import { DampLabServicePipe } from '../../services/damplab-services.pipe';
 
 @InputType()
-export class AddNodeInput extends OmitType(BundleNode, ['_id', 'service'] as const, InputType) {
+export class AddBundleNodeInput extends OmitType(BundleNode, ['_id', 'service'] as const, InputType) {
   @Field(() => ID, { description: 'The ID of the service this node is a part of' })
   serviceId: string;
 }
@@ -12,10 +12,10 @@ export class AddNodeInput extends OmitType(BundleNode, ['_id', 'service'] as con
 export type AddNodeInputFull = Omit<BundleNode, '_id'>;
 
 @Injectable()
-export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<AddNodeInputFull>> {
+export class AddNodeInputPipe implements PipeTransform<AddBundleNodeInput, Promise<AddNodeInputFull>> {
   constructor(private readonly dampLabServicePipe: DampLabServicePipe) {}
 
-  async transform(value: AddNodeInput): Promise<AddNodeInputFull> {
+  async transform(value: AddBundleNodeInput): Promise<AddNodeInputFull> {
     const service = await this.dampLabServicePipe.transform(value.serviceId);
     return { ...value, service };
   }

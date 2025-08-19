@@ -6,9 +6,8 @@ import { BundlesService } from './bundles.service';
 import { BundleNodeService } from './services/node.service';
 import { BundleEdgeService } from './services/edge.service';
 import { CreateBundleInput } from './dtos/create.dto';
-import { BundleChange } from './dtos/update.dto';
+import { UpdateBundleInput } from './dtos/update.dto';
 import { BundlesPipe } from './bundles.pipe';
-import { BundleUpdatePipe } from './update.pipe';
 
 @Resolver(() => Bundle)
 export class BundlesResolver {
@@ -32,7 +31,7 @@ export class BundlesResolver {
   @Mutation(() => Bundle)
   async updateBundle(
     @Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle,
-    @Args('changes', { type: () => BundleChange }, BundleUpdatePipe) changes: BundleChange
+    @Args('changes', { type: () => UpdateBundleInput }) changes: UpdateBundleInput
   ): Promise<Bundle> {
     return this.bundlesService.update(bundle, changes);
   }

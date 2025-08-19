@@ -1,4 +1,6 @@
 import { InputType, Field, ID } from '@nestjs/graphql';
+import { AddBundleNodeInput } from './add-node.input';
+import { AddBundleEdgeInput } from './add-edge.input';
 
 @InputType()
 export class CreateBundleInput {
@@ -8,6 +10,9 @@ export class CreateBundleInput {
   @Field({ nullable: true })
   icon?: string;
 
-  @Field(() => [ID])
-  services: string[]; 
+  @Field(() => [AddBundleNodeInput])
+  nodes: AddBundleNodeInput[];
+
+  @Field(() => [AddBundleEdgeInput], { nullable: true })
+  edges?: AddBundleEdgeInput[];
 }
