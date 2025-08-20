@@ -3,8 +3,8 @@ import { Parent, Resolver, ResolveField, Mutation, ID, Args } from '@nestjs/grap
 import { DampLabServices } from '../../services/damplab-services.services';
 import { DampLabService } from '../../services/models/damplab-service.model';
 import mongoose from 'mongoose';
-import { BundleNodePipe } from '../node.pipe';
 import { BundleNodeService } from '../services/node.service';
+import { AddBundleNodeInput, AddNodeInputFull, AddNodeInputPipe } from '../dtos/add-node.input';
 
 @Resolver(() => BundleNode)
 export class BundleNodeResolver {
@@ -23,4 +23,10 @@ export class BundleNodeResolver {
       return node.service as DampLabService;
     }
   }
+
+    @Mutation(() => BundleNode)
+    async createNode(@Args('input', { type: () => AddBundleNodeInput }, AddNodeInputPipe) input: AddNodeInputFull): Promise<BundleNode> {
+      return this.nodeService.create(input);
+    }
+  
 }

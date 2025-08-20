@@ -9,9 +9,17 @@ export class BundleNodeService {
   constructor(@InjectModel(BundleNode.name) private readonly BundleNodeModel: Model<BundleNodeDocument>) {}
 
   async create(newNode: AddNodeInputFull): Promise<BundleNode> {
-    // TODO: Ensure the fields are valid
-    const node = { ...newNode, service: newNode.service._id };
-    return this.BundleNodeModel.create(node);
+    if (!newNode.service) {
+      throw new Error('Node must have a service assigned');
+    }
+
+    const nodeData = {
+      ...newNode,
+      service: newNode.service._id,
+    };
+
+    const node = await this.BundleNodeModel.create(nodeData);
+    return node;
   }
 
   async getByID(id: string): Promise<BundleNode | null> {

@@ -30,8 +30,8 @@ export class BundleEdge {
   target: mongoose.Types.ObjectId | BundleNode;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
-  @Field(() => JSON, { description: 'React Flow representation of the graph for re-generating' })
-  reactEdge: any;
+  @Field(() => JSON, { nullable: true, description: 'React Flow representation of the graph for re-generating' })
+  reactEdge?: any;
 }
 
 export type BundleEdgeDocument = BundleEdge & Document;

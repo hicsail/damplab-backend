@@ -30,16 +30,16 @@ export class BundleNode {
   service: mongoose.Types.ObjectId | DampLabService;
 
   @Prop()
-  @Field({ description: 'Additional instructions for this portion of the Bundle' })
-  additionalInstructions: string;
+  @Field({ nullable: true, description: 'Additional instructions for this portion of the Bundle' })
+  additionalInstructions?: string;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
-  @Field(() => JSON, { description: 'Parameters defined earlier in the graph' })
-  formData: any;
+  @Field(() => JSON, { nullable: true, description: 'Parameters defined earlier in the graph' })
+  formData?: any;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
-  @Field(() => JSON, { description: 'React Flow representation of the graph for re-generating' })
-  reactNode: JSON;
+  @Field(() => JSON, { nullable: true, description: 'React Flow representation of the graph for re-generating' })
+  reactNode?: JSON;
 
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'Snapshot of service price at submission time' })

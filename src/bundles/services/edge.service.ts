@@ -20,21 +20,9 @@ export class BundleEdgeService {
    * the Bundle IDs to the database IDs for the source and target
    * nodes
    */
-  async create(newEdge: AddBundleEdgeInput, nodeIDMap: Map<string, string>): Promise<BundleEdge> {
+  async create(newEdge: AddBundleEdgeInput): Promise<BundleEdge> {
     const edge = { ...newEdge };
 
-    // Make sure the source and target are valid
-    const sourceDBID = nodeIDMap.get(edge.source);
-    if (!sourceDBID) {
-      throw new Error(`Invalid source node ID: ${edge.source}`);
-    }
-    const destDBID = nodeIDMap.get(edge.target);
-    if (!destDBID) {
-      throw new Error(`Invalid target node ID: ${edge.target}`);
-    }
-
-    edge.source = sourceDBID;
-    edge.target = destDBID;
     return this.BundleEdgeModel.create(edge);
   }
 

@@ -10,8 +10,8 @@ export class CreateBundleInput {
   @Field({ nullable: true })
   icon?: string;
 
-  @Field(() => [AddBundleNodeInput])
-  nodes: AddBundleNodeInput[];
+  @Field(() => [AddBundleNodeInput], { nullable: true })
+  nodes?: AddBundleNodeInput[];
 
   @Field(() => [AddBundleEdgeInput], { nullable: true })
   edges?: AddBundleEdgeInput[];
