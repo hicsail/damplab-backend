@@ -17,8 +17,8 @@ export class BundleEdge {
   /** Database generated ID */
   _id: string;
 
-  @Field(() => ID, { description: 'ID used in identify the edge in the Bundle' })
   @Prop({ required: true })
+  @Field(() => ID, { description: 'ID used in identify the edge in the Bundle' })
   id: string;
 
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: BundleNode.name })

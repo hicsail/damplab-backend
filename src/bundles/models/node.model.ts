@@ -17,8 +17,8 @@ export class BundleNode {
   @Field(() => ID, { description: 'Database generated ID', name: '_id' })
   _id: string;
 
-  @Field(() => ID, { description: 'ID used in identify the node in the Bundle' })
   @Prop({ required: true })
+  @Field(() => ID, { description: 'ID used in identify the node in the Bundle' })
   id: string;
 
   @Prop()
