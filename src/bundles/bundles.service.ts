@@ -27,23 +27,25 @@ export class BundlesService {
 
   // Private helper: create nodes and edges, return their ObjectIds
   private async createNodesAndEdges(bundle: CreateBundleInput | UpdateBundleInput) {
-    // Step 1: Create nodes
+    // Create nodes
     const createdNodes = await Promise.all(
       (bundle.nodes ?? []).map(async nodeInput => {
         const service = await this.damplabServices.findOne(nodeInput.serviceId);
         if (!service) {
           throw new Error(`Could not find service with ID ${nodeInput.serviceId}`);
         }
-        return this.nodeService.create({ ...nodeInput, service });
+        const createdNode = await this.nodeService.create({ ...nodeInput, service });
+        return { createdNode, tempId: nodeInput.id }; // Keep track of tempId to map to db ids
       })
     );
 
+    // Mapping
     const nodeIdMap: Record<string, string> = {};
-    createdNodes.forEach(node => {
-      nodeIdMap[node.id] = node._id.toString();
+    createdNodes.forEach(({createdNode, tempId}) => {
+      nodeIdMap[tempId] = createdNode._id.toString();
     });
 
-    // Step 2: Create edges using ObjectId references
+    // Create edges using ObjectId references
     const createdEdges = await Promise.all(
       (bundle.edges ?? []).map(edgeInput =>
         this.edgeService.create({
@@ -53,12 +55,7 @@ export class BundlesService {
         })
       )
     );
-
-    return {
-      nodes: createdNodes,
-      edges: createdEdges,
-      nodeIdMap,
-    };
+    return { nodes: createdNodes.map(n => n.createdNode), edges: createdEdges };
   }
 
   // Original create method now delegates
@@ -71,18 +68,16 @@ export class BundlesService {
     });
   }
 
-  // Updated update method
   async update(bundle: Bundle, changes: UpdateBundleInput): Promise<Bundle> {
-    // Step 1: Delete previous nodes and edges
+    // Delete previous nodes and edges
     await Promise.all([
       this.nodeService.removeByIDs(bundle.nodes.map(n => n._id.toString())),
       this.edgeService.removeByIDs(bundle.edges.map(e => e._id.toString())),
     ]);
 
-    // Step 2: Use the helper to create new nodes and edges
     const { nodes, edges } = await this.createNodesAndEdges(changes);
 
-    // Step 3: Update the bundle document with new node/edge references
+    // Update the bundle document to new node/edge references
     await this.bundleModel.updateOne({ _id: bundle.id }, {
       ...changes,
       nodes: nodes.map(n => n._id),
