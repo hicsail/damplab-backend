@@ -2,9 +2,17 @@ import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { DampLabService } from '../../services/models/damplab-service.model';
-import { Field, ID, ObjectType, registerEnumType, Float } from '@nestjs/graphql';
+import { Field, ID, ObjectType, Float } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 
+@ObjectType()
+export class Position {
+  @Field(() => Float)
+  x: number;
+
+  @Field(() => Float)
+  y: number;
+}
 
 /**
  * Represents a single node in a Bundle. A node is a service with the
@@ -44,6 +52,10 @@ export class BundleNode {
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'Snapshot of service price at submission time' })
   price?: number;
+
+  @Prop({ type: Object }) 
+  @Field(() => Position, { nullable: true, description: 'Position of the node in the graph' })
+  position?: Position;
 }
 
 export type BundleNodeDocument = BundleNode & Document;

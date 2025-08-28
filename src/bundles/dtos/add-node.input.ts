@@ -1,12 +1,25 @@
 import { Injectable, PipeTransform } from '@nestjs/common';
-import { ID, Field, InputType, OmitType } from '@nestjs/graphql';
+import { ID, Field, InputType, OmitType, Float } from '@nestjs/graphql';
 import { BundleNode } from '../models/node.model';
 import { DampLabServicePipe } from '../../services/damplab-services.pipe';
 
+
 @InputType()
-export class AddBundleNodeInput extends OmitType(BundleNode, ['_id', 'service'] as const, InputType) {
+export class PositionInput {
+  @Field(() => Float)
+  x: number;
+
+  @Field(() => Float)
+  y: number;
+}
+
+@InputType()
+export class AddBundleNodeInput extends OmitType(BundleNode, ['_id', 'service', 'position'] as const, InputType) {
   @Field(() => ID, { description: 'The ID of the service this node is a part of' })
   serviceId: string;
+
+  @Field(() => PositionInput, { nullable: true })
+  position?: PositionInput; 
 }
 
 export type AddNodeInputFull = Omit<BundleNode, '_id'>;
