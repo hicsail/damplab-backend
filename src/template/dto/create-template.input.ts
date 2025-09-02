@@ -29,3 +29,4 @@ export class CreateTemplateInput {
   @Field(() => [CreateColumnMappingInput], { description: 'Column mapping configuration' })
   columnMapping: CreateColumnMappingInput[];
 }
+

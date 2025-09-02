@@ -176,3 +176,4 @@ The service handles the following error cases:
 ## Integration
 
 The Template module is automatically registered in the main `AppModule` and will be available as soon as the server starts. The GraphQL schema will include all template types and operations.
+

@@ -32,3 +32,4 @@ export class UpdateTemplateInput {
   @Field(() => [UpdateColumnMappingInput], { nullable: true, description: 'Updated column mapping configuration' })
   columnMapping?: UpdateColumnMappingInput[];
 }
+
