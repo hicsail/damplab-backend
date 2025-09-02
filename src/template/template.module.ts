@@ -5,9 +5,7 @@ import { TemplateService } from './template.service';
 import { TemplateResolver } from './template.resolver';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: Template.name, schema: TemplateSchema }])
-  ],
+  imports: [MongooseModule.forFeature([{ name: Template.name, schema: TemplateSchema }])],
   providers: [TemplateService, TemplateResolver],
   exports: [TemplateService]
 })

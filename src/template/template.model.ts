@@ -39,14 +39,16 @@ export class Template {
   @Field({ description: 'When the template was created' })
   createdAt: Date;
 
-  @Prop({ 
-    type: [{
-      field: { type: String, required: true },
-      headerName: { type: String, required: true },
-      type: { type: String, required: true },
-      width: { type: Number, required: true },
-      order: { type: Number, required: true }
-    }],
+  @Prop({
+    type: [
+      {
+        field: { type: String, required: true },
+        headerName: { type: String, required: true },
+        type: { type: String, required: true },
+        width: { type: Number, required: true },
+        order: { type: Number, required: true }
+      }
+    ],
     required: true
   })
   @Field(() => [ColumnMapping], { description: 'Column mapping configuration' })

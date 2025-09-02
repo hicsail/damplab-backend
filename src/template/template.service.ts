@@ -44,16 +44,16 @@ export class TemplateService {
 
   async update(input: UpdateTemplateInput): Promise<Template> {
     const template = await this.templateModel.findById(input.id);
-    
+
     if (!template) {
       throw new NotFoundException(`Template with ID "${input.id}" not found`);
     }
 
     // If updating name, check for conflicts
     if (input.name && input.name !== template.name) {
-      const existingTemplate = await this.templateModel.findOne({ 
-        name: input.name, 
-        _id: { $ne: input.id } 
+      const existingTemplate = await this.templateModel.findOne({
+        name: input.name,
+        _id: { $ne: input.id }
       });
       if (existingTemplate) {
         throw new ConflictException(`Template with name "${input.name}" already exists`);
@@ -90,4 +90,3 @@ export class TemplateService {
     return true;
   }
 }
-
