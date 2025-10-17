@@ -1,3 +1,4 @@
+import { UseGuards } from '@nestjs/common';
 import { Resolver, Query, Mutation, Args, ResolveField, Parent, ID } from '@nestjs/graphql';
 import { Workflow, WorkflowState } from './models/workflow.model';
 import { WorkflowService } from './workflow.service';
@@ -6,8 +7,10 @@ import { WorkflowNodeService } from './services/node.service';
 import { WorkflowEdge } from './models/edge.model';
 import { WorkflowEdgeService } from './services/edge.service';
 import { WorkflowPipe } from './workflow.pipe';
+import { AuthRolesGuard } from '../auth/auth.guard';
 
 @Resolver(() => Workflow)
+@UseGuards(AuthRolesGuard)
 export class WorkflowResolver {
   constructor(private readonly workflowService: WorkflowService, private readonly nodeService: WorkflowNodeService, private readonly edgeService: WorkflowEdgeService) {}
 
