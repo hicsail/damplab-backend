@@ -11,7 +11,7 @@ import { DampLabServicesModule } from './services/damplab-services.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WorkflowModule } from './workflow/workflow.module';
 import { CategoriesModule } from './categories/categories.module';
-import { BundlesModule } from './bundles/bundles.module';
+import { BundleModule } from './bundles/bundles.module';
 import { JobModule } from './job/job.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
@@ -39,7 +39,7 @@ import { TemplateModule } from './template/template.module';
     DampLabServicesModule,
     WorkflowModule,
     CategoriesModule,
-    BundlesModule,
+    BundleModule,
     JobModule,
 
     // NOTE: The Reset module is for development purposes only and will

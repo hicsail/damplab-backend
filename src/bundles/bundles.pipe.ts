@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, PipeTransform } from '@nestjs/common';
-import { Bundle } from './bundles.model';
+import { Bundle } from './models/bundle.model';
 import { BundlesService } from './bundles.service';
 
 @Injectable()

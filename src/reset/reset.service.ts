@@ -7,7 +7,7 @@ import { BundleInput } from './dtos/bundle.dto';
 import { Model, ObjectId } from 'mongoose';
 import { DampLabService, DampLabServiceDocument } from '../services/models/damplab-service.model';
 import { Category, CategoryDocument } from '../categories/category.model';
-import { Bundle, BundleDocument } from '../bundles/bundles.model';
+import { Bundle, BundleDocument } from '../bundles/models/bundle.model';
 
 @Injectable()
 export class ResetService {
