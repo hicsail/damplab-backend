@@ -11,33 +11,39 @@ import { WorkflowPipe } from '../workflow/workflow.pipe';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
+import { Roles } from '../auth/roles/roles.decorator';
+import { Role } from '../auth/roles/roles.enum';
 
 @Resolver(() => Job)
+@UseGuards(AuthRolesGuard)
 export class JobResolver {
   constructor(private readonly jobService: JobService, private readonly workflowService: WorkflowService, private readonly commentService: CommentService) {}
 
   @Query(() => Job, { nullable: true })
+  @Roles(Role.DamplabStaff)
   async jobByName(@Args('name') name: string): Promise<Job | null> {
     return this.jobService.findByName(name);
   }
 
   @Query(() => Job, { nullable: true })
+  @Roles(Role.DamplabStaff)
   async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
     return this.jobService.findById(id);
   }
 
   @Query(() => Job)
+  @Roles(Role.DamplabStaff)
   async jobByWorkflowId(@Args('workflow', { type: () => ID }, WorkflowPipe) workflow: Workflow): Promise<Job | null> {
     return this.jobService.findByWorkflow(workflow);
   }
 
   @Mutation(() => Job)
-  @UseGuards(AuthRolesGuard)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
     return this.jobService.create({ ...createJobInput, username: user.preferred_username, sub: user.sub, email: user.email });
   }
 
   @Mutation(() => Job)
+  @Roles(Role.DamplabStaff)
   async changeJobState(@Args('job', { type: () => ID }, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState): Promise<Job> {
     return (await this.jobService.updateState(job, newState))!;
   }
