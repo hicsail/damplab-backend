@@ -26,4 +26,4 @@ Then run commands using `./bin/dev` (dev mode) or `./bin/run` (run mode). For ex
 
 ## Initializing database
 
-To populate your test database with data, you can run `npm run initdb` from the root of this project, and that will run the `load all` script for you. If your database is not at the default `mongodb://localhost:27017/damplab`, you can pass its url to the script like so: `npm run initdb -- -d <your_db_url_here>`.
+To populate your test database with data, you can run `npm run initdb` from the root of this project, and that will run the `load all` script for you, respecting the `MONGO_URI` in your `.env` if you have it set. If your database is not at the default `mongodb://localhost:27017/damplab` and you don't have `MONGO_URI` set in your `.env` file (or want to override that as well), you can pass its url to the script like so: `npm run initdb -- -d <your_db_url_here>`. (Note that the `.env` file is only respected when running the load all script via `npm run initdb`.)

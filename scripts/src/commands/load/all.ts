@@ -32,7 +32,7 @@ export default class LoadDatabase extends Command {
     db: Flags.string({
       char: 'd',
       description: 'database to load into',
-      default: 'mongodb://localhost:27017/damplab',
+      default: process.env.MONGO_URI || 'mongodb://localhost:27017/damplab',
       required: false
     }),
     serviceCollection: Flags.string({
