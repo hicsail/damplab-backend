@@ -37,19 +37,19 @@ export default class LoadDatabase extends Command {
     }),
     serviceCollection: Flags.string({
       char: 'S',
-      description: 'collection to load into',
+      description: 'collection to load services into',
       default: 'damplabservices',
       required: false
     }),
     categoryCollection: Flags.string({
       char: 'C',
-      description: 'collection to load into',
+      description: 'collection to load categories into',
       default: 'categories',
       required: false
     }),
     bundleCollection: Flags.string({
       char: 'B',
-      description: 'collection to load into',
+      description: 'collection to load bundles into',
       default: 'bundles',
       required: false
     })
