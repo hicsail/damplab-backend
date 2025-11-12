@@ -11,6 +11,8 @@ export default (): any => ({
   },
   auth: {
     /* The JWKs endpoint at which to fetch keys for verifying JWTs */
-    jwksEndpoint: process.env.JWKS_ENDPOINT
+    jwksEndpoint: process.env.JWKS_ENDPOINT,
+    /* Disable auth for easier gql testing - use only in development */
+    disable: process.env.DISABLE_AUTH == 'true' || false
   }
 });

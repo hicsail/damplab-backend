@@ -3,13 +3,14 @@ import { GqlContextType, GqlExecutionContext } from '@nestjs/graphql';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { Reflector } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
 import { ROLES_KEY } from './roles/roles.decorator';
 import { Role } from './roles/roles.enum';
 import { User } from './user.interface';
 
 @Injectable()
 export class AuthRolesGuard implements CanActivate {
-  constructor(private jwtService: JwtService, private reflector: Reflector) {}
+  constructor(private configService: ConfigService, private jwtService: JwtService, private reflector: Reflector) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     let request;
@@ -21,8 +22,13 @@ export class AuthRolesGuard implements CanActivate {
       throw new UnauthorizedException('Unknown context type');
     }
 
+    if (this.configService.get('auth.disable')) {
+      console.debug('Auth is disabled for development - AuthRolesGuard not enforcing auth.');
+      return true;
+    }
+
     const token = this.extractTokenFromHeader(request);
-    if (!token) {
+    if (token === undefined) {
       throw new UnauthorizedException('No token found');
     }
 
