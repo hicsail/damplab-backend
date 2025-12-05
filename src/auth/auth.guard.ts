@@ -22,13 +22,12 @@ export class AuthRolesGuard implements CanActivate {
       throw new UnauthorizedException('Unknown context type');
     }
 
-    if (this.configService.get('auth.disable')) {
-      console.debug('Auth is disabled for development - AuthRolesGuard not enforcing auth.');
-      return true;
-    }
-
     const token = this.extractTokenFromHeader(request);
     if (token === undefined) {
+      if (this.configService.get('auth.disable')) {
+        console.debug('Auth is disabled for development - AuthRolesGuard not enforcing auth.');
+        return true;
+      }
       throw new UnauthorizedException('No token found');
     }
 
@@ -45,6 +44,10 @@ export class AuthRolesGuard implements CanActivate {
       const roles = payload.realm_access?.roles ?? [];
       const hasRole = requiredRoles.some((role) => roles.includes(role));
       if (!hasRole) {
+        if (this.configService.get('auth.disable')) {
+          console.debug('Auth is disabled for development - AuthRolesGuard not enforcing auth roles.');
+          return true;
+        }
         throw new ForbiddenException('You do not have the required role');
       }
     } catch (error) {
