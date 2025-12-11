@@ -24,7 +24,8 @@ import { TemplateModule } from './template/template.module';
     getConfigModule(),
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: true
+      autoSchemaFile: true,
+      graphiql: true
     }),
 
     // Load the MongoDB connection based on the config service
@@ -73,7 +74,7 @@ export class AppModule {}
  *   If no ENV_FILE is provided:
  *   → Loads `.env`
  */
-function getConfigModule(): DynamicModule {
+function getConfigModule(): Promise<DynamicModule> {
   // Determine which .env file to load
   const envFile = process.env.ENV_FILE ? `.env.${process.env.ENV_FILE}` : '.env';
 
