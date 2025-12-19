@@ -1,5 +1,5 @@
 import { UseGuards } from '@nestjs/common';
-import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
+import { Args, ID, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobPipe } from './job.dto';
 import { Job, JobState } from './job.model';
 import { JobService } from './job.service';
@@ -19,6 +19,17 @@ import { Role } from '../auth/roles/roles.enum';
 export class JobResolver {
   constructor(private readonly jobService: JobService, private readonly workflowService: WorkflowService, private readonly commentService: CommentService) {}
 
+  @Query(() => [Job])
+  @Roles(Role.DamplabStaff)
+  async jobs(): Promise<Job[]> {
+    return this.jobService.findAll();
+  }
+
+  @Query(() => [Job])
+  async ownJobs(@CurrentUser() user: User): Promise<Job[]> {
+    return this.jobService.findBySub(user.sub);
+  }
+
   @Query(() => Job, { nullable: true })
   @Roles(Role.DamplabStaff)
   async jobByName(@Args('name') name: string): Promise<Job | null> {
@@ -29,6 +40,16 @@ export class JobResolver {
   @Roles(Role.DamplabStaff)
   async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
     return this.jobService.findById(id);
+  }
+
+  @Query(() => Job, { nullable: true })
+  async ownJobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
+    const job = await this.jobService.findById(id);
+    if (job?.sub === user.sub) {
+      return job;
+    } else {
+      return null;
+    }
   }
 
   @Query(() => Job)
