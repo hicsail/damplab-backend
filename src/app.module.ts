@@ -1,6 +1,7 @@
 import { Module, DynamicModule } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './auth/auth.module';
 import { HealthModule } from './health/health.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import config from './config';
@@ -14,6 +15,8 @@ import { BundlesModule } from './bundles/bundles.module';
 import { JobModule } from './job/job.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
+import { AnnouncementModule } from './announcements/announcement.module';
+import { TemplateModule } from './template/template.module';
 import { MPIModule } from './mpi/mpi.module';
 import { JwtModule } from '@nestjs/jwt';
 
@@ -34,6 +37,7 @@ import { JwtModule } from '@nestjs/jwt';
       }),
       inject: [ConfigService]
     }),
+    AuthModule,
     DampLabServicesModule,
     WorkflowModule,
     CategoriesModule,
@@ -45,6 +49,10 @@ import { JwtModule } from '@nestjs/jwt';
     ResetModule,
 
     CommentModule,
+
+    AnnouncementModule,
+
+    TemplateModule,
 
     MPIModule,
 
@@ -59,32 +67,28 @@ import { JwtModule } from '@nestjs/jwt';
 export class AppModule {}
 
 /**
- * Get the config module based on the specific environment file to load from.
+ * Dynamically load the ConfigModule based on an environment variable.
  *
- * This function checkfor the existence of the environemnt variable
- * `ENV_FILE`. If it exists, the function will load the config from that file,
- * if that file does not exist, only use existing environment variables.
- * For example, if `ENV_FILE=dev` then the file `.env.dev` will be loaded.
+ * This allows:
+ *   - Easy switching between multiple environment configs (dev, staging, prod).
+ *   - Compatibility with containerized or cloud environments (like Docker or Kubernetes),
+ *     where variables are injected at runtime. In these cases, runtime environment
+ *     variables still take precedence over values in `.env`, ensuring no break in behavior.
  *
- * Part of the benefit of this approach is that tools that allow you to
- * enter environment variables are easily supported such as docker-compose.
- * In such cases, by not providing an `ENV_FILE` environment variable, the
- * config will be loaded from the environment variables.
+ * Examples:
+ *   ENV_FILE=staging npm run start
+ *   → Loads `.env.staging`
+ *
+ *   If no ENV_FILE is provided:
+ *   → Loads `.env`
  */
 function getConfigModule(): DynamicModule {
-  // If the `ENV_FILE` is provided, load from that file
-  if (process.env.ENV_FILE) {
-    console.info('Loading config from file: .env.' + process.env.ENV_FILE);
-    return ConfigModule.forRoot({
-      envFilePath: `.env.${process.env.ENV_FILE}`,
-      load: [config]
-    });
-  }
+  // Determine which .env file to load
+  const envFile = process.env.ENV_FILE ? `.env.${process.env.ENV_FILE}` : '.env';
 
-  // Otherwise don't load from a file, just use the environment variables
-  console.info('Loading config from environment variables');
+  console.info(`Loading config from: ${envFile}`);
   return ConfigModule.forRoot({
-    ignoreEnvFile: true,
+    envFilePath: envFile,
     load: [config]
   });
 }

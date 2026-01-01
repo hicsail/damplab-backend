@@ -7,6 +7,9 @@
 /scripts/node_modules/
 /scripts/dist/
 
+# Local
+.env
+
 /.vscode/
 .codebuddy/*
 .env.dev

@@ -28,17 +28,22 @@ export class Job {
   name: string;
 
   /// These fields will be replaced by a user field in the future /////////////
+  // ^ Should there be a single 'user' field with a nested object, or was the point more about 'real auth'?
   @Prop()
-  @Field({ description: 'Username of the person who submitted the job' })
+  @Field({ description: 'Username of the person who submitted the job - from access token' })
   username: string;
 
   @Prop()
-  @Field({ description: 'The institute the user is from' })
-  institute: string;
+  @Field({ description: 'Subject id of the user - from access token' })
+  sub: string;
 
   @Prop()
-  @Field({ description: 'The email address of the user' })
+  @Field({ description: 'The email address of the user - from access token' })
   email: string;
+
+  @Prop()
+  @Field({ description: 'The institute the user is from' }) // This is not in the keycloak tokens, so is supplied by the user.
+  institute: string;
   /////////////////////////////////////////////////////////////////////////////
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: Workflow.name }] })

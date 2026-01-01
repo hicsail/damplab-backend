@@ -1,3 +1,4 @@
+import { UseGuards } from '@nestjs/common';
 import { Parent, Query, ResolveField, Resolver, Args, Mutation, ID } from '@nestjs/graphql';
 import { DampLabServices } from '../services/damplab-services.services';
 import { DampLabService } from '../services/models/damplab-service.model';
@@ -7,7 +8,12 @@ import { BundlesPipe } from './bundles.pipe';
 import { BundleChange } from './dtos/update.dto';
 import { BundleUpdatePipe } from './update.pipe';
 
+import { AuthRolesGuard } from '../auth/auth.guard';
+import { Roles } from '../auth/roles/roles.decorator';
+import { Role } from '../auth/roles/roles.enum';
+
 @Resolver(() => Bundle)
+@UseGuards(AuthRolesGuard)
 export class BundlesResolver {
   constructor(private readonly bundlesService: BundlesService, private readonly dampLabServices: DampLabServices) {}
 
@@ -17,6 +23,7 @@ export class BundlesResolver {
   }
 
   @Mutation(() => Bundle)
+  @Roles(Role.DamplabStaff)
   async updateBundle(@Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle, @Args('changes', { type: () => BundleChange }, BundleUpdatePipe) changes: BundleChange): Promise<Bundle> {
     return this.bundlesService.update(bundle, changes);
   }
