@@ -10,24 +10,38 @@ import { CreateService } from './dtos/create.dto';
 export class DampLabServices {
   constructor(@InjectModel(DampLabService.name) private readonly dampLabServiceModel: Model<DampLabServiceDocument>) {}
 
-  findAll(): Promise<DampLabService[]> {
-    return this.dampLabServiceModel.find().exec();
+  /**
+   * Ensure deliverables field is always an array (for backward compatibility)
+   */
+  private normalizeDeliverables(service: DampLabService): DampLabService {
+    if (!service.deliverables) {
+      service.deliverables = [];
+    }
+    return service;
+  }
+
+  async findAll(): Promise<DampLabService[]> {
+    const services = await this.dampLabServiceModel.find().exec();
+    return services.map((service) => this.normalizeDeliverables(service));
   }
 
   /**
    * Find a list of services by their IDs.
    */
   async findByIds(ids: mongoose.Types.ObjectId[]): Promise<DampLabService[]> {
-    return this.dampLabServiceModel.find({ _id: { $in: ids } }).exec();
+    const services = await this.dampLabServiceModel.find({ _id: { $in: ids } }).exec();
+    return services.map((service) => this.normalizeDeliverables(service));
   }
 
   async findOne(id: string): Promise<DampLabService | null> {
-    return this.dampLabServiceModel.findById(id).exec();
+    const service = await this.dampLabServiceModel.findById(id).exec();
+    return service ? this.normalizeDeliverables(service) : null;
   }
 
   async update(service: DampLabService, changes: ServiceChange): Promise<DampLabService> {
     await this.dampLabServiceModel.updateOne({ _id: service._id }, changes);
-    return (await this.dampLabServiceModel.findById(service._id))!;
+    const updated = await this.dampLabServiceModel.findById(service._id);
+    return this.normalizeDeliverables(updated!);
   }
 
   async delete(service: DampLabService): Promise<void> {
@@ -43,6 +57,12 @@ export class DampLabServices {
   }
 
   async create(service: CreateService): Promise<DampLabService> {
-    return this.dampLabServiceModel.create(service);
+    // Ensure deliverables defaults to empty array if not provided
+    const serviceData = {
+      ...service,
+      deliverables: service.deliverables || []
+    };
+    const created = await this.dampLabServiceModel.create(serviceData);
+    return this.normalizeDeliverables(created);
   }
 }
