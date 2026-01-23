@@ -10,6 +10,7 @@ import { Role } from '../auth/roles/roles.enum';
 import { AuthRolesGuard } from '../auth/auth.guard';
 
 @Resolver(() => Announcement)
+@UseGuards(AuthRolesGuard)
 export class AnnouncementResolver {
   constructor(private readonly announcementService: AnnouncementService) {}
 
@@ -19,14 +20,12 @@ export class AnnouncementResolver {
   }
 
   @Mutation(() => Announcement)
-  @UseGuards(AuthRolesGuard)
   @Roles(Role.DamplabStaff)
   async createAnnouncement(@Args('input') input: CreateAnnouncementInput): Promise<Announcement> {
     return this.announcementService.create(input);
   }
 
   @Mutation(() => Announcement)
-  @UseGuards(AuthRolesGuard)
   @Roles(Role.DamplabStaff)
   async updateAnnouncement(@Args('input') input: UpdateAnnouncementInput): Promise<Announcement> {
     return this.announcementService.updateByTimestamp(input);

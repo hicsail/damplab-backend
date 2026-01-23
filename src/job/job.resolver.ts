@@ -15,6 +15,7 @@ import { SOW } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
 
 @Resolver(() => Job)
+@UseGuards(AuthRolesGuard)
 export class JobResolver {
   constructor(
     private readonly jobService: JobService,
@@ -26,27 +27,30 @@ export class JobResolver {
   ) {}
 
   @Query(() => Job, { nullable: true })
+  @Roles(Role.DamplabStaff)
   async jobByName(@Args('name') name: string): Promise<Job | null> {
     return this.jobService.findByName(name);
   }
 
   @Query(() => Job, { nullable: true })
+  @Roles(Role.DamplabStaff)
   async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
     return this.jobService.findById(id);
   }
 
   @Query(() => Job)
+  @Roles(Role.DamplabStaff)
   async jobByWorkflowId(@Args('workflow', { type: () => ID }, WorkflowPipe) workflow: Workflow): Promise<Job | null> {
     return this.jobService.findByWorkflow(workflow);
   }
 
   @Mutation(() => Job)
-  @UseGuards(AuthRolesGuard)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
     return this.jobService.create({ ...createJobInput, username: user.preferred_username, sub: user.sub, email: user.email });
   }
 
   @Mutation(() => Job)
+  @Roles(Role.DamplabStaff)
   async changeJobState(@Args('job', { type: () => ID }, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState): Promise<Job> {
     return (await this.jobService.updateState(job, newState))!;
   }

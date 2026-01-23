@@ -8,6 +8,7 @@ import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 
 @Resolver(() => Comment)
+@UseGuards(AuthRolesGuard)
 export class CommentResolver {
   constructor(private readonly commentService: CommentService) {}
 
