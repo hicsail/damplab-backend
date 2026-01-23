@@ -55,6 +55,13 @@ export class DampLabService {
     description: 'The approximate cost to use this service.'
   })
   price?: number;
+
+  @Prop({ type: [String], required: false, default: [] })
+  @Field(() => [String], {
+    description: 'Array of deliverable descriptions for this service',
+    defaultValue: []
+  })
+  deliverables!: string[];
 }
 
 export type DampLabServiceDocument = DampLabService & Document;

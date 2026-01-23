@@ -1,4 +1,4 @@
-import { UseGuards } from '@nestjs/common';
+import { UseGuards, Inject, forwardRef } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobPipe } from './job.dto';
 import { Job, JobState } from './job.model';
@@ -9,15 +9,24 @@ import { CommentService } from '../comment/comment.service';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowPipe } from '../workflow/workflow.pipe';
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { User } from '../auth/user.interface';
-import { CurrentUser } from '../auth/user.decorator';
 import { Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
+import { User } from '../auth/user.interface';
+import { CurrentUser } from '../auth/user.decorator';
+import { SOW } from '../sow/sow.model';
+import { SOWService } from '../sow/sow.service';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
 export class JobResolver {
-  constructor(private readonly jobService: JobService, private readonly workflowService: WorkflowService, private readonly commentService: CommentService) {}
+  constructor(
+    private readonly jobService: JobService,
+    private readonly workflowService: WorkflowService,
+    @Inject(forwardRef(() => CommentService))
+    private readonly commentService: CommentService,
+    @Inject(forwardRef(() => SOWService))
+    private readonly sowService: SOWService
+  ) {}
 
   @Query(() => Job, { nullable: true })
   @Roles(Role.DamplabStaff)
@@ -56,5 +65,10 @@ export class JobResolver {
   @ResolveField(() => [Comment])
   async comments(@Parent() job: Job): Promise<Comment[]> {
     return this.commentService.findByJob(job._id);
+  }
+
+  @ResolveField(() => SOW, { nullable: true, description: 'SOW associated with this job' })
+  async sow(@Parent() job: Job): Promise<SOW | null> {
+    return this.sowService.findByJobId(job._id);
   }
 }
