@@ -9,6 +9,8 @@ import { CommentService } from '../comment/comment.service';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowPipe } from '../workflow/workflow.pipe';
 import { AuthRolesGuard } from '../auth/auth.guard';
+import { Roles } from '../auth/roles/roles.decorator';
+import { Role } from '../auth/roles/roles.enum';
 import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
