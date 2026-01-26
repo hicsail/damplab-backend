@@ -28,6 +28,17 @@ export class JobResolver {
     private readonly sowService: SOWService
   ) {}
 
+  @Query(() => [Job])
+  @Roles(Role.DamplabStaff)
+  async jobs(): Promise<Job[]> {
+    return this.jobService.findAll();
+  }
+
+  @Query(() => [Job])
+  async ownJobs(@CurrentUser() user: User): Promise<Job[]> {
+    return this.jobService.findBySub(user.sub);
+  }
+
   @Query(() => Job, { nullable: true })
   @Roles(Role.DamplabStaff)
   async jobByName(@Args('name') name: string): Promise<Job | null> {
@@ -38,6 +49,16 @@ export class JobResolver {
   @Roles(Role.DamplabStaff)
   async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
     return this.jobService.findById(id);
+  }
+
+  @Query(() => Job, { nullable: true })
+  async ownJobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
+    const job = await this.jobService.findById(id);
+    if (job?.sub === user.sub) {
+      return job;
+    } else {
+      return null;
+    }
   }
 
   @Query(() => Job)

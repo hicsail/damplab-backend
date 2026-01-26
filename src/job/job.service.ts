@@ -20,6 +20,14 @@ export class JobService {
     return this.jobModel.create({ ...createJobInput, workflows: workflowIDs });
   }
 
+  async findAll(): Promise<Job[]> {
+    return this.jobModel.find().exec();
+  }
+
+  async findBySub(sub: string): Promise<Job[]> {
+    return this.jobModel.find({ sub: sub }).exec();
+  }
+
   async findById(id: string): Promise<Job | null> {
     return this.jobModel.findById(id);
   }
