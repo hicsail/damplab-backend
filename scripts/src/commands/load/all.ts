@@ -32,24 +32,24 @@ export default class LoadDatabase extends Command {
     db: Flags.string({
       char: 'd',
       description: 'database to load into',
-      default: 'mongodb://localhost:27017/damplab',
+      default: process.env.MONGO_URI || 'mongodb://localhost:27017/damplab',
       required: false
     }),
     serviceCollection: Flags.string({
       char: 'S',
-      description: 'collection to load into',
+      description: 'collection to load services into',
       default: 'damplabservices',
       required: false
     }),
     categoryCollection: Flags.string({
       char: 'C',
-      description: 'collection to load into',
+      description: 'collection to load categories into',
       default: 'categories',
       required: false
     }),
     bundleCollection: Flags.string({
       char: 'B',
-      description: 'collection to load into',
+      description: 'collection to load bundles into',
       default: 'bundles',
       required: false
     })

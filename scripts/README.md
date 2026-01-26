@@ -14,3 +14,16 @@ pieces of data into the database, adding pieces of data manually, etc.
 >    being added into the database
 > 3. The scripts are not guaranteed to be kept up-to-date with the rest of
 >    the code base.
+
+## Usage
+
+From this directory, run
+```
+npm install
+npm run build
+```
+Then run commands using `./bin/dev` (dev mode) or `./bin/run` (run mode). For example: `./bin/dev --help` <!-- why is `load` under TOPICS and `reset` under COMMANDS?? -->, `./bin/run reset`, `./bin/dev load all [-d <database_url>]`.
+
+## Initializing database
+
+To populate your test database with data, you can run `npm run initdb` from the root of this project, and that will run the `load all` script for you, respecting the `MONGO_URI` in your `.env` if you have it set. If your database is not at the default `mongodb://localhost:27017/damplab` and you don't have `MONGO_URI` set in your `.env` file (or want to override that as well), you can pass its url to the script like so: `npm run initdb -- -d <your_db_url_here>`. (Note that the `.env` file is only respected when running the load all script via `npm run initdb`.)

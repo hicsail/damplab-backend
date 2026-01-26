@@ -2,33 +2,27 @@
   "categories": [
     {
       "id": "dna-rna",
-      "label": "DNA and RNA",
-      "services": []
+      "label": "DNA and RNA"
     },
     {
       "id": "dna-assembly-cloning",
-      "label": "DNA Assembly and Cloning",
-      "services": []
+      "label": "DNA Assembly and Cloning"
     },
     {
       "id": "fluorescence-based-assays",
-      "label": "Fluorescence-Based Assays",
-      "services": []
+      "label": "Fluorescence-Based Assays"
     },
     {
       "id": "culturing-media",
-      "label": "Culturing Media",
-      "services": []
+      "label": "Culturing/Media"
     },
     {
-      "id": "transcriptomics",
-      "label": "Transcriptomics",
-      "services": []
+      "id": "next-gen-seq",
+      "label": "Next Generation Sequencing"
     },
     {
       "id": "storage",
-      "label": "Materials Repository and Storage",
-      "services": []
+      "label": "Materials Repository and Storage"
     }
   ]
 }
