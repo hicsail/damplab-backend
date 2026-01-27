@@ -3,6 +3,7 @@ import { SOW, SOWStatus } from './sow.model';
 import { SOWService } from './sow.service';
 import { CreateSOWInput } from './dto/create-sow.input';
 import { UpdateSOWInput } from './dto/update-sow.input';
+import { SubmitSOWSignatureInput } from './dto/submit-sow-signature.input';
 import { Job } from '../job/job.model';
 import { JobService } from '../job/job.service';
 import { UseGuards } from '@nestjs/common';
@@ -60,6 +61,17 @@ export class SOWResolver {
     // Use user email or preferred_username as createdBy if not provided
     const createdBy = input.createdBy || user.email || user.preferred_username || 'unknown';
     return this.sowService.upsertForJob(jobId, { ...input, jobId, createdBy });
+  }
+
+  @Mutation(() => SOW, {
+    description: 'Submit a signature for an SOW (client or technician). Idempotent per role.'
+  })
+  @UseGuards(AuthRolesGuard)
+  async submitSOWSignature(
+    @Args('input', { type: () => SubmitSOWSignatureInput }) input: SubmitSOWSignatureInput,
+    @CurrentUser() user: User
+  ): Promise<SOW> {
+    return this.sowService.submitSignature(input, user);
   }
 
   @ResolveField(() => Job, { description: 'Job this SOW is associated with' })

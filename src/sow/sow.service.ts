@@ -1,11 +1,14 @@
 import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { SOW, SOWDocument, SOWStatus } from './sow.model';
+import { SOW, SOWDocument, SOWStatus, SOWSignature, SOWSignatureRole } from './sow.model';
 import { CreateSOWInput } from './dto/create-sow.input';
 import { UpdateSOWInput } from './dto/update-sow.input';
+import { SubmitSOWSignatureInput } from './dto/submit-sow-signature.input';
 import { JobService } from '../job/job.service';
 import { Job } from '../job/job.model';
+import { User } from '../auth/user.interface';
+import { Role } from '../auth/roles/roles.enum';
 
 @Injectable()
 export class SOWService {
@@ -299,6 +302,85 @@ export class SOWService {
    */
   async findAll(): Promise<SOW[]> {
     return this.sowModel.find({}).sort({ createdAt: -1 }).exec();
+  }
+
+  /** Max size for signatureDataUrl in bytes (500 KB). Base64 increases size ~4/3, so we limit string length. */
+  private static readonly SIGNATURE_DATA_URL_MAX_BYTES = 500 * 1024;
+
+  /**
+   * Submit a signature for an SOW (client or technician). Idempotent per role.
+   * CLIENT: only the job owner (matching email or sub) can submit.
+   * TECHNICIAN: only users with DamplabStaff role can submit.
+   */
+  async submitSignature(input: SubmitSOWSignatureInput, user: User): Promise<SOW> {
+    const sow = await this.sowModel.findById(input.sowId).exec();
+    if (!sow) {
+      throw new NotFoundException(`SOW with ID ${input.sowId} not found`);
+    }
+
+    const job = await this.jobService.findById(sow.jobId);
+    if (!job) {
+      throw new BadRequestException('SOW job not found');
+    }
+
+    if (input.role === SOWSignatureRole.CLIENT) {
+      const isOwner = job.email === user.email || job.sub === user.sub;
+      if (!isOwner) {
+        throw new BadRequestException('Only the job owner (client) can submit the client signature');
+      }
+    } else if (input.role === SOWSignatureRole.TECHNICIAN) {
+      const roles = user.realm_access?.roles ?? [];
+      const isStaff = roles.includes(Role.DamplabStaff);
+      if (!isStaff) {
+        throw new BadRequestException('Only staff can submit the technician signature');
+      }
+    }
+
+    if (!input.name?.trim()) {
+      throw new BadRequestException('Signature name is required');
+    }
+
+    const signedAtDate = new Date(input.signedAt);
+    if (isNaN(signedAtDate.getTime())) {
+      throw new BadRequestException('signedAt must be a valid ISO 8601 date-time');
+    }
+
+    if (input.signatureDataUrl) {
+      const sizeBytes = Buffer.byteLength(input.signatureDataUrl, 'utf8');
+      if (sizeBytes > SOWService.SIGNATURE_DATA_URL_MAX_BYTES) {
+        throw new BadRequestException(
+          `signatureDataUrl must be at most ${SOWService.SIGNATURE_DATA_URL_MAX_BYTES / 1024} KB`
+        );
+      }
+    }
+
+    const signature: SOWSignature = {
+      name: input.name.trim(),
+      title: input.title?.trim(),
+      signedAt: input.signedAt,
+      signatureDataUrl: input.signatureDataUrl || undefined
+    };
+
+    const updateKey = input.role === SOWSignatureRole.CLIENT ? 'clientSignature' : 'technicianSignature';
+    const updateData: any = {
+      [updateKey]: signature,
+      updatedAt: new Date()
+    };
+
+    const updated = await this.sowModel.findByIdAndUpdate(input.sowId, { $set: updateData }, { new: true }).exec();
+    if (!updated) {
+      throw new NotFoundException(`SOW with ID ${input.sowId} not found`);
+    }
+
+    const hasClient = !!updated.clientSignature;
+    const hasTechnician = !!updated.technicianSignature;
+    if (hasClient && hasTechnician && updated.status !== SOWStatus.SIGNED) {
+      await this.sowModel.findByIdAndUpdate(input.sowId, { $set: { status: SOWStatus.SIGNED, updatedAt: new Date() } });
+      const final = await this.sowModel.findById(input.sowId).exec();
+      return final!;
+    }
+
+    return updated;
   }
 
   /**

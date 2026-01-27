@@ -21,6 +21,34 @@ export enum SOWAdjustmentType {
 }
 registerEnumType(SOWAdjustmentType, { name: 'SOWAdjustmentType' });
 
+export enum SOWSignatureRole {
+  CLIENT = 'CLIENT',
+  TECHNICIAN = 'TECHNICIAN'
+}
+registerEnumType(SOWSignatureRole, { name: 'SOWSignatureRole' });
+
+/**
+ * Signature data stored per signer (client or technician).
+ * Stored as JSON/Mixed in MongoDB; represented as this type in GraphQL.
+ */
+@ObjectType({ description: 'Signature on a Statement of Work (name, title, date, optional image)' })
+export class SOWSignature {
+  @Field({ description: 'Full name as shown on the PDF' })
+  name: string;
+
+  @Field({ description: 'Role/title (e.g. Principal Investigator)', nullable: true })
+  title?: string;
+
+  @Field({ description: 'ISO 8601 date-time when they signed' })
+  signedAt: string;
+
+  @Field({
+    description: 'Data URL of the signature image (e.g. data:image/png;base64,...)',
+    nullable: true
+  })
+  signatureDataUrl?: string;
+}
+
 @Schema()
 @ObjectType({ description: 'Timeline information for a Statement of Work' })
 export class SOWTimeline {
@@ -223,6 +251,14 @@ export class SOW {
   @Prop({ required: true, default: SOWStatus.DRAFT })
   @Field(() => SOWStatus, { description: 'Current status of the SOW' })
   status: SOWStatus;
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
+  @Field(() => SOWSignature, { description: 'Client signature (when present)', nullable: true })
+  clientSignature?: SOWSignature;
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
+  @Field(() => SOWSignature, { description: 'Technician/BU signature (when present)', nullable: true })
+  technicianSignature?: SOWSignature;
 }
 
 export type SOWDocument = SOW & Document;
