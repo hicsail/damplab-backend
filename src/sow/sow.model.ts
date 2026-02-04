@@ -185,6 +185,13 @@ export class SOW {
   @Field({ description: 'Name of the job' })
   jobName: string;
 
+  @Prop({ required: false })
+  @Field({
+    description: 'Technician-entered title for the SOW document (e.g. "Agreement to Perform Research Services")',
+    nullable: true
+  })
+  sowTitle?: string;
+
   // Client Information
   @Prop({ required: true })
   @Field({ description: 'Name of the client' })

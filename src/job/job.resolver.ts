@@ -1,6 +1,7 @@
 import { UseGuards, Inject, forwardRef } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobPipe } from './job.dto';
+import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
 import { Job, JobState } from './job.model';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -34,9 +35,24 @@ export class JobResolver {
     return this.jobService.findAll();
   }
 
-  @Query(() => [Job])
-  async ownJobs(@CurrentUser() user: User): Promise<Job[]> {
-    return this.jobService.findBySub(user.sub);
+  @Query(() => OwnJobsResult, {
+    description: 'Paginated, filterable list of jobs for the current user (My Jobs).'
+  })
+  async ownJobs(
+    @Args('input', { type: () => OwnJobsInput, nullable: true }) input: OwnJobsInput | null,
+    @CurrentUser() user: User
+  ): Promise<OwnJobsResult> {
+    return this.jobService.findOwnJobsPaginated(user.sub, input ?? {});
+  }
+
+  @Query(() => JobsResult, {
+    description: 'Staff-only. Paginated, filterable list of all jobs (Dashboard).'
+  })
+  @Roles(Role.DamplabStaff)
+  async allJobs(
+    @Args('input', { type: () => AllJobsInput, nullable: true }) input: AllJobsInput | null
+  ): Promise<JobsResult> {
+    return this.jobService.findAllJobsPaginated(input ?? {});
   }
 
   @Query(() => Job, { nullable: true })

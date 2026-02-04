@@ -173,6 +173,7 @@ export class SOWService {
       job: job._id,
       jobId: job._id.toString(),
       jobName: job.name,
+      sowTitle: createSOWInput.sowTitle,
       clientName: createSOWInput.clientName,
       clientEmail: createSOWInput.clientEmail,
       clientInstitution: createSOWInput.clientInstitution,
@@ -239,6 +240,7 @@ export class SOWService {
 
     if (updateSOWInput.sowNumber !== undefined) updateData.sowNumber = updateSOWInput.sowNumber;
     if (updateSOWInput.date !== undefined) updateData.date = updateSOWInput.date;
+    if (updateSOWInput.sowTitle !== undefined) updateData.sowTitle = updateSOWInput.sowTitle;
     if (updateSOWInput.clientName !== undefined) updateData.clientName = updateSOWInput.clientName;
     if (updateSOWInput.clientEmail !== undefined) updateData.clientEmail = updateSOWInput.clientEmail;
     if (updateSOWInput.clientInstitution !== undefined) updateData.clientInstitution = updateSOWInput.clientInstitution;
@@ -394,6 +396,7 @@ export class SOWService {
       const updateInput: UpdateSOWInput = {
         sowNumber: createSOWInput.sowNumber,
         date: createSOWInput.date,
+        sowTitle: createSOWInput.sowTitle,
         clientName: createSOWInput.clientName,
         clientEmail: createSOWInput.clientEmail,
         clientInstitution: createSOWInput.clientInstitution,

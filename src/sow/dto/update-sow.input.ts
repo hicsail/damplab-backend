@@ -46,6 +46,12 @@ export class UpdateSOWInput {
   @Field({ description: 'Date the SOW was created', nullable: true })
   date?: Date;
 
+  @Field({
+    description: 'Technician-entered title for the SOW document (e.g. "Agreement to Perform Research Services")',
+    nullable: true
+  })
+  sowTitle?: string;
+
   @Field({ description: 'Name of the client', nullable: true })
   clientName?: string;
 
