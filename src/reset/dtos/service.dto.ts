@@ -12,7 +12,10 @@ export class ServiceInput {
   @Field({ description: 'The icon image' })
   icon: string;
 
-  @Field(() => JSON, { description: 'Parameters required of the service' })
+  @Field(() => JSON, {
+    description:
+      'Parameters required of the service. Each parameter may include allowMultipleValues (boolean); when true, formData values may be stored and returned as string[].'
+  })
   parameters: any;
 
   @Field(() => [String], { description: 'Array of human assigned IDs' })

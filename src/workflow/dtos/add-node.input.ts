@@ -2,6 +2,7 @@ import { Injectable, PipeTransform } from '@nestjs/common';
 import { ID, Field, InputType, OmitType } from '@nestjs/graphql';
 import { WorkflowNode, WorkflowNodeState } from '../models/node.model';
 import { DampLabServicePipe } from '../../services/damplab-services.pipe';
+import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-data.util';
 
 @InputType()
 export class AddNodeInput extends OmitType(WorkflowNode, ['_id', 'service', 'state'] as const, InputType) {
@@ -17,6 +18,8 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
 
   async transform(value: AddNodeInput): Promise<AddNodeInputFull> {
     const service = await this.dampLabServicePipe.transform(value.serviceId);
-    return { ...value, service, state: WorkflowNodeState.QUEUED };
+    const multiValueParamIds = getMultiValueParamIds(service.parameters);
+    const formData = normalizeFormDataToArray(value.formData, multiValueParamIds);
+    return { ...value, formData, service, state: WorkflowNodeState.QUEUED };
   }
 }

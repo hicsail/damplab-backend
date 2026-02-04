@@ -20,9 +20,31 @@ export class DampLabServices {
     return service;
   }
 
+  /**
+   * Ensure each parameter has allowMultipleValues (default false) so APIs return it consistently.
+   */
+  private normalizeParameters(service: DampLabService): DampLabService {
+    if (Array.isArray(service.parameters)) {
+      for (const param of service.parameters) {
+        if (param && typeof param === 'object' && !Object.prototype.hasOwnProperty.call(param, 'allowMultipleValues')) {
+          param.allowMultipleValues = false;
+        } else if (param && typeof param === 'object') {
+          param.allowMultipleValues = param.allowMultipleValues === true;
+        }
+      }
+    }
+    return service;
+  }
+
+  private normalizeService(service: DampLabService): DampLabService {
+    this.normalizeDeliverables(service);
+    this.normalizeParameters(service);
+    return service;
+  }
+
   async findAll(): Promise<DampLabService[]> {
     const services = await this.dampLabServiceModel.find().exec();
-    return services.map((service) => this.normalizeDeliverables(service));
+    return services.map((service) => this.normalizeService(service));
   }
 
   /**
@@ -30,18 +52,18 @@ export class DampLabServices {
    */
   async findByIds(ids: mongoose.Types.ObjectId[]): Promise<DampLabService[]> {
     const services = await this.dampLabServiceModel.find({ _id: { $in: ids } }).exec();
-    return services.map((service) => this.normalizeDeliverables(service));
+    return services.map((service) => this.normalizeService(service));
   }
 
   async findOne(id: string): Promise<DampLabService | null> {
     const service = await this.dampLabServiceModel.findById(id).exec();
-    return service ? this.normalizeDeliverables(service) : null;
+    return service ? this.normalizeService(service) : null;
   }
 
   async update(service: DampLabService, changes: ServiceChange): Promise<DampLabService> {
     await this.dampLabServiceModel.updateOne({ _id: service._id }, changes);
     const updated = await this.dampLabServiceModel.findById(service._id);
-    return this.normalizeDeliverables(updated!);
+    return this.normalizeService(updated!);
   }
 
   async delete(service: DampLabService): Promise<void> {
@@ -63,6 +85,6 @@ export class DampLabServices {
       deliverables: service.deliverables || []
     };
     const created = await this.dampLabServiceModel.create(serviceData);
-    return this.normalizeDeliverables(created);
+    return this.normalizeService(created);
   }
 }

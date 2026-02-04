@@ -26,7 +26,10 @@ export class DampLabService {
   icon: string;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
-  @Field(() => JSON, { description: 'Parameters that are part of the service' })
+  @Field(() => JSON, {
+    description:
+      'Parameters that are part of the service. Each parameter may include allowMultipleValues (boolean, default false); when true, formData values may be stored and returned as string[].'
+  })
   parameters: any;
 
   @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
