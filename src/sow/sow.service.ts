@@ -147,11 +147,7 @@ export class SOWService {
     return baseCost + this.calculateAdjustmentsTotal(adjustments);
   }
 
-  private validatePricingConsistency(
-    pricing: CreateSOWInput['pricing'] | UpdateSOWInput['pricing'] | undefined,
-    baseCost: number,
-    totalCost: number
-  ): void {
+  private validatePricingConsistency(pricing: CreateSOWInput['pricing'] | UpdateSOWInput['pricing'] | undefined, baseCost: number, totalCost: number): void {
     if (!pricing) return;
     if (pricing.baseCost !== undefined && Math.abs(pricing.baseCost - baseCost) > 0.01) {
       throw new BadRequestException(`baseCost (${pricing.baseCost}) does not match calculated baseCost (${baseCost})`);
@@ -402,9 +398,7 @@ export class SOWService {
     if (input.signatureDataUrl) {
       const sizeBytes = Buffer.byteLength(input.signatureDataUrl, 'utf8');
       if (sizeBytes > SOWService.SIGNATURE_DATA_URL_MAX_BYTES) {
-        throw new BadRequestException(
-          `signatureDataUrl must be at most ${SOWService.SIGNATURE_DATA_URL_MAX_BYTES / 1024} KB`
-        );
+        throw new BadRequestException(`signatureDataUrl must be at most ${SOWService.SIGNATURE_DATA_URL_MAX_BYTES / 1024} KB`);
       }
     }
 

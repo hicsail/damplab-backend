@@ -7,11 +7,7 @@ import { JobModule } from '../job/job.module';
 import { DampLabServicesModule } from '../services/damplab-services.module';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: SOW.name, schema: SOWSchema }]),
-    forwardRef(() => JobModule),
-    DampLabServicesModule
-  ],
+  imports: [MongooseModule.forFeature([{ name: SOW.name, schema: SOWSchema }]), forwardRef(() => JobModule), DampLabServicesModule],
   providers: [SOWService, SOWResolver],
   exports: [SOWService]
 })

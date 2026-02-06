@@ -41,8 +41,7 @@ export class WorkflowNode {
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
   @Field(() => JSON, {
-    description:
-      'Parameters defined earlier in the graph. Always returned as an array of { id, value }; multi-value params have value: string[]. Stored in array shape for new/updated nodes.'
+    description: 'Parameters defined earlier in the graph. Always returned as an array of { id, value }; multi-value params have value: string[]. Stored in array shape for new/updated nodes.'
   })
   formData: any;
 

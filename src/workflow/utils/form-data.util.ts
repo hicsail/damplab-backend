@@ -38,10 +38,7 @@ function ensureArrayValue(val: unknown, paramId: string, multiValueParamIds: Set
  * array shape. Multi-value params get value as string[]; others stay single value.
  * Use for both saving (normalize input then store array) and loading (normalize stored then return array).
  */
-export function normalizeFormDataToArray(
-  input: unknown,
-  multiValueParamIds: Set<string>
-): FormDataEntry[] {
+export function normalizeFormDataToArray(input: unknown, multiValueParamIds: Set<string>): FormDataEntry[] {
   if (input == null) return [];
 
   // Already array of entries
