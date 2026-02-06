@@ -67,10 +67,7 @@ export class SOWResolver {
     description: 'Submit a signature for an SOW (client or technician). Idempotent per role.'
   })
   @UseGuards(AuthRolesGuard)
-  async submitSOWSignature(
-    @Args('input', { type: () => SubmitSOWSignatureInput }) input: SubmitSOWSignatureInput,
-    @CurrentUser() user: User
-  ): Promise<SOW> {
+  async submitSOWSignature(@Args('input', { type: () => SubmitSOWSignatureInput }) input: SubmitSOWSignatureInput, @CurrentUser() user: User): Promise<SOW> {
     return this.sowService.submitSignature(input, user);
   }
 

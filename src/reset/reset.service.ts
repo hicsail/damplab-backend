@@ -56,6 +56,8 @@ export class ResetService {
       const result = await this.serviceModel.create({
         name: service.name,
         icon: service.icon,
+        price: service.price,
+        pricingMode: service.pricingMode,
         parameters: service.parameters,
         allowedConnections: [],
         result: service.result,

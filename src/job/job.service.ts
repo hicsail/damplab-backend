@@ -6,14 +6,7 @@ import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
-import {
-  OwnJobsInput,
-  AllJobsInput,
-  OwnJobsResult,
-  JobsResult,
-  JobSortField,
-  SortOrder
-} from './dto/jobs-query.dto';
+import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder } from './dto/jobs-query.dto';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -63,12 +56,7 @@ export class JobService {
   private buildSearchMatch(search: string): mongoose.FilterQuery<JobDocument> {
     const esc = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(esc, 'i');
-    const or: mongoose.FilterQuery<JobDocument>[] = [
-      { name: re },
-      { username: re },
-      { email: re },
-      { institute: re }
-    ];
+    const or: mongoose.FilterQuery<JobDocument>[] = [{ name: re }, { username: re }, { email: re }, { institute: re }];
     if (/^[a-fA-F0-9]{24}$/.test(search)) {
       try {
         or.push({ _id: new mongoose.Types.ObjectId(search) });
@@ -82,10 +70,7 @@ export class JobService {
   /**
    * Run paginated jobs query with filters, sort, and hasSow via $lookup.
    */
-  private async runJobsPipeline(
-    baseMatch: mongoose.FilterQuery<JobDocument>,
-    input: OwnJobsInput | AllJobsInput
-  ): Promise<{ items: Job[]; totalCount: number }> {
+  private async runJobsPipeline(baseMatch: mongoose.FilterQuery<JobDocument>, input: OwnJobsInput | AllJobsInput): Promise<{ items: Job[]; totalCount: number }> {
     const page = Math.max(1, input.page ?? DEFAULT_PAGE);
     const limit = Math.min(MAX_LIMIT, Math.max(1, input.limit ?? DEFAULT_LIMIT));
     const skip = (page - 1) * limit;
@@ -112,12 +97,7 @@ export class JobService {
     };
     const addIdStr = { $addFields: { _idStr: { $toString: '$_id' } } };
     const addHasSow = { $addFields: { _hasSow: { $gt: [{ $size: '$_sowDocs' }, 0] } } };
-    const hasSowMatch =
-      input.hasSow === true
-        ? [{ $match: { _hasSow: true } }]
-        : input.hasSow === false
-          ? [{ $match: { _hasSow: false } }]
-          : [];
+    const hasSowMatch = input.hasSow === true ? [{ $match: { _hasSow: true } }] : input.hasSow === false ? [{ $match: { _hasSow: false } }] : [];
     const project = { $project: { _sowDocs: 0, _hasSow: 0, _idStr: 0 } };
 
     const sortStage = { $sort: { [sortField]: sortDir } as Record<string, 1 | -1> };
@@ -128,14 +108,7 @@ export class JobService {
       }
     };
 
-    const pipeline: mongoose.PipelineStage[] = [
-      { $match: match.length === 1 ? match[0] : { $and: match } },
-      addIdStr,
-      lookup,
-      addHasSow,
-      ...hasSowMatch,
-      facet
-    ];
+    const pipeline: mongoose.PipelineStage[] = [{ $match: match.length === 1 ? match[0] : { $and: match } }, addIdStr, lookup, addHasSow, ...hasSowMatch, facet];
 
     const raw = await this.jobModel.aggregate(pipeline).exec();
     const totalCount = raw[0]?.totalCount[0]?.n ?? 0;

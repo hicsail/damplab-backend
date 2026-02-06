@@ -40,10 +40,7 @@ export class WorkflowNodeResolver {
    */
   @ResolveField(() => JSON)
   async formData(@Parent() node: WorkflowNode): Promise<FormDataEntry[]> {
-    const service =
-      node.service instanceof mongoose.Types.ObjectId
-        ? await this.damplabServices.findOne(node.service.toString())
-        : (node.service as DampLabService);
+    const service = node.service instanceof mongoose.Types.ObjectId ? await this.damplabServices.findOne(node.service.toString()) : (node.service as DampLabService);
     const multiValueParamIds = service?.parameters ? getMultiValueParamIds(service.parameters) : new Set<string>();
     return normalizeFormDataToArray(node.formData, multiValueParamIds);
   }

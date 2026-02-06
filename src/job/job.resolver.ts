@@ -38,10 +38,7 @@ export class JobResolver {
   @Query(() => OwnJobsResult, {
     description: 'Paginated, filterable list of jobs for the current user (My Jobs).'
   })
-  async ownJobs(
-    @Args('input', { type: () => OwnJobsInput, nullable: true }) input: OwnJobsInput | null,
-    @CurrentUser() user: User
-  ): Promise<OwnJobsResult> {
+  async ownJobs(@Args('input', { type: () => OwnJobsInput, nullable: true }) input: OwnJobsInput | null, @CurrentUser() user: User): Promise<OwnJobsResult> {
     return this.jobService.findOwnJobsPaginated(user.sub, input ?? {});
   }
 
@@ -49,9 +46,7 @@ export class JobResolver {
     description: 'Staff-only. Paginated, filterable list of all jobs (Dashboard).'
   })
   @Roles(Role.DamplabStaff)
-  async allJobs(
-    @Args('input', { type: () => AllJobsInput, nullable: true }) input: AllJobsInput | null
-  ): Promise<JobsResult> {
+  async allJobs(@Args('input', { type: () => AllJobsInput, nullable: true }) input: AllJobsInput | null): Promise<JobsResult> {
     return this.jobService.findAllJobsPaginated(input ?? {});
   }
 
