@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { DampLabService, DampLabServiceDocument } from './models/damplab-service.model';
+import { DampLabService, DampLabServiceDocument, ServicePricingMode } from './models/damplab-service.model';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
@@ -36,9 +36,20 @@ export class DampLabServices {
     return service;
   }
 
+  /**
+   * Ensure pricingMode defaults to SERVICE for consistency.
+   */
+  private normalizePricingMode(service: DampLabService): DampLabService {
+    if (!service.pricingMode) {
+      service.pricingMode = ServicePricingMode.SERVICE;
+    }
+    return service;
+  }
+
   private normalizeService(service: DampLabService): DampLabService {
     this.normalizeDeliverables(service);
     this.normalizeParameters(service);
+    this.normalizePricingMode(service);
     return service;
   }
 

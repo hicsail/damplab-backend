@@ -1,6 +1,6 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-import { Field, ID, ObjectType, Float } from '@nestjs/graphql';
+import { Field, ID, ObjectType, Float, registerEnumType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 import mongoose from 'mongoose';
 
@@ -11,6 +11,13 @@ import mongoose from 'mongoose';
  * The DampLabService also contains information on how this services can
  * be connected to other serivces to make a workflow.
  */
+export enum ServicePricingMode {
+  SERVICE = 'SERVICE',
+  PARAMETER = 'PARAMETER'
+}
+
+registerEnumType(ServicePricingMode, { name: 'ServicePricingMode' });
+
 @Schema()
 @ObjectType({ description: 'Services supported by the DampLab' })
 export class DampLabService {
@@ -28,7 +35,7 @@ export class DampLabService {
   @Prop({ type: mongoose.Schema.Types.Mixed })
   @Field(() => JSON, {
     description:
-      'Parameters that are part of the service. Each parameter may include allowMultipleValues (boolean, default false); when true, formData values may be stored and returned as string[].'
+      'Parameters that are part of the service. Each parameter may include allowMultipleValues (boolean, default false) and price (number). When allowMultipleValues is true, formData values may be stored and returned as string[].'
   })
   parameters: any;
 
@@ -55,9 +62,17 @@ export class DampLabService {
   @Prop({ required: false })
   @Field(() => Float, {
     nullable: true,
-    description: 'The approximate cost to use this service.'
+    description: 'The approximate cost to use this service when pricingMode is SERVICE.'
   })
   price?: number;
+
+  @Prop({ required: false, default: ServicePricingMode.SERVICE })
+  @Field(() => ServicePricingMode, {
+    nullable: true,
+    defaultValue: ServicePricingMode.SERVICE,
+    description: 'How pricing is determined for this service.'
+  })
+  pricingMode?: ServicePricingMode;
 
   @Prop({ type: [String], required: false, default: [] })
   @Field(() => [String], {

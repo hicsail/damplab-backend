@@ -9,11 +9,14 @@ import { JobService } from '../job/job.service';
 import { Job } from '../job/job.model';
 import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
+import { DampLabServices } from '../services/damplab-services.services';
+import { calculateServiceCost } from '../pricing/service-pricing.util';
 
 @Injectable()
 export class SOWService {
   constructor(
     @InjectModel(SOW.name) private readonly sowModel: Model<SOWDocument>,
+    private readonly dampLabServices: DampLabServices,
     @Inject(forwardRef(() => JobService))
     private readonly jobService: JobService
   ) {}
@@ -105,15 +108,57 @@ export class SOWService {
   /**
    * Transform service input to SOWService format
    */
-  private transformServices(services: CreateSOWInput['services']): SOW['services'] {
-    return services.map((service) => ({
-      _id: service.id,
-      serviceId: service.id,
-      name: service.name,
-      description: service.description,
-      cost: service.cost,
-      category: service.category
-    }));
+  private async transformServices(services: CreateSOWInput['services']): Promise<SOW['services']> {
+    return Promise.all(
+      services.map(async (service) => {
+        const serviceRecord = await this.dampLabServices.findOne(service.id);
+        if (!serviceRecord) {
+          throw new NotFoundException(`Service with ID ${service.id} not found`);
+        }
+        const cost = calculateServiceCost(serviceRecord, service.formData, service.cost);
+        return {
+          _id: service.id,
+          serviceId: service.id,
+          name: service.name,
+          description: service.description,
+          cost,
+          category: service.category
+        };
+      })
+    );
+  }
+
+  private calculateBaseCost(services: SOW['services']): number {
+    return services.reduce((sum, service) => sum + (service.cost ?? 0), 0);
+  }
+
+  private calculateAdjustmentsTotal(adjustments: SOW['pricing']['adjustments']): number {
+    return adjustments.reduce((sum, adj) => {
+      if (adj.type === 'DISCOUNT') {
+        return sum - adj.amount;
+      } else if (adj.type === 'ADDITIONAL_COST') {
+        return sum + adj.amount;
+      }
+      return sum;
+    }, 0);
+  }
+
+  private calculateTotalCost(baseCost: number, adjustments: SOW['pricing']['adjustments']): number {
+    return baseCost + this.calculateAdjustmentsTotal(adjustments);
+  }
+
+  private validatePricingConsistency(
+    pricing: CreateSOWInput['pricing'] | UpdateSOWInput['pricing'] | undefined,
+    baseCost: number,
+    totalCost: number
+  ): void {
+    if (!pricing) return;
+    if (pricing.baseCost !== undefined && Math.abs(pricing.baseCost - baseCost) > 0.01) {
+      throw new BadRequestException(`baseCost (${pricing.baseCost}) does not match calculated baseCost (${baseCost})`);
+    }
+    if (pricing.totalCost !== undefined && Math.abs(pricing.totalCost - totalCost) > 0.01) {
+      throw new BadRequestException(`totalCost (${pricing.totalCost}) does not match calculated totalCost (${totalCost})`);
+    }
   }
 
   /**
@@ -161,10 +206,13 @@ export class SOWService {
     }
 
     // Transform services
-    const services = this.transformServices(createSOWInput.services);
+    const services = await this.transformServices(createSOWInput.services);
 
     // Transform pricing adjustments
-    const adjustments = this.transformPricingAdjustments(createSOWInput.pricing.adjustments);
+    const adjustments = this.transformPricingAdjustments(createSOWInput.pricing.adjustments ?? []);
+    const baseCost = this.calculateBaseCost(services);
+    const totalCost = this.calculateTotalCost(baseCost, adjustments);
+    this.validatePricingConsistency(createSOWInput.pricing, baseCost, totalCost);
 
     // Create SOW document
     const sowData = {
@@ -184,9 +232,9 @@ export class SOWService {
       timeline: createSOWInput.timeline,
       resources: createSOWInput.resources,
       pricing: {
-        baseCost: createSOWInput.pricing.baseCost,
+        baseCost,
         adjustments,
-        totalCost: createSOWInput.pricing.totalCost,
+        totalCost,
         discount: createSOWInput.pricing.discount
       },
       terms: createSOWInput.terms,
@@ -224,7 +272,7 @@ export class SOWService {
     // Transform services if provided
     let services = sow.services;
     if (updateSOWInput.services) {
-      services = this.transformServices(updateSOWInput.services);
+      services = await this.transformServices(updateSOWInput.services);
     }
 
     // Transform pricing adjustments if provided
@@ -250,12 +298,16 @@ export class SOWService {
     if (updateSOWInput.services !== undefined) updateData.services = services;
     if (updateSOWInput.timeline !== undefined) updateData.timeline = updateSOWInput.timeline;
     if (updateSOWInput.resources !== undefined) updateData.resources = updateSOWInput.resources;
-    if (updateSOWInput.pricing !== undefined) {
+    const shouldUpdatePricing = updateSOWInput.services !== undefined || updateSOWInput.pricing !== undefined;
+    if (shouldUpdatePricing) {
+      const baseCost = this.calculateBaseCost(services);
+      const totalCost = this.calculateTotalCost(baseCost, adjustments);
+      this.validatePricingConsistency(updateSOWInput.pricing, baseCost, totalCost);
       updateData.pricing = {
-        baseCost: updateSOWInput.pricing.baseCost ?? sow.pricing.baseCost,
+        baseCost,
         adjustments,
-        totalCost: updateSOWInput.pricing.totalCost ?? sow.pricing.totalCost,
-        discount: updateSOWInput.pricing.discount ?? sow.pricing.discount
+        totalCost,
+        discount: updateSOWInput.pricing?.discount ?? sow.pricing.discount
       };
     }
     if (updateSOWInput.terms !== undefined) updateData.terms = updateSOWInput.terms;

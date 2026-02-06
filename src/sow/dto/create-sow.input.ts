@@ -1,4 +1,5 @@
 import { InputType, Field, Float } from '@nestjs/graphql';
+import JSON from 'graphql-type-json';
 import { SOWStatus, SOWAdjustmentType } from '../sow.model';
 
 @InputType()
@@ -48,14 +49,14 @@ export class SOWDiscountInput {
 
 @InputType()
 export class SOWPricingInput {
-  @Field(() => Float, { description: 'Base cost before adjustments' })
-  baseCost: number;
+  @Field(() => Float, { description: 'Base cost before adjustments', nullable: true })
+  baseCost?: number;
 
   @Field(() => [SOWPricingAdjustmentInput], { description: 'List of pricing adjustments', defaultValue: [] })
   adjustments: SOWPricingAdjustmentInput[];
 
-  @Field(() => Float, { description: 'Total cost after adjustments' })
-  totalCost: number;
+  @Field(() => Float, { description: 'Total cost after adjustments', nullable: true })
+  totalCost?: number;
 
   @Field(() => SOWDiscountInput, { description: 'Discount applied to the pricing', nullable: true })
   discount?: SOWDiscountInput;
@@ -72,8 +73,11 @@ export class SOWServiceInput {
   @Field({ description: 'Description of the service' })
   description: string;
 
-  @Field(() => Float, { description: 'Cost of the service' })
-  cost: number;
+  @Field(() => Float, { description: 'Cost of the service', nullable: true })
+  cost?: number;
+
+  @Field(() => JSON, { description: 'Parameter values for pricing', nullable: true })
+  formData?: any;
 
   @Field({ description: 'Category of the service' })
   category: string;
