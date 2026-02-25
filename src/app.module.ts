@@ -83,6 +83,7 @@ function getConfigModule(): Promise<DynamicModule> {
   console.info(`Loading config from: ${envFile}`);
   return ConfigModule.forRoot({
     envFilePath: envFile,
-    load: [config]
+    load: [config],
+    isGlobal: true
   });
 }
