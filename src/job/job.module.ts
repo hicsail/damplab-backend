@@ -9,6 +9,7 @@ import { CommentService } from '../comment/comment.service';
 import { CommentModule } from '../comment/comment.module';
 import { Comment, CommentSchema } from '../comment/comment.model';
 import { SOWModule } from '../sow/sow.module';
+import { JobAttachmentsService } from './job-attachments.service';
 
 @Module({
   imports: [
@@ -20,7 +21,7 @@ import { SOWModule } from '../sow/sow.module';
     forwardRef(() => CommentModule),
     forwardRef(() => SOWModule)
   ],
-  providers: [JobService, JobResolver, CreateJobPipe, CommentService],
+  providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService],
   exports: [JobService]
 })
 export class JobModule {}

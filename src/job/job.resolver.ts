@@ -1,8 +1,16 @@
 import { UseGuards, Inject, forwardRef } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
-import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobPipe } from './job.dto';
+import {
+  CreateJobInput,
+  CreateJobPipe,
+  CreateJobPreProcessed,
+  JobAttachmentInput,
+  JobAttachmentUpload,
+  JobAttachmentUploadRequest,
+  JobPipe
+} from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
-import { Job, JobState } from './job.model';
+import { Job, JobAttachment, JobState } from './job.model';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { Comment } from '../comment/comment.model';
@@ -16,6 +24,7 @@ import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
+import { JobAttachmentsService } from './job-attachments.service';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -26,7 +35,8 @@ export class JobResolver {
     @Inject(forwardRef(() => CommentService))
     private readonly commentService: CommentService,
     @Inject(forwardRef(() => SOWService))
-    private readonly sowService: SOWService
+    private readonly sowService: SOWService,
+    private readonly jobAttachmentsService: JobAttachmentsService
   ) {}
 
   @Query(() => [Job])
@@ -81,6 +91,67 @@ export class JobResolver {
   @Mutation(() => Job)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
     return this.jobService.create({ ...createJobInput, username: user.preferred_username, sub: user.sub, email: user.email });
+  }
+
+  @Mutation(() => [JobAttachmentUpload], {
+    description: 'Create presigned S3 URLs to upload one or more attachments for a job owned by the current user.'
+  })
+  async createJobAttachmentUploadUrls(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @Args('files', { type: () => [JobAttachmentUploadRequest] }) files: JobAttachmentUploadRequest[],
+    @CurrentUser() user: User
+  ): Promise<JobAttachmentUpload[]> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new Error('Job not found');
+    }
+    if (job.sub !== user.sub) {
+      throw new Error('You do not have permission to modify this job');
+    }
+
+    const uploads = await Promise.all(
+      files.map((file) =>
+        this.jobAttachmentsService.createPresignedUpload({
+          jobId,
+          filename: file.filename,
+          contentType: file.contentType,
+          size: file.size
+        })
+      )
+    );
+
+    return uploads;
+  }
+
+  @Mutation(() => Job, {
+    description: 'Record uploaded attachments for a job so they appear in tracking views.'
+  })
+  async addJobAttachments(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @Args('attachments', { type: () => [JobAttachmentInput] }) attachments: JobAttachmentInput[],
+    @CurrentUser() user: User
+  ): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new Error('Job not found');
+    }
+    if (job.sub !== user.sub) {
+      throw new Error('You do not have permission to modify this job');
+    }
+
+    const mapped: JobAttachment[] = attachments.map((a) => ({
+      filename: a.filename,
+      key: a.key,
+      contentType: a.contentType,
+      size: a.size,
+      uploadedAt: new Date()
+    }));
+
+    const updated = await this.jobService.addAttachments(jobId, mapped);
+    if (!updated) {
+      throw new Error('Unable to update job attachments');
+    }
+    return updated;
   }
 
   @Mutation(() => Job)

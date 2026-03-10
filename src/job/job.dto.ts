@@ -1,5 +1,5 @@
-import { InputType, PickType, Field } from '@nestjs/graphql';
-import { Job, JobState } from './job.model';
+import { Field, ID, InputType, Int, ObjectType, PickType } from '@nestjs/graphql';
+import { Job, JobAttachment, JobState } from './job.model';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
 import { JobService } from './job.service';
@@ -19,6 +19,51 @@ export interface CreateJobPreProcessed extends Pick<Job, 'name' | 'institute' | 
 // CreateJobFull is what the job service receives.
 export interface CreateJobFull extends Omit<Job, '_id' | 'workflows' | 'submitted'> {
   workflows: AddWorkflowInputFull[];
+}
+
+@InputType()
+export class JobAttachmentInput {
+  @Field()
+  filename: string;
+
+  @Field()
+  key: string;
+
+  @Field()
+  contentType: string;
+
+  @Field(() => Int)
+  size: number;
+}
+
+@InputType()
+export class JobAttachmentUploadRequest {
+  @Field()
+  filename: string;
+
+  @Field()
+  contentType: string;
+
+  @Field(() => Int)
+  size: number;
+}
+
+@ObjectType()
+export class JobAttachmentUpload {
+  @Field()
+  filename: string;
+
+  @Field()
+  uploadUrl: string;
+
+  @Field()
+  key: string;
+
+  @Field()
+  contentType: string;
+
+  @Field(() => Int)
+  size: number;
 }
 
 @Injectable()

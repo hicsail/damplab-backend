@@ -14,5 +14,9 @@ export default (): any => ({
     jwksEndpoint: process.env.JWKS_ENDPOINT,
     /* Disable auth for easier gql testing - use only in development */
     disable: process.env.DISABLE_AUTH == 'true' || false
+  },
+  attachments: {
+    bucket: process.env.JOB_ATTACHMENTS_BUCKET,
+    uploadUrlTtlSeconds: process.env.JOB_ATTACHMENTS_UPLOAD_URL_TTL || 900
   }
 });

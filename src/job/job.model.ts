@@ -17,6 +17,24 @@ export enum JobState {
 }
 registerEnumType(JobState, { name: 'JobState' });
 
+@ObjectType({ description: 'File attached to a job for additional context or requirements' })
+export class JobAttachment {
+  @Field({ description: 'Original filename of the uploaded document' })
+  filename: string;
+
+  @Field({ description: 'S3 object key where the document is stored' })
+  key: string;
+
+  @Field({ description: 'MIME type of the uploaded file' })
+  contentType: string;
+
+  @Field({ description: 'Size of the file in bytes' })
+  size: number;
+
+  @Field({ description: 'When this attachment was recorded' })
+  uploadedAt: Date;
+}
+
 @Schema()
 @ObjectType({ description: 'Jobs encapsulate many workflows that were submitted together' })
 export class Job {
@@ -61,6 +79,24 @@ export class Job {
   @Prop({ required: true, default: JobState.CREATING })
   @Field(() => JobState, { description: 'Where in the Job life cycle this Job is' })
   state: JobState;
+
+  @Prop({
+    type: [
+      {
+        filename: String,
+        key: String,
+        contentType: String,
+        size: Number,
+        uploadedAt: Date
+      }
+    ],
+    default: []
+  })
+  @Field(() => [JobAttachment], {
+    description: 'Supporting documents uploaded by the customer for this job',
+    nullable: 'itemsAndList'
+  })
+  attachments?: JobAttachment[];
 }
 
 export type JobDocument = Job & Document;
