@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Job, JobAttachment, JobDocument, JobState } from './job.model';
 import { Model } from 'mongoose';
@@ -15,6 +15,7 @@ const MAX_LIMIT = 100;
 @Injectable()
 export class JobService {
   constructor(@InjectModel(Job.name) private readonly jobModel: Model<JobDocument>, private readonly workflowService: WorkflowService) {}
+  private readonly logger = new Logger(JobService.name);
 
   async create(createJobInput: CreateJobFull): Promise<Job> {
     const workflowIDs = await Promise.all(
@@ -51,6 +52,8 @@ export class JobService {
   }
 
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {
+    this.logger.log(`addAttachments called for jobId=${jobId} with ${attachments.length} attachment(s)`);
+    this.logger.debug(`Attachments payload: ${JSON.stringify(attachments)}`);
     return this.jobModel
       .findOneAndUpdate(
         { _id: jobId },

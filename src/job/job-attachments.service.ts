@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -73,6 +73,24 @@ export class JobAttachmentsService {
       // eslint-disable-next-line no-console
       console.error('Failed to create S3 presigned URL for job attachment', err);
       throw new InternalServerErrorException('Could not prepare upload URL for attachment');
+    }
+  }
+
+  async createPresignedDownload(key: string, contentType?: string): Promise<string | null> {
+    try {
+      if (!this.s3 || !this.bucket) {
+        return null;
+      }
+      const command = new GetObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+        ResponseContentType: contentType
+      });
+      return await getSignedUrl(this.s3, command, { expiresIn: this.urlExpirationSeconds });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to create S3 presigned download URL for job attachment', err);
+      return null;
     }
   }
 }

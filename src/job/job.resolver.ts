@@ -1,4 +1,4 @@
-import { UseGuards, Inject, forwardRef } from '@nestjs/common';
+import { UseGuards, Inject, forwardRef, Logger } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
 import {
   CreateJobInput,
@@ -29,6 +29,8 @@ import { JobAttachmentsService } from './job-attachments.service';
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
 export class JobResolver {
+  private readonly logger = new Logger(JobResolver.name);
+
   constructor(
     private readonly jobService: JobService,
     private readonly workflowService: WorkflowService,
@@ -101,6 +103,7 @@ export class JobResolver {
     @Args('files', { type: () => [JobAttachmentUploadRequest] }) files: JobAttachmentUploadRequest[],
     @CurrentUser() user: User
   ): Promise<JobAttachmentUpload[]> {
+    this.logger.log(`createJobAttachmentUploadUrls called for jobId=${jobId} with ${files.length} file(s)`);
     const job = await this.jobService.findById(jobId);
     if (!job) {
       throw new Error('Job not found');
@@ -131,6 +134,7 @@ export class JobResolver {
     @Args('attachments', { type: () => [JobAttachmentInput] }) attachments: JobAttachmentInput[],
     @CurrentUser() user: User
   ): Promise<Job> {
+    this.logger.log(`addJobAttachments called for jobId=${jobId} with ${attachments.length} attachment(s)`);
     const job = await this.jobService.findById(jobId);
     if (!job) {
       throw new Error('Job not found');
@@ -163,6 +167,39 @@ export class JobResolver {
   @ResolveField()
   async workflows(@Parent() job: Job): Promise<Workflow[]> {
     return this.workflowService.findByIds(job.workflows.map((workflow) => workflow._id));
+  }
+
+  @ResolveField(() => [JobAttachment], {
+    name: 'attachments',
+    description: 'Attachments for this job, with temporary download URLs when available'
+  })
+  async attachments(@Parent() job: Job): Promise<JobAttachment[]> {
+    this.logger.log(`Resolving attachments for jobId=${job._id}`);
+    this.logger.debug(`Raw attachments from DB: ${JSON.stringify(job.attachments ?? [])}`);
+    const base = (job.attachments ?? []).filter(
+      (a) => a && typeof a.filename === 'string' && a.filename.length > 0 && typeof a.key === 'string' && a.key.length > 0
+    );
+    if (!base.length) {
+      return [];
+    }
+
+    const withUrls = await Promise.all(
+      base.map(async (a) => {
+        const url = await this.jobAttachmentsService.createPresignedDownload(a.key, a.contentType);
+        const result: JobAttachment = {
+          filename: a.filename,
+          key: a.key,
+          contentType: a.contentType,
+          size: a.size,
+          uploadedAt: a.uploadedAt,
+          url: url ?? undefined
+        };
+        this.logger.debug(`Resolved attachment: ${JSON.stringify(result)}`);
+        return result;
+      })
+    );
+
+    return withUrls;
   }
 
   @ResolveField(() => [Comment])

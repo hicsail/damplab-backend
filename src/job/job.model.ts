@@ -19,8 +19,8 @@ registerEnumType(JobState, { name: 'JobState' });
 
 @ObjectType({ description: 'File attached to a job for additional context or requirements' })
 export class JobAttachment {
-  @Field({ description: 'Original filename of the uploaded document' })
-  filename: string;
+  @Field({ description: 'Original filename of the uploaded document', nullable: true })
+  filename?: string;
 
   @Field({ description: 'S3 object key where the document is stored' })
   key: string;
@@ -31,8 +31,11 @@ export class JobAttachment {
   @Field({ description: 'Size of the file in bytes' })
   size: number;
 
-  @Field({ description: 'When this attachment was recorded' })
-  uploadedAt: Date;
+  @Field({ description: 'When this attachment was recorded', nullable: true })
+  uploadedAt?: Date;
+
+  @Field({ description: 'Temporary URL to download this attachment', nullable: true })
+  url?: string;
 }
 
 @Schema()
