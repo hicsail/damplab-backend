@@ -108,7 +108,10 @@ export class JobResolver {
     if (!job) {
       throw new Error('Job not found');
     }
-    if (job.sub !== user.sub) {
+    const roles = user.realm_access?.roles ?? [];
+    const isOwner = job.sub === user.sub;
+    const isStaff = roles.includes(Role.DamplabStaff);
+    if (!isOwner && !isStaff) {
       throw new Error('You do not have permission to modify this job');
     }
 
@@ -139,7 +142,10 @@ export class JobResolver {
     if (!job) {
       throw new Error('Job not found');
     }
-    if (job.sub !== user.sub) {
+    const roles = user.realm_access?.roles ?? [];
+    const isOwner = job.sub === user.sub;
+    const isStaff = roles.includes(Role.DamplabStaff);
+    if (!isOwner && !isStaff) {
       throw new Error('You do not have permission to modify this job');
     }
 

@@ -18,6 +18,7 @@ import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
 import { AnnouncementModule } from './announcements/announcement.module';
 import { TemplateModule } from './template/template.module';
+import { BugReportModule } from './bug-report/bug-report.module';
 
 @Module({
   imports: [
@@ -50,10 +51,9 @@ import { TemplateModule } from './template/template.module';
     ResetModule,
 
     CommentModule,
-
     AnnouncementModule,
-
-    TemplateModule
+    TemplateModule,
+    BugReportModule
   ],
   controllers: [AppController],
   providers: [AppService]
