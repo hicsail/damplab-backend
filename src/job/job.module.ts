@@ -17,7 +17,7 @@ import { JobAttachmentsService } from './job-attachments.service';
       { name: Job.name, schema: JobSchema },
       { name: Comment.name, schema: CommentSchema }
     ]),
-    WorkflowModule,
+    forwardRef(() => WorkflowModule),
     forwardRef(() => CommentModule),
     forwardRef(() => SOWModule)
   ],

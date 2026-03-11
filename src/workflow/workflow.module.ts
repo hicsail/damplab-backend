@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Workflow, WorkflowSchema } from './models/workflow.model';
 import { WorkflowNode, WorkflowNodeSchema } from './models/node.model';
@@ -13,9 +13,11 @@ import { WorkflowPipe } from './workflow.pipe';
 import { WorkflowNodeResolver } from './resolvers/node.resolver';
 import { AddWorkflowInputPipe } from './dtos/add-workflow.input';
 import { AddNodeInputPipe } from './dtos/add-node.input';
+import { JobModule } from '../job/job.module';
 
 @Module({
   imports: [
+    forwardRef(() => JobModule),
     MongooseModule.forFeature([
       { name: Workflow.name, schema: WorkflowSchema },
       { name: WorkflowNode.name, schema: WorkflowNodeSchema },
