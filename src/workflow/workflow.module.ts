@@ -14,10 +14,12 @@ import { WorkflowNodeResolver } from './resolvers/node.resolver';
 import { AddWorkflowInputPipe } from './dtos/add-workflow.input';
 import { AddNodeInputPipe } from './dtos/add-node.input';
 import { JobModule } from '../job/job.module';
+import { KeycloakModule } from '../keycloak/keycloak.module';
 
 @Module({
   imports: [
     forwardRef(() => JobModule),
+    KeycloakModule,
     MongooseModule.forFeature([
       { name: Workflow.name, schema: WorkflowSchema },
       { name: WorkflowNode.name, schema: WorkflowNodeSchema },

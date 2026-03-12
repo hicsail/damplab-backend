@@ -56,6 +56,22 @@ export class WorkflowNode {
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'Snapshot of service price at submission time' })
   price?: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Keycloak sub (or id) of assigned staff member' })
+  assigneeId?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Display name of assigned staff member' })
+  assigneeDisplayName?: string;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Estimated duration in minutes (lab monitor)' })
+  estimatedMinutes?: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When node entered IN_PROGRESS (for elapsed time)' })
+  startedAt?: Date;
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;

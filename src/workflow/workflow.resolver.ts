@@ -42,6 +42,14 @@ export class WorkflowResolver {
     return this.workflowService.getByState(state);
   }
 
+  @Query(() => [Workflow], {
+    description: 'Workflows in this state that belong to jobs accepted by technicians (for lab monitor).'
+  })
+  @Roles(Role.DamplabStaff)
+  async getWorkflowsByStateForLabMonitor(@Args('state', { type: () => WorkflowState }) state: WorkflowState): Promise<Workflow[]> {
+    return this.workflowService.getByStateForApprovedJobs(state);
+  }
+
   @ResolveField()
   async nodes(@Parent() workflow: Workflow): Promise<WorkflowNode[]> {
     return this.nodeService.getByIDs(workflow.nodes.map((node) => node._id.toString()));
