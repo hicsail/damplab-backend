@@ -13,6 +13,7 @@ interface ServiceParameterDefinition {
   price?: unknown;
   type?: unknown;
   options?: ServiceParameterOption[] | unknown;
+  isPriceMultiplier?: boolean;
 }
 
 function normalizePrice(value: unknown): number | undefined {
@@ -92,17 +93,69 @@ function calculateParameterCost(parameters: unknown, rawFormData: unknown): numb
   return total;
 }
 
+function getMultiplier(parameters: unknown, rawFormData: unknown): number {
+  if (!Array.isArray(parameters)) return 1;
+
+  const multiValueParamIds = getMultiValueParamIds(parameters);
+  const formData = normalizeFormDataToArray(rawFormData, multiValueParamIds);
+  const formDataMap = new Map(formData.map((entry) => [entry.id, entry.value]));
+
+  let multiplier = 1;
+
+  for (const param of parameters as ServiceParameterDefinition[]) {
+    if (!param || typeof param !== 'object') continue;
+    if (param.isPriceMultiplier !== true) continue;
+    const id = typeof param.id === 'string' ? param.id : undefined;
+    if (!id) continue;
+
+    const rawValue = formDataMap.get(id);
+    if (rawValue === null || rawValue === undefined) continue;
+
+    let qty: number | undefined;
+
+    if (Array.isArray(rawValue)) {
+      let sum = 0;
+      let hasAny = false;
+      for (const v of rawValue) {
+        const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+        if (!Number.isFinite(n)) continue;
+        hasAny = true;
+        sum += n;
+      }
+      qty = hasAny ? sum : undefined;
+    } else {
+      const n =
+        typeof rawValue === 'number'
+          ? rawValue
+          : typeof rawValue === 'string' && rawValue.trim() !== ''
+          ? Number(rawValue)
+          : NaN;
+      qty = Number.isFinite(n) ? n : undefined;
+    }
+
+    if (qty === undefined) continue;
+    multiplier *= qty;
+  }
+
+  return multiplier;
+}
+
 export function calculateServiceCost(service: DampLabService, rawFormData: unknown, fallbackCost?: number): number {
   const pricingMode = service.pricingMode ?? ServicePricingMode.SERVICE;
+  let baseCost = 0;
+
   if (pricingMode === ServicePricingMode.PARAMETER) {
-    return calculateParameterCost(service.parameters, rawFormData);
+    baseCost = calculateParameterCost(service.parameters, rawFormData);
+  } else {
+    const servicePrice = normalizePrice(service.price);
+    if (servicePrice !== undefined) {
+      baseCost = servicePrice;
+    } else {
+      const fallbackPrice = normalizePrice(fallbackCost);
+      baseCost = fallbackPrice ?? 0;
+    }
   }
 
-  const servicePrice = normalizePrice(service.price);
-  if (servicePrice !== undefined) {
-    return servicePrice;
-  }
-
-  const fallbackPrice = normalizePrice(fallbackCost);
-  return fallbackPrice ?? 0;
+  const multiplier = getMultiplier(service.parameters, rawFormData);
+  return baseCost * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
 }
