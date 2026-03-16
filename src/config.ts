@@ -24,6 +24,12 @@ export default (): any => ({
     /** Realm group name whose members are shown in the lab monitor assignee dropdown. Default: damplab-staff */
     labStaffGroupName: process.env.KEYCLOAK_LAB_STAFF_GROUP_NAME || 'damplab-staff'
   },
+  protocolsIo: {
+    /** Client access token for protocols.io API (used for public and lab-private content). */
+    clientAccessToken: process.env.PROTOCOLS_IO_CLIENT_ACCESS_TOKEN,
+    /** Base URL for the protocols.io API (override for testing or future versions). */
+    baseUrl: process.env.PROTOCOLS_IO_BASE_URL || 'https://www.protocols.io/api/v3'
+  },
   attachments: {
     bucket: process.env.JOB_ATTACHMENTS_BUCKET,
     uploadUrlTtlSeconds: process.env.JOB_ATTACHMENTS_UPLOAD_URL_TTL || 900

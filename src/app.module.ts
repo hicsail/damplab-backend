@@ -19,6 +19,7 @@ import { CommentModule } from './comment/comment.module';
 import { AnnouncementModule } from './announcements/announcement.module';
 import { TemplateModule } from './template/template.module';
 import { BugReportModule } from './bug-report/bug-report.module';
+import { ProtocolsIoModule } from './protocols-io/protocols-io.module';
 
 @Module({
   imports: [
@@ -53,7 +54,8 @@ import { BugReportModule } from './bug-report/bug-report.module';
     CommentModule,
     AnnouncementModule,
     TemplateModule,
-    BugReportModule
+    BugReportModule,
+    ProtocolsIoModule
   ],
   controllers: [AppController],
   providers: [AppService]

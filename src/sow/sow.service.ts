@@ -116,13 +116,17 @@ export class SOWService {
           throw new NotFoundException(`Service with ID ${service.id} not found`);
         }
         const cost = calculateServiceCost(serviceRecord, service.formData, service.cost);
+        const protoMeta: any = serviceRecord.protocolsIoMetadata ?? {};
         return {
           _id: service.id,
           serviceId: service.id,
           name: service.name,
           description: service.description,
           cost,
-          category: service.category
+          category: service.category,
+          protocolsIoId: service.protocolsIoId ?? serviceRecord.protocolsIoId,
+          protocolsIoUrl: service.protocolsIoUrl ?? serviceRecord.protocolsIoUrl ?? protoMeta.url,
+          protocolTitle: service.protocolTitle ?? protoMeta.title
         };
       })
     );

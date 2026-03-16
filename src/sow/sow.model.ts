@@ -157,6 +157,18 @@ export class SOWService {
   @Prop({ required: true })
   @Field({ description: 'Category of the service' })
   category: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'Protocols.io protocol ID associated with this service at SOW generation time', nullable: true })
+  protocolsIoId?: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'Protocols.io URL associated with this service at SOW generation time', nullable: true })
+  protocolsIoUrl?: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'Cached protocols.io protocol title at SOW generation time', nullable: true })
+  protocolTitle?: string;
 }
 
 @Schema()

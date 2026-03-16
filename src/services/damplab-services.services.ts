@@ -5,10 +5,14 @@ import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { ServiceChange } from './dtos/update.dto';
 import { CreateService } from './dtos/create.dto';
+import { ProtocolsIoService } from '../protocols-io/protocols-io.service';
 
 @Injectable()
 export class DampLabServices {
-  constructor(@InjectModel(DampLabService.name) private readonly dampLabServiceModel: Model<DampLabServiceDocument>) {}
+  constructor(
+    @InjectModel(DampLabService.name) private readonly dampLabServiceModel: Model<DampLabServiceDocument>,
+    private readonly protocolsIoService: ProtocolsIoService
+  ) {}
 
   /**
    * Ensure deliverables field is always an array (for backward compatibility)
@@ -71,8 +75,37 @@ export class DampLabServices {
     return service ? this.normalizeService(service) : null;
   }
 
+  private async applyProtocolsIoMetadata(
+    existing: DampLabService | null,
+    partial: any
+  ): Promise<any> {
+    const incomingId = partial.protocolsIoId ?? existing?.protocolsIoId;
+    if (!incomingId || !this.protocolsIoService.isConfigured()) {
+      return partial;
+    }
+    try {
+      const meta = await this.protocolsIoService.getProtocolById(incomingId);
+      if (meta) {
+        partial.protocolsIoId = meta.id;
+        partial.protocolsIoUrl = meta.url || partial.protocolsIoUrl;
+        partial.protocolsIoMetadata = {
+          id: meta.id,
+          title: meta.title,
+          url: meta.url,
+          version: meta.version,
+          description: meta.description
+        };
+      }
+    } catch {
+      // Swallow protocols.io errors so service updates still succeed.
+    }
+    return partial;
+  }
+
   async update(service: DampLabService, changes: ServiceChange): Promise<DampLabService> {
-    await this.dampLabServiceModel.updateOne({ _id: service._id }, changes);
+    const existing = await this.dampLabServiceModel.findById(service._id).exec();
+    const withMeta = await this.applyProtocolsIoMetadata(existing, changes);
+    await this.dampLabServiceModel.updateOne({ _id: service._id }, withMeta);
     const updated = await this.dampLabServiceModel.findById(service._id);
     return this.normalizeService(updated!);
   }
@@ -91,10 +124,11 @@ export class DampLabServices {
 
   async create(service: CreateService): Promise<DampLabService> {
     // Ensure deliverables defaults to empty array if not provided
-    const serviceData = {
+    let serviceData: any = {
       ...service,
       deliverables: service.deliverables || []
     };
+    serviceData = await this.applyProtocolsIoMetadata(null, serviceData);
     const created = await this.dampLabServiceModel.create(serviceData);
     return this.normalizeService(created);
   }

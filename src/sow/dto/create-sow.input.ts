@@ -81,6 +81,15 @@ export class SOWServiceInput {
 
   @Field({ description: 'Category of the service' })
   category: string;
+
+  @Field({ description: 'Protocols.io protocol ID associated with this service', nullable: true })
+  protocolsIoId?: string;
+
+  @Field({ description: 'Protocols.io URL associated with this service', nullable: true })
+  protocolsIoUrl?: string;
+
+  @Field({ description: 'Protocols.io protocol title associated with this service', nullable: true })
+  protocolTitle?: string;
 }
 
 @InputType()

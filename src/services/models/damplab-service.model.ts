@@ -60,6 +60,21 @@ export class DampLabService {
   description: string;
 
   @Prop({ required: false })
+  @Field({ description: 'Optional protocols.io protocol ID associated with this service', nullable: true })
+  protocolsIoId?: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'Optional protocols.io URL for this service protocol', nullable: true })
+  protocolsIoUrl?: string;
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
+  @Field(() => JSON, {
+    description: 'Cached metadata from protocols.io for this service (e.g. title, description, version)',
+    nullable: true
+  })
+  protocolsIoMetadata?: any;
+
+  @Prop({ required: false })
   @Field(() => Float, {
     nullable: true,
     description: 'The approximate cost to use this service when pricingMode is SERVICE.'
