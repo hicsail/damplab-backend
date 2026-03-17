@@ -10,7 +10,7 @@ import {
   JobPipe
 } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
-import { Job, JobAttachment, JobState } from './job.model';
+import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { Comment } from '../comment/comment.model';
@@ -92,7 +92,19 @@ export class JobResolver {
 
   @Mutation(() => Job)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
-    return this.jobService.create({ ...createJobInput, username: user.preferred_username, sub: user.sub, email: user.email });
+    const roles = user.realm_access?.roles ?? [];
+    const customerCategory: CustomerCategory | undefined = roles.includes(Role.InternalCustomer)
+      ? CustomerCategory.INTERNAL
+      : roles.includes(Role.ExternalCustomer)
+        ? CustomerCategory.EXTERNAL
+        : undefined;
+    return this.jobService.create({
+      ...createJobInput,
+      username: user.preferred_username,
+      sub: user.sub,
+      email: user.email,
+      customerCategory
+    });
   }
 
   @Mutation(() => [JobAttachmentUpload], {

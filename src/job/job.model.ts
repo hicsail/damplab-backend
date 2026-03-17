@@ -17,6 +17,12 @@ export enum JobState {
 }
 registerEnumType(JobState, { name: 'JobState' });
 
+export enum CustomerCategory {
+  INTERNAL = 'INTERNAL',
+  EXTERNAL = 'EXTERNAL'
+}
+registerEnumType(CustomerCategory, { name: 'CustomerCategory' });
+
 @ObjectType({ description: 'File attached to a job for additional context or requirements' })
 export class JobAttachment {
   @Field({ description: 'Original filename of the uploaded document', nullable: true })
@@ -66,6 +72,14 @@ export class Job {
   @Field({ description: 'The institute the user is from' }) // This is not in the keycloak tokens, so is supplied by the user.
   institute: string;
   /////////////////////////////////////////////////////////////////////////////
+
+  @Prop({ required: false })
+  @Field(() => CustomerCategory, {
+    nullable: true,
+    description:
+      'Customer category derived from Keycloak at job submission time. Used for category-specific pricing in downstream views.'
+  })
+  customerCategory?: CustomerCategory;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: Workflow.name }] })
   @Field(() => [Workflow], { description: 'The workflows that were submitted together' })

@@ -5,6 +5,7 @@ import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { ServiceChange } from './dtos/update.dto';
 import { CreateService } from './dtos/create.dto';
+import { Pricing } from '../pricing/pricing.model';
 
 @Injectable()
 export class DampLabServices {
@@ -46,10 +47,33 @@ export class DampLabServices {
     return service;
   }
 
+  /**
+   * Backward compatibility: hydrate `pricing` from legacy scalar fields when present.
+   */
+  private normalizePricing(service: DampLabService): DampLabService {
+    const hasPricingObject = service.pricing && typeof service.pricing === 'object';
+    if (hasPricingObject) return service;
+
+    const internal = (service as any).internalPrice;
+    const external = (service as any).externalPrice;
+    const legacy = (service as any).price;
+
+    if (internal != null || external != null || legacy != null) {
+      const pricing: Pricing = {
+        internal: internal ?? undefined,
+        external: external ?? undefined,
+        legacy: legacy ?? undefined
+      };
+      service.pricing = pricing;
+    }
+    return service;
+  }
+
   private normalizeService(service: DampLabService): DampLabService {
     this.normalizeDeliverables(service);
     this.normalizeParameters(service);
     this.normalizePricingMode(service);
+    this.normalizePricing(service);
     return service;
   }
 

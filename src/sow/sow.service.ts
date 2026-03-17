@@ -10,7 +10,7 @@ import { Job } from '../job/job.model';
 import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
-import { calculateServiceCost } from '../pricing/service-pricing.util';
+import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
 
 @Injectable()
 export class SOWService {
@@ -108,14 +108,17 @@ export class SOWService {
   /**
    * Transform service input to SOWService format
    */
-  private async transformServices(services: CreateSOWInput['services']): Promise<SOW['services']> {
+  private async transformServices(
+    services: CreateSOWInput['services'],
+    customerCategory?: CustomerCategory
+  ): Promise<SOW['services']> {
     return Promise.all(
       services.map(async (service) => {
         const serviceRecord = await this.dampLabServices.findOne(service.id);
         if (!serviceRecord) {
           throw new NotFoundException(`Service with ID ${service.id} not found`);
         }
-        const cost = calculateServiceCost(serviceRecord, service.formData, service.cost);
+        const cost = calculateServiceCost(serviceRecord, service.formData, service.cost, customerCategory);
         return {
           _id: service.id,
           serviceId: service.id,
@@ -202,7 +205,7 @@ export class SOWService {
     }
 
     // Transform services
-    const services = await this.transformServices(createSOWInput.services);
+    const services = await this.transformServices(createSOWInput.services, (job as any).customerCategory);
 
     // Transform pricing adjustments
     const adjustments = this.transformPricingAdjustments(createSOWInput.pricing.adjustments ?? []);
@@ -253,6 +256,7 @@ export class SOWService {
     if (!sow) {
       throw new NotFoundException(`SOW with ID ${id} not found`);
     }
+    const job = await this.jobService.findById(sow.jobId);
 
     // Validate input data
     this.validateSOWData(updateSOWInput);
@@ -268,7 +272,7 @@ export class SOWService {
     // Transform services if provided
     let services = sow.services;
     if (updateSOWInput.services) {
-      services = await this.transformServices(updateSOWInput.services);
+      services = await this.transformServices(updateSOWInput.services, (job as any)?.customerCategory);
     }
 
     // Transform pricing adjustments if provided
