@@ -87,4 +87,3 @@ export class BugAttachmentUpload {
   @Field()
   size: number;
 }
-

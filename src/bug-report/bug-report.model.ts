@@ -66,4 +66,3 @@ export class BugReport {
 
 export type BugReportDocument = BugReport & Document;
 export const BugReportSchema = SchemaFactory.createForClass(BugReport);
-

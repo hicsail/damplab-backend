@@ -6,4 +6,5 @@ export interface User {
   realm_access: {
     roles: string[];
   };
+  groups?: string[];
 }

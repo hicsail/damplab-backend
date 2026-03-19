@@ -14,10 +14,7 @@ const MAX_LIMIT = 100;
 
 @Injectable()
 export class JobService {
-  constructor(
-    @InjectModel(Job.name) private readonly jobModel: Model<JobDocument>,
-    @Inject(forwardRef(() => WorkflowService)) private readonly workflowService: WorkflowService
-  ) {}
+  constructor(@InjectModel(Job.name) private readonly jobModel: Model<JobDocument>, @Inject(forwardRef(() => WorkflowService)) private readonly workflowService: WorkflowService) {}
   private readonly logger = new Logger(JobService.name);
 
   async create(createJobInput: CreateJobFull): Promise<Job> {
@@ -53,7 +50,11 @@ export class JobService {
   /** Workflow IDs that belong to jobs accepted by technicians (ACCEPTED or later in pipeline). */
   async getWorkflowIdsForApprovedJobs(): Promise<mongoose.Types.ObjectId[]> {
     const approvedStates = [JobState.ACCEPTED, JobState.WAITING_FOR_SOW, JobState.QUEUED, JobState.IN_PROGRESS, JobState.COMPLETE];
-    const jobs = await this.jobModel.find({ state: { $in: approvedStates } }).select('workflows').lean().exec();
+    const jobs = await this.jobModel
+      .find({ state: { $in: approvedStates } })
+      .select('workflows')
+      .lean()
+      .exec();
     const ids = jobs.flatMap((j) => (j.workflows ?? []) as mongoose.Types.ObjectId[]);
     return [...new Set(ids)];
   }

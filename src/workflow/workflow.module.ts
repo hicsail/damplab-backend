@@ -15,6 +15,7 @@ import { AddWorkflowInputPipe } from './dtos/add-workflow.input';
 import { AddNodeInputPipe } from './dtos/add-node.input';
 import { JobModule } from '../job/job.module';
 import { KeycloakModule } from '../keycloak/keycloak.module';
+import { WorkflowParameterFilesService } from './services/workflow-parameter-files.service';
 
 @Module({
   imports: [
@@ -27,7 +28,18 @@ import { KeycloakModule } from '../keycloak/keycloak.module';
     ]),
     DampLabServicesModule
   ],
-  providers: [WorkflowResolver, WorkflowService, WorkflowNodeService, WorkflowEdgeService, WorkflowEdgeResolver, WorkflowPipe, WorkflowNodeResolver, AddWorkflowInputPipe, AddNodeInputPipe],
+  providers: [
+    WorkflowResolver,
+    WorkflowService,
+    WorkflowNodeService,
+    WorkflowEdgeService,
+    WorkflowEdgeResolver,
+    WorkflowPipe,
+    WorkflowNodeResolver,
+    AddWorkflowInputPipe,
+    AddNodeInputPipe,
+    WorkflowParameterFilesService
+  ],
   exports: [WorkflowPipe, WorkflowService, AddWorkflowInputPipe]
 })
 export class WorkflowModule {}

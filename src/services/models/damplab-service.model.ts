@@ -3,6 +3,7 @@ import { Document } from 'mongoose';
 import { Field, ID, ObjectType, Float, registerEnumType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 import mongoose from 'mongoose';
+import { Pricing } from '../../pricing/pricing.model';
 
 /**
  * A DampLabService represents one of the services offered by DampLab.
@@ -65,6 +66,53 @@ export class DampLabService {
     description: 'The approximate cost to use this service when pricingMode is SERVICE.'
   })
   price?: number;
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
+  @Field(() => Pricing, {
+    nullable: true,
+    description: 'Pricing by customer category for this service. Prefer this over price/internalPrice/externalPrice.'
+  })
+  pricing?: Pricing;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Customer-category specific price for INTERNAL customers when pricingMode is SERVICE. Falls back to price when unset.',
+    deprecationReason: 'Use pricing.internal instead.'
+  })
+  internalPrice?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Customer-category specific price for EXTERNAL customers when pricingMode is SERVICE. Falls back to price when unset.',
+    deprecationReason: 'Use pricing.external instead.'
+  })
+  externalPrice?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Customer-category specific price for EXTERNAL ACADEMIC customers when pricingMode is SERVICE.',
+    deprecationReason: 'Use pricing.externalAcademic instead.'
+  })
+  externalAcademicPrice?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Customer-category specific price for EXTERNAL MARKET customers when pricingMode is SERVICE.',
+    deprecationReason: 'Use pricing.externalMarket instead.'
+  })
+  externalMarketPrice?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Customer-category specific price for EXTERNAL NO-SALARY customers when pricingMode is SERVICE.',
+    deprecationReason: 'Use pricing.externalNoSalary instead.'
+  })
+  externalNoSalaryPrice?: number;
 
   @Prop({ required: false, default: ServicePricingMode.SERVICE })
   @Field(() => ServicePricingMode, {

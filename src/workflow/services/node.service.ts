@@ -47,26 +47,22 @@ export class WorkflowNodeService {
   }
 
   async updateAssignee(node: WorkflowNode, assigneeId: string | null, assigneeDisplayName: string | null): Promise<WorkflowNode | null> {
-    return this.workflowNodeModel.findOneAndUpdate(
-      { _id: node._id },
-      { $set: { assigneeId: assigneeId ?? undefined, assigneeDisplayName: assigneeDisplayName ?? undefined } },
-      { new: true }
-    );
+    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { assigneeId: assigneeId ?? undefined, assigneeDisplayName: assigneeDisplayName ?? undefined } }, { new: true });
   }
 
   async updateEstimatedMinutes(node: WorkflowNode, estimatedMinutes: number | null): Promise<WorkflowNode | null> {
-    return this.workflowNodeModel.findOneAndUpdate(
-      { _id: node._id },
-      { $set: { estimatedMinutes: estimatedMinutes ?? undefined } },
-      { new: true }
-    );
+    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { estimatedMinutes: estimatedMinutes ?? undefined } }, { new: true });
   }
 
   /** Nodes in this state that belong to workflows on approved jobs (for lab monitor by node state). */
   async getNodesByStateForApprovedJobs(nodeState: WorkflowNodeState): Promise<WorkflowNode[]> {
     const approvedWorkflowIds = await this.jobService.getWorkflowIdsForApprovedJobs();
     if (approvedWorkflowIds.length === 0) return [];
-    const workflows = await this.workflowModel.find({ _id: { $in: approvedWorkflowIds } }).select('nodes').lean().exec();
+    const workflows = await this.workflowModel
+      .find({ _id: { $in: approvedWorkflowIds } })
+      .select('nodes')
+      .lean()
+      .exec();
     const nodeIds = workflows.flatMap((w) => (w.nodes ?? []).map((id) => id.toString()));
     if (nodeIds.length === 0) return [];
     return this.workflowNodeModel.find({ _id: { $in: nodeIds }, state: nodeState }).exec();
