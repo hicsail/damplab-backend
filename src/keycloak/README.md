@@ -24,6 +24,12 @@ In Keycloak those permissions come from the **realm-management** client:
    - **query-groups** (or **view-groups**) – needed for `GET /admin/realms/{realm}/groups`
    - **view-users** (or **query-users**) – needed for `GET /admin/realms/{realm}/groups/{id}/members`
 
+### Customer management (staff UI)
+
+To search users, read group membership, and **change** which pricing customer group a user belongs to, the service account also needs:
+
+- **manage-users** – user search, read user, and `PUT`/`DELETE` on `/users/{id}/groups/{groupId}`
+
 If you prefer to give broader access, you can assign **realm-management** → **realm-admin** to the service account (not recommended for production).
 
 ## Check backend logs

@@ -1,9 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CustomerCategory } from '../job/job.model';
+import { Role } from '../auth/roles/roles.enum';
 
 export interface LabStaffMember {
   id: string;
   displayName: string;
+}
+
+export interface KeycloakUserCustomerManagementRow {
+  id: string;
+  username?: string;
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  customerCategory?: CustomerCategory;
 }
 
 interface KeycloakGroup {
@@ -20,6 +31,23 @@ interface KeycloakUser {
   lastName?: string;
   email?: string;
 }
+
+/** Keycloak group names that affect pricing; must stay in sync with job submission logic. */
+const CUSTOMER_PRICING_GROUP_NAMES: readonly string[] = [
+  Role.InternalCustomer,
+  Role.InternalCustomers,
+  Role.ExternalCustomer,
+  Role.ExternalCustomerAcademic,
+  Role.ExternalCustomerMarket,
+  Role.ExternalCustomerNoSalary
+];
+
+const CATEGORY_PRIMARY_GROUP: Record<CustomerCategory, string> = {
+  [CustomerCategory.INTERNAL_CUSTOMERS]: Role.InternalCustomers,
+  [CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC]: Role.ExternalCustomerAcademic,
+  [CustomerCategory.EXTERNAL_CUSTOMER_MARKET]: Role.ExternalCustomerMarket,
+  [CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY]: Role.ExternalCustomerNoSalary
+};
 
 @Injectable()
 export class KeycloakService {
@@ -72,13 +100,145 @@ export class KeycloakService {
     return data.access_token;
   }
 
-  private async fetchWithToken(path: string): Promise<Response> {
+  private async adminFetch(path: string, init?: RequestInit): Promise<Response> {
     const token = await this.getAccessToken();
     const base = this.serverUrl!.replace(/\/$/, '');
     const url = path.startsWith('http') ? path : `${base}${path}`;
-    return fetch(url, {
-      headers: { Authorization: `Bearer ${token}` }
+    const headers = new Headers(init?.headers);
+    headers.set('Authorization', `Bearer ${token}`);
+    return fetch(url, { ...init, headers });
+  }
+
+  private async fetchWithToken(path: string): Promise<Response> {
+    return this.adminFetch(path, { method: 'GET' });
+  }
+
+  private claimsFromGroupList(groups: { name?: string; path?: string }[]): string[] {
+    const claims: string[] = [];
+    for (const g of groups) {
+      if (g.path) claims.push(g.path);
+      if (g.name) claims.push(g.name);
+    }
+    return claims;
+  }
+
+  /** Same precedence as `JobResolver.createJob` / `AddNodeInputPipe`. */
+  deriveCustomerCategoryFromGroups(groups: { name?: string; path?: string }[]): CustomerCategory | undefined {
+    const claims = this.claimsFromGroupList(groups);
+    const hasGroup = (groupName: string): boolean =>
+      claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
+    if (hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)) return CustomerCategory.INTERNAL_CUSTOMERS;
+    if (hasGroup(Role.ExternalCustomerAcademic)) return CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC;
+    if (hasGroup(Role.ExternalCustomerMarket)) return CustomerCategory.EXTERNAL_CUSTOMER_MARKET;
+    if (hasGroup(Role.ExternalCustomerNoSalary)) return CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY;
+    if (hasGroup(Role.ExternalCustomer)) return CustomerCategory.EXTERNAL_CUSTOMER_MARKET;
+    return undefined;
+  }
+
+  private isCustomerPricingGroupMember(g: { name?: string }): boolean {
+    return Boolean(g.name && CUSTOMER_PRICING_GROUP_NAMES.includes(g.name));
+  }
+
+  async searchUsers(search: string, max: number): Promise<KeycloakUser[]> {
+    const path = `/admin/realms/${this.realm}/users?search=${encodeURIComponent(search)}&max=${max}`;
+    const res = await this.fetchWithToken(path);
+    if (!res.ok) {
+      this.logger.warn(`Keycloak user search failed: ${res.status} ${await res.text()}`);
+      return [];
+    }
+    return (await res.json()) as KeycloakUser[];
+  }
+
+  async getUserById(userId: string): Promise<KeycloakUser | null> {
+    const res = await this.fetchWithToken(`/admin/realms/${this.realm}/users/${userId}`);
+    if (!res.ok) return null;
+    return (await res.json()) as KeycloakUser;
+  }
+
+  async getUserGroups(userId: string): Promise<KeycloakGroup[]> {
+    const res = await this.fetchWithToken(`/admin/realms/${this.realm}/users/${userId}/groups`);
+    if (!res.ok) {
+      this.logger.warn(`Keycloak user groups failed: ${res.status} ${await res.text()}`);
+      return [];
+    }
+    return (await res.json()) as KeycloakGroup[];
+  }
+
+  async addUserToGroup(userId: string, groupId: string): Promise<void> {
+    const res = await this.adminFetch(`/admin/realms/${this.realm}/users/${userId}/groups/${groupId}`, {
+      method: 'PUT'
     });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Keycloak add user to group failed: ${res.status} ${text}`);
+    }
+  }
+
+  async removeUserFromGroup(userId: string, groupId: string): Promise<void> {
+    const res = await this.adminFetch(`/admin/realms/${this.realm}/users/${userId}/groups/${groupId}`, {
+      method: 'DELETE'
+    });
+    if (!res.ok && res.status !== 404) {
+      const text = await res.text();
+      throw new Error(`Keycloak remove user from group failed: ${res.status} ${text}`);
+    }
+  }
+
+  /**
+   * Remove membership from all groups that affect customer pricing (does not touch e.g. damplab-staff).
+   */
+  async removeUserFromAllCustomerPricingGroups(userId: string): Promise<void> {
+    const groups = await this.getUserGroups(userId);
+    for (const g of groups) {
+      if (this.isCustomerPricingGroupMember(g)) {
+        await this.removeUserFromGroup(userId, g.id);
+      }
+    }
+  }
+
+  /**
+   * Set exactly one pricing category group (or clear all such groups when category is null).
+   */
+  async setUserCustomerCategory(userId: string, category: CustomerCategory | null): Promise<void> {
+    await this.removeUserFromAllCustomerPricingGroups(userId);
+    if (category == null) return;
+    const groupName = CATEGORY_PRIMARY_GROUP[category];
+    const group = await this.findGroupByName(groupName);
+    if (!group) {
+      throw new Error(`Keycloak group "${groupName}" not found in realm ${this.realm}`);
+    }
+    await this.addUserToGroup(userId, group.id);
+  }
+
+  async getUserCustomerManagementRow(userId: string): Promise<KeycloakUserCustomerManagementRow | null> {
+    const user = await this.getUserById(userId);
+    if (!user) return null;
+    const groups = await this.getUserGroups(userId);
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      customerCategory: this.deriveCustomerCategoryFromGroups(groups)
+    };
+  }
+
+  async searchUsersWithCustomerCategory(search: string, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
+    const users = await this.searchUsers(search, max);
+    const rows: KeycloakUserCustomerManagementRow[] = [];
+    for (const u of users) {
+      const groups = await this.getUserGroups(u.id);
+      rows.push({
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        customerCategory: this.deriveCustomerCategoryFromGroups(groups)
+      });
+    }
+    return rows;
   }
 
   /**
