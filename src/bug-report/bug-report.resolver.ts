@@ -1,15 +1,7 @@
 import { Args, ID, Mutation, Query, Resolver, ResolveField, Parent } from '@nestjs/graphql';
 import { UseGuards, Logger } from '@nestjs/common';
 import { BugAttachment, BugReport } from './bug-report.model';
-import {
-  BugAttachmentInput,
-  BugAttachmentUpload,
-  BugAttachmentUploadRequest,
-  BugReportsFilterInput,
-  BugReportsResult,
-  BugReportSummary,
-  CreateBugReportInput
-} from './bug-report.dto';
+import { BugAttachmentInput, BugAttachmentUpload, BugAttachmentUploadRequest, BugReportsFilterInput, BugReportsResult, BugReportSummary, CreateBugReportInput } from './bug-report.dto';
 import { BugReportService } from './bug-report.service';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
@@ -21,24 +13,17 @@ import { BugReportAttachmentsService } from './bug-report-attachments.service';
 export class BugReportResolver {
   private readonly logger = new Logger(BugReportResolver.name);
 
-  constructor(
-    private readonly bugReportService: BugReportService,
-    private readonly bugReportAttachmentsService: BugReportAttachmentsService
-  ) {}
+  constructor(private readonly bugReportService: BugReportService, private readonly bugReportAttachmentsService: BugReportAttachmentsService) {}
 
   @Query(() => BugReportsResult, {
     description: 'List all bug reports, optionally filtered by search text and reporter.'
   })
-  async bugReports(
-    @Args('filter', { type: () => BugReportsFilterInput, nullable: true }) filter?: BugReportsFilterInput | null
-  ): Promise<BugReportsResult> {
+  async bugReports(@Args('filter', { type: () => BugReportsFilterInput, nullable: true }) filter?: BugReportsFilterInput | null): Promise<BugReportsResult> {
     const bugs = await this.bugReportService.findAll(filter ?? undefined);
 
     const items: BugReportSummary[] = await Promise.all(
       bugs.map(async (b) => {
-        const baseAttachments = (b.attachments ?? []).filter(
-          (a) => a && typeof a.key === 'string' && a.key.length > 0
-        );
+        const baseAttachments = (b.attachments ?? []).filter((a) => a && typeof a.key === 'string' && a.key.length > 0);
 
         const attachmentsWithUrls: BugAttachment[] = await Promise.all(
           baseAttachments.map(async (a) => {
@@ -79,10 +64,7 @@ export class BugReportResolver {
   @Mutation(() => BugReport, {
     description: 'Create a new bug report for the currently authenticated user.'
   })
-  async createBugReport(
-    @Args('input', { type: () => CreateBugReportInput }) input: CreateBugReportInput,
-    @CurrentUser() user: User
-  ): Promise<BugReport> {
+  async createBugReport(@Args('input', { type: () => CreateBugReportInput }) input: CreateBugReportInput, @CurrentUser() user: User): Promise<BugReport> {
     const reporterName = (user as any)?.name || user.preferred_username || null;
     const reporterEmail = user.email || null;
     this.logger.log(`Creating bug report from ${reporterEmail ?? reporterName ?? 'unknown user'}`);
@@ -97,9 +79,7 @@ export class BugReportResolver {
     @Args('files', { type: () => [BugAttachmentUploadRequest] }) files: BugAttachmentUploadRequest[],
     @CurrentUser() user: User
   ): Promise<BugAttachmentUpload[]> {
-    this.logger.log(
-      `createBugAttachmentUploadUrls called for bugId=${bugId} with ${files.length} file(s) by user=${user.email ?? user.preferred_username}`
-    );
+    this.logger.log(`createBugAttachmentUploadUrls called for bugId=${bugId} with ${files.length} file(s) by user=${user.email ?? user.preferred_username}`);
     const bug = await this.bugReportService.findById(bugId);
     if (!bug) {
       throw new Error('Bug report not found');
@@ -122,10 +102,7 @@ export class BugReportResolver {
   @Mutation(() => BugReport, {
     description: 'Record uploaded attachments for a bug report so they appear in the bug details view.'
   })
-  async addBugAttachments(
-    @Args('bugId', { type: () => ID }) bugId: string,
-    @Args('attachments', { type: () => [BugAttachmentInput] }) attachments: BugAttachmentInput[]
-  ): Promise<BugReport> {
+  async addBugAttachments(@Args('bugId', { type: () => ID }) bugId: string, @Args('attachments', { type: () => [BugAttachmentInput] }) attachments: BugAttachmentInput[]): Promise<BugReport> {
     this.logger.log(`addBugAttachments called for bugId=${bugId} with ${attachments.length} attachment(s)`);
     const bug = await this.bugReportService.findById(bugId);
     if (!bug) {
@@ -153,9 +130,7 @@ export class BugReportResolver {
   })
   async attachments(@Parent() bug: BugReport): Promise<BugAttachment[]> {
     this.logger.log(`Resolving attachments for bugId=${(bug as any)._id ?? (bug as any).id}`);
-    const base = (bug.attachments ?? []).filter(
-      (a) => a && typeof a.key === 'string' && a.key.length > 0
-    );
+    const base = (bug.attachments ?? []).filter((a) => a && typeof a.key === 'string' && a.key.length > 0);
     if (!base.length) {
       return [];
     }
@@ -178,4 +153,3 @@ export class BugReportResolver {
     return withUrls;
   }
 }
-

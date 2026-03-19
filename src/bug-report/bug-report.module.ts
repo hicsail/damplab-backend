@@ -10,4 +10,3 @@ import { BugReportAttachmentsService } from './bug-report-attachments.service';
   providers: [BugReportService, BugReportResolver, BugReportAttachmentsService]
 })
 export class BugReportModule {}
-

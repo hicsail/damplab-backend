@@ -56,12 +56,12 @@ export class KeycloakService {
     const body = new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: this.clientId,
-      client_secret: this.clientSecret,
+      client_secret: this.clientSecret
     });
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString(),
+      body: body.toString()
     });
     if (!res.ok) {
       const text = await res.text();
@@ -77,7 +77,7 @@ export class KeycloakService {
     const base = this.serverUrl!.replace(/\/$/, '');
     const url = path.startsWith('http') ? path : `${base}${path}`;
     return fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}` }
     });
   }
 
@@ -135,8 +135,7 @@ export class KeycloakService {
 
       const users = (await res.json()) as KeycloakUser[];
       const members = users.map((u) => {
-        const displayName =
-          [u.firstName, u.lastName].filter(Boolean).join(' ')?.trim() || u.username || u.id;
+        const displayName = [u.firstName, u.lastName].filter(Boolean).join(' ')?.trim() || u.username || u.id;
         return { id: u.id, displayName };
       });
       this.logger.log(`Keycloak lab staff group "${this.labStaffGroupName}": ${members.length} member(s)`);

@@ -108,10 +108,7 @@ export class SOWService {
   /**
    * Transform service input to SOWService format
    */
-  private async transformServices(
-    services: CreateSOWInput['services'],
-    customerCategory?: CustomerCategory
-  ): Promise<SOW['services']> {
+  private async transformServices(services: CreateSOWInput['services'], customerCategory?: CustomerCategory): Promise<SOW['services']> {
     return Promise.all(
       services.map(async (service) => {
         const serviceRecord = await this.dampLabServices.findOne(service.id);

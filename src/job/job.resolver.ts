@@ -1,14 +1,6 @@
 import { UseGuards, Inject, forwardRef, Logger } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
-import {
-  CreateJobInput,
-  CreateJobPipe,
-  CreateJobPreProcessed,
-  JobAttachmentInput,
-  JobAttachmentUpload,
-  JobAttachmentUploadRequest,
-  JobPipe
-} from './job.dto';
+import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
 import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { JobService } from './job.service';
@@ -95,20 +87,20 @@ export class JobResolver {
     const roles = user.realm_access?.roles ?? [];
     const groups = user.groups ?? [];
     const claims = [...roles, ...groups];
-    const hasGroup = (groupName: string) =>
-      claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
+    const hasGroup = (groupName: string): boolean => claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
 
-    const customerCategory: CustomerCategory | undefined = hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)
-      ? CustomerCategory.INTERNAL_CUSTOMERS
-      : hasGroup(Role.ExternalCustomerAcademic)
+    const customerCategory: CustomerCategory | undefined =
+      hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)
+        ? CustomerCategory.INTERNAL_CUSTOMERS
+        : hasGroup(Role.ExternalCustomerAcademic)
         ? CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC
         : hasGroup(Role.ExternalCustomerMarket)
-          ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
-          : hasGroup(Role.ExternalCustomerNoSalary)
-            ? CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY
-            : hasGroup(Role.ExternalCustomer)
-              ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
-              : undefined;
+        ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
+        : hasGroup(Role.ExternalCustomerNoSalary)
+        ? CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY
+        : hasGroup(Role.ExternalCustomer)
+        ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
+        : undefined;
     return this.jobService.create({
       ...createJobInput,
       username: user.preferred_username,
@@ -205,9 +197,7 @@ export class JobResolver {
   async attachments(@Parent() job: Job): Promise<JobAttachment[]> {
     this.logger.log(`Resolving attachments for jobId=${job._id}`);
     this.logger.debug(`Raw attachments from DB: ${JSON.stringify(job.attachments ?? [])}`);
-    const base = (job.attachments ?? []).filter(
-      (a) => a && typeof a.filename === 'string' && a.filename.length > 0 && typeof a.key === 'string' && a.key.length > 0
-    );
+    const base = (job.attachments ?? []).filter((a) => a && typeof a.filename === 'string' && a.filename.length > 0 && typeof a.key === 'string' && a.key.length > 0);
     if (!base.length) {
       return [];
     }

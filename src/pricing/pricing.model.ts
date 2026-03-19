@@ -33,4 +33,3 @@ export class Pricing {
   @Field(() => Float, { nullable: true, description: 'Legacy fallback price (used when internal/external not set).' })
   legacy?: number;
 }
-

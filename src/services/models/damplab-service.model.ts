@@ -70,16 +70,14 @@ export class DampLabService {
   @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
   @Field(() => Pricing, {
     nullable: true,
-    description:
-      'Pricing by customer category for this service. Prefer this over price/internalPrice/externalPrice.'
+    description: 'Pricing by customer category for this service. Prefer this over price/internalPrice/externalPrice.'
   })
   pricing?: Pricing;
 
   @Prop({ required: false })
   @Field(() => Float, {
     nullable: true,
-    description:
-      'Customer-category specific price for INTERNAL customers when pricingMode is SERVICE. Falls back to price when unset.',
+    description: 'Customer-category specific price for INTERNAL customers when pricingMode is SERVICE. Falls back to price when unset.',
     deprecationReason: 'Use pricing.internal instead.'
   })
   internalPrice?: number;
@@ -87,8 +85,7 @@ export class DampLabService {
   @Prop({ required: false })
   @Field(() => Float, {
     nullable: true,
-    description:
-      'Customer-category specific price for EXTERNAL customers when pricingMode is SERVICE. Falls back to price when unset.',
+    description: 'Customer-category specific price for EXTERNAL customers when pricingMode is SERVICE. Falls back to price when unset.',
     deprecationReason: 'Use pricing.external instead.'
   })
   externalPrice?: number;
@@ -96,8 +93,7 @@ export class DampLabService {
   @Prop({ required: false })
   @Field(() => Float, {
     nullable: true,
-    description:
-      'Customer-category specific price for EXTERNAL ACADEMIC customers when pricingMode is SERVICE.',
+    description: 'Customer-category specific price for EXTERNAL ACADEMIC customers when pricingMode is SERVICE.',
     deprecationReason: 'Use pricing.externalAcademic instead.'
   })
   externalAcademicPrice?: number;
@@ -105,8 +101,7 @@ export class DampLabService {
   @Prop({ required: false })
   @Field(() => Float, {
     nullable: true,
-    description:
-      'Customer-category specific price for EXTERNAL MARKET customers when pricingMode is SERVICE.',
+    description: 'Customer-category specific price for EXTERNAL MARKET customers when pricingMode is SERVICE.',
     deprecationReason: 'Use pricing.externalMarket instead.'
   })
   externalMarketPrice?: number;
@@ -114,8 +109,7 @@ export class DampLabService {
   @Prop({ required: false })
   @Field(() => Float, {
     nullable: true,
-    description:
-      'Customer-category specific price for EXTERNAL NO-SALARY customers when pricingMode is SERVICE.',
+    description: 'Customer-category specific price for EXTERNAL NO-SALARY customers when pricingMode is SERVICE.',
     deprecationReason: 'Use pricing.externalNoSalary instead.'
   })
   externalNoSalaryPrice?: number;

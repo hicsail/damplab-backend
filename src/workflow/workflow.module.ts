@@ -28,7 +28,18 @@ import { WorkflowParameterFilesService } from './services/workflow-parameter-fil
     ]),
     DampLabServicesModule
   ],
-  providers: [WorkflowResolver, WorkflowService, WorkflowNodeService, WorkflowEdgeService, WorkflowEdgeResolver, WorkflowPipe, WorkflowNodeResolver, AddWorkflowInputPipe, AddNodeInputPipe, WorkflowParameterFilesService],
+  providers: [
+    WorkflowResolver,
+    WorkflowService,
+    WorkflowNodeService,
+    WorkflowEdgeService,
+    WorkflowEdgeResolver,
+    WorkflowPipe,
+    WorkflowNodeResolver,
+    AddWorkflowInputPipe,
+    AddNodeInputPipe,
+    WorkflowParameterFilesService
+  ],
   exports: [WorkflowPipe, WorkflowService, AddWorkflowInputPipe]
 })
 export class WorkflowModule {}

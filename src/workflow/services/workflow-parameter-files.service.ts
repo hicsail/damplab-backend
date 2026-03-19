@@ -30,10 +30,7 @@ export class WorkflowParameterFilesService {
   constructor(private readonly configService: ConfigService) {
     const region = this.configService.get<string>('AWS_REGION');
     const endpoint = this.configService.get<string>('AWS_S3_ENDPOINT');
-    this.bucket =
-      this.configService.get<string>('WORKFLOW_PARAMETER_FILES_BUCKET') ??
-      this.configService.get<string>('JOB_ATTACHMENTS_BUCKET') ??
-      null;
+    this.bucket = this.configService.get<string>('WORKFLOW_PARAMETER_FILES_BUCKET') ?? this.configService.get<string>('JOB_ATTACHMENTS_BUCKET') ?? null;
     this.urlExpirationSeconds = Number(this.configService.get<string>('JOB_ATTACHMENTS_UPLOAD_URL_TTL', '900'));
 
     if (!region || !this.bucket) {
@@ -48,9 +45,7 @@ export class WorkflowParameterFilesService {
     });
   }
 
-  async createPresignedUpload(
-    request: WorkflowParameterPresignedUploadRequest
-  ): Promise<WorkflowParameterPresignedUploadResponse> {
+  async createPresignedUpload(request: WorkflowParameterPresignedUploadRequest): Promise<WorkflowParameterPresignedUploadResponse> {
     try {
       if (!this.s3 || !this.bucket) {
         throw new InternalServerErrorException('Workflow parameter file storage is not configured on the server.');

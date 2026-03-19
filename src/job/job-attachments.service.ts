@@ -37,12 +37,11 @@ export class JobAttachmentsService {
       return;
     }
 
-    this.s3 =
-      new S3Client({
-        region,
-        endpoint: endpoint || undefined,
-        forcePathStyle: !!endpoint
-      });
+    this.s3 = new S3Client({
+      region,
+      endpoint: endpoint || undefined,
+      forcePathStyle: !!endpoint
+    });
   }
 
   async createPresignedUpload(request: PresignedUploadRequest): Promise<PresignedUploadResponse> {
@@ -94,4 +93,3 @@ export class JobAttachmentsService {
     }
   }
 }
-

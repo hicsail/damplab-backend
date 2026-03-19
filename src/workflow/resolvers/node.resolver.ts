@@ -139,19 +139,9 @@ export class WorkflowNodeResolver {
     const service = node.service instanceof mongoose.Types.ObjectId ? await this.damplabServices.findOne(node.service.toString()) : (node.service as DampLabService);
     const multiValueParamIds = service?.parameters ? getMultiValueParamIds(service.parameters) : new Set<string>();
     const normalized = normalizeFormDataToArray(node.formData, multiValueParamIds);
-    const fileParamIds = new Set<string>(
-      Array.isArray(service?.parameters)
-        ? service.parameters
-            .filter((p: any) => p && typeof p.id === 'string' && p.type === 'file')
-            .map((p: any) => p.id)
-        : []
-    );
+    const fileParamIds = new Set<string>(Array.isArray(service?.parameters) ? service.parameters.filter((p: any) => p && typeof p.id === 'string' && p.type === 'file').map((p: any) => p.id) : []);
 
-    const enrichFileMeta = async (
-      raw: unknown
-    ): Promise<
-      string | number | boolean | Record<string, unknown> | null
-    > => {
+    const enrichFileMeta = async (raw: unknown): Promise<string | number | boolean | Record<string, unknown> | null> => {
       if (raw === null || raw === undefined) return null;
       if (typeof raw !== 'string' && (typeof raw !== 'object' || Array.isArray(raw))) {
         return null;

@@ -78,8 +78,7 @@ export class Job {
   @Prop({ required: false })
   @Field(() => CustomerCategory, {
     nullable: true,
-    description:
-      'Customer category derived from Keycloak at job submission time. Used for category-specific pricing in downstream views.'
+    description: 'Customer category derived from Keycloak at job submission time. Used for category-specific pricing in downstream views.'
   })
   customerCategory?: CustomerCategory;
 

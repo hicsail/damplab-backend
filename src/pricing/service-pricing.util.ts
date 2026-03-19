@@ -7,14 +7,16 @@ interface ServiceParameterOption {
   price?: unknown;
   internalPrice?: unknown;
   externalPrice?: unknown;
-  pricing?: {
-    internal?: unknown;
-    external?: unknown;
-    externalAcademic?: unknown;
-    externalMarket?: unknown;
-    externalNoSalary?: unknown;
-    legacy?: unknown;
-  } | unknown;
+  pricing?:
+    | {
+        internal?: unknown;
+        external?: unknown;
+        externalAcademic?: unknown;
+        externalMarket?: unknown;
+        externalNoSalary?: unknown;
+        legacy?: unknown;
+      }
+    | unknown;
 }
 
 interface ServiceParameterDefinition {
@@ -23,24 +25,22 @@ interface ServiceParameterDefinition {
   price?: unknown;
   internalPrice?: unknown;
   externalPrice?: unknown;
-  pricing?: {
-    internal?: unknown;
-    external?: unknown;
-    externalAcademic?: unknown;
-    externalMarket?: unknown;
-    externalNoSalary?: unknown;
-    legacy?: unknown;
-  } | unknown;
+  pricing?:
+    | {
+        internal?: unknown;
+        external?: unknown;
+        externalAcademic?: unknown;
+        externalMarket?: unknown;
+        externalNoSalary?: unknown;
+        legacy?: unknown;
+      }
+    | unknown;
   type?: unknown;
   options?: ServiceParameterOption[] | unknown;
   isPriceMultiplier?: boolean;
 }
 
-export type CustomerCategory =
-  | 'INTERNAL_CUSTOMERS'
-  | 'EXTERNAL_CUSTOMER_ACADEMIC'
-  | 'EXTERNAL_CUSTOMER_MARKET'
-  | 'EXTERNAL_CUSTOMER_NO_SALARY';
+export type CustomerCategory = 'INTERNAL_CUSTOMERS' | 'EXTERNAL_CUSTOMER_ACADEMIC' | 'EXTERNAL_CUSTOMER_MARKET' | 'EXTERNAL_CUSTOMER_NO_SALARY';
 
 function normalizePrice(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -60,14 +60,16 @@ function resolveCategoryPrice(
         externalMarketPrice?: unknown;
         externalNoSalaryPrice?: unknown;
         price?: unknown;
-        pricing?: {
-          internal?: unknown;
-          external?: unknown;
-          externalAcademic?: unknown;
-          externalMarket?: unknown;
-          externalNoSalary?: unknown;
-          legacy?: unknown;
-        } | unknown;
+        pricing?:
+          | {
+              internal?: unknown;
+              external?: unknown;
+              externalAcademic?: unknown;
+              externalMarket?: unknown;
+              externalNoSalary?: unknown;
+              legacy?: unknown;
+            }
+          | unknown;
       }
     | null
     | undefined,
@@ -114,18 +116,11 @@ function calculateParameterCost(parameters: unknown, rawFormData: unknown): numb
 
     const options = Array.isArray(param.options) ? param.options : undefined;
     const hasOptionPricing =
-      typeof param.type === 'string' &&
-      (param.type === 'dropdown' || param.type === 'enum') &&
-      !!options &&
-      options.some((opt) => resolveCategoryPrice(opt, undefined) !== undefined);
+      typeof param.type === 'string' && (param.type === 'dropdown' || param.type === 'enum') && !!options && options.some((opt) => resolveCategoryPrice(opt, undefined) !== undefined);
 
     // When dropdown options have prices, use option-level pricing.
     if (hasOptionPricing && options) {
-      const valuesArray = Array.isArray(rawValue)
-        ? rawValue
-        : rawValue != null
-        ? [rawValue]
-        : [];
+      const valuesArray = Array.isArray(rawValue) ? rawValue : rawValue != null ? [rawValue] : [];
 
       for (const v of valuesArray) {
         if (v === null || v === undefined || v === '') continue;
@@ -190,12 +185,7 @@ function getMultiplier(parameters: unknown, rawFormData: unknown): number {
       }
       qty = hasAny ? sum : undefined;
     } else {
-      const n =
-        typeof rawValue === 'number'
-          ? rawValue
-          : typeof rawValue === 'string' && rawValue.trim() !== ''
-          ? Number(rawValue)
-          : NaN;
+      const n = typeof rawValue === 'number' ? rawValue : typeof rawValue === 'string' && rawValue.trim() !== '' ? Number(rawValue) : NaN;
       qty = Number.isFinite(n) ? n : undefined;
     }
 
@@ -206,12 +196,7 @@ function getMultiplier(parameters: unknown, rawFormData: unknown): number {
   return multiplier;
 }
 
-export function calculateServiceCost(
-  service: DampLabService,
-  rawFormData: unknown,
-  fallbackCost?: number,
-  customerCategory?: CustomerCategory
-): number {
+export function calculateServiceCost(service: DampLabService, rawFormData: unknown, fallbackCost?: number, customerCategory?: CustomerCategory): number {
   const pricingMode = service.pricingMode ?? ServicePricingMode.SERVICE;
   let baseCost = 0;
 
@@ -241,11 +226,7 @@ export function calculateServiceCost(
   return baseCost * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
 }
 
-function calculateParameterCostWithCategory(
-  parameters: unknown,
-  rawFormData: unknown,
-  customerCategory?: CustomerCategory
-): number {
+function calculateParameterCostWithCategory(parameters: unknown, rawFormData: unknown, customerCategory?: CustomerCategory): number {
   if (!Array.isArray(parameters)) return 0;
 
   const paramsById = new Map<string, ServiceParameterDefinition>();
@@ -268,17 +249,10 @@ function calculateParameterCostWithCategory(
 
     const options = Array.isArray(param.options) ? param.options : undefined;
     const hasOptionPricing =
-      typeof param.type === 'string' &&
-      (param.type === 'dropdown' || param.type === 'enum') &&
-      !!options &&
-      options.some((opt) => resolveCategoryPrice(opt, customerCategory) !== undefined);
+      typeof param.type === 'string' && (param.type === 'dropdown' || param.type === 'enum') && !!options && options.some((opt) => resolveCategoryPrice(opt, customerCategory) !== undefined);
 
     if (hasOptionPricing && options) {
-      const valuesArray = Array.isArray(rawValue)
-        ? rawValue
-        : rawValue != null
-          ? [rawValue]
-          : [];
+      const valuesArray = Array.isArray(rawValue) ? rawValue : rawValue != null ? [rawValue] : [];
 
       for (const v of valuesArray) {
         if (v === null || v === undefined || v === '') continue;
