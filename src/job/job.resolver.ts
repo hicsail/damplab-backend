@@ -93,11 +93,22 @@ export class JobResolver {
   @Mutation(() => Job)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
     const roles = user.realm_access?.roles ?? [];
-    const customerCategory: CustomerCategory | undefined = roles.includes(Role.InternalCustomer)
-      ? CustomerCategory.INTERNAL
-      : roles.includes(Role.ExternalCustomer)
-        ? CustomerCategory.EXTERNAL
-        : undefined;
+    const groups = user.groups ?? [];
+    const claims = [...roles, ...groups];
+    const hasGroup = (groupName: string) =>
+      claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
+
+    const customerCategory: CustomerCategory | undefined = hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)
+      ? CustomerCategory.INTERNAL_CUSTOMERS
+      : hasGroup(Role.ExternalCustomerAcademic)
+        ? CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC
+        : hasGroup(Role.ExternalCustomerMarket)
+          ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
+          : hasGroup(Role.ExternalCustomerNoSalary)
+            ? CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY
+            : hasGroup(Role.ExternalCustomer)
+              ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
+              : undefined;
     return this.jobService.create({
       ...createJobInput,
       username: user.preferred_username,

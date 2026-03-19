@@ -93,6 +93,33 @@ export class DampLabService {
   })
   externalPrice?: number;
 
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description:
+      'Customer-category specific price for EXTERNAL ACADEMIC customers when pricingMode is SERVICE.',
+    deprecationReason: 'Use pricing.externalAcademic instead.'
+  })
+  externalAcademicPrice?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description:
+      'Customer-category specific price for EXTERNAL MARKET customers when pricingMode is SERVICE.',
+    deprecationReason: 'Use pricing.externalMarket instead.'
+  })
+  externalMarketPrice?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description:
+      'Customer-category specific price for EXTERNAL NO-SALARY customers when pricingMode is SERVICE.',
+    deprecationReason: 'Use pricing.externalNoSalary instead.'
+  })
+  externalNoSalaryPrice?: number;
+
   @Prop({ required: false, default: ServicePricingMode.SERVICE })
   @Field(() => ServicePricingMode, {
     nullable: true,

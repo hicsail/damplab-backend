@@ -18,8 +18,10 @@ export enum JobState {
 registerEnumType(JobState, { name: 'JobState' });
 
 export enum CustomerCategory {
-  INTERNAL = 'INTERNAL',
-  EXTERNAL = 'EXTERNAL'
+  INTERNAL_CUSTOMERS = 'INTERNAL_CUSTOMERS',
+  EXTERNAL_CUSTOMER_ACADEMIC = 'EXTERNAL_CUSTOMER_ACADEMIC',
+  EXTERNAL_CUSTOMER_MARKET = 'EXTERNAL_CUSTOMER_MARKET',
+  EXTERNAL_CUSTOMER_NO_SALARY = 'EXTERNAL_CUSTOMER_NO_SALARY'
 }
 registerEnumType(CustomerCategory, { name: 'CustomerCategory' });
 

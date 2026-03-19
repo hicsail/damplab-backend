@@ -147,8 +147,18 @@ export class WorkflowNodeResolver {
         : []
     );
 
-    const enrichFileMeta = async (raw: unknown): Promise<unknown> => {
-      if (typeof raw !== 'string') return raw;
+    const enrichFileMeta = async (
+      raw: unknown
+    ): Promise<
+      string | number | boolean | Record<string, unknown> | null
+    > => {
+      if (raw === null || raw === undefined) return null;
+      if (typeof raw !== 'string' && (typeof raw !== 'object' || Array.isArray(raw))) {
+        return null;
+      }
+      if (typeof raw !== 'string') {
+        return raw as Record<string, unknown>;
+      }
       let parsed: any;
       try {
         parsed = globalThis.JSON.parse(raw);
@@ -162,7 +172,7 @@ export class WorkflowNodeResolver {
       return { ...parsed, url: url ?? undefined };
     };
 
-    const enriched = await Promise.all(
+    const enriched: FormDataEntry[] = await Promise.all(
       normalized.map(async (entry) => {
         if (!fileParamIds.has(entry.id)) return entry;
         if (Array.isArray(entry.value)) {

@@ -27,11 +27,21 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     const multiValueParamIds = getMultiValueParamIds(service.parameters);
     const formData = normalizeFormDataToArray(value.formData, multiValueParamIds);
     const roles: string[] = this.request?.user?.realm_access?.roles ?? [];
-    const category: CustomerCategory | undefined = roles.includes(Role.InternalCustomer)
-      ? 'INTERNAL'
-      : roles.includes(Role.ExternalCustomer)
-        ? 'EXTERNAL'
-        : undefined;
+    const groups: string[] = this.request?.user?.groups ?? [];
+    const claims = [...roles, ...groups];
+    const hasGroup = (groupName: string) =>
+      claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
+    const category: CustomerCategory | undefined = hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)
+      ? 'INTERNAL_CUSTOMERS'
+      : hasGroup(Role.ExternalCustomerAcademic)
+        ? 'EXTERNAL_CUSTOMER_ACADEMIC'
+        : hasGroup(Role.ExternalCustomerMarket)
+          ? 'EXTERNAL_CUSTOMER_MARKET'
+          : hasGroup(Role.ExternalCustomerNoSalary)
+            ? 'EXTERNAL_CUSTOMER_NO_SALARY'
+            : hasGroup(Role.ExternalCustomer)
+              ? 'EXTERNAL_CUSTOMER_MARKET'
+              : undefined;
     const price = calculateServiceCost(service, formData, value.price, category);
     return { ...value, formData, service, state: WorkflowNodeState.QUEUED, price };
   }

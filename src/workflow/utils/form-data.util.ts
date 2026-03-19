@@ -13,7 +13,7 @@ export interface FormDataEntry {
     | number
     | boolean
     | Record<string, unknown>
-    | Array<string | number | boolean | Record<string, unknown>>
+    | Array<string | number | boolean | Record<string, unknown> | null>
     | null;
 }
 
