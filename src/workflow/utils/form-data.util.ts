@@ -8,7 +8,13 @@
  */
 export interface FormDataEntry {
   id: string;
-  value: string | number | boolean | string[] | null;
+  value:
+    | string
+    | number
+    | boolean
+    | Record<string, unknown>
+    | Array<string | number | boolean | Record<string, unknown>>
+    | null;
 }
 
 /**
@@ -26,11 +32,15 @@ export function getMultiValueParamIds(parameters: unknown): Set<string> {
   return ids;
 }
 
-function ensureArrayValue(val: unknown, paramId: string, multiValueParamIds: Set<string>): string | number | boolean | string[] | null {
+function ensureArrayValue(
+  val: unknown,
+  paramId: string,
+  multiValueParamIds: Set<string>
+): FormDataEntry['value'] {
   const isMulti = multiValueParamIds.has(paramId);
   if (val === undefined || val === null) return isMulti ? [] : null;
-  if (isMulti) return Array.isArray(val) ? (val as string[]) : [val as string];
-  return Array.isArray(val) ? (val.length ? (val[0] as string) : null) : (val as string | number | boolean);
+  if (isMulti) return Array.isArray(val) ? (val as Array<string | number | boolean | Record<string, unknown>>) : [val as string | number | boolean | Record<string, unknown>];
+  return Array.isArray(val) ? (val.length ? (val[0] as string | number | boolean | Record<string, unknown>) : null) : (val as string | number | boolean | Record<string, unknown>);
 }
 
 /**

@@ -15,6 +15,10 @@ import { Roles } from '../../auth/roles/roles.decorator';
 import { Role } from '../../auth/roles/roles.enum';
 import { LabMonitorStaffMember } from '../dtos/lab-monitor-staff.dto';
 import { KeycloakService } from '../../keycloak/keycloak.service';
+import { CurrentUser } from '../../auth/user.decorator';
+import { User } from '../../auth/user.interface';
+import { WorkflowParameterFileUpload, WorkflowParameterFileUploadRequest } from '../dtos/workflow-parameter-file.dto';
+import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
@@ -22,7 +26,8 @@ export class WorkflowNodeResolver {
     private readonly damplabServices: DampLabServices,
     private readonly nodeService: WorkflowNodeService,
     private readonly workflowService: WorkflowService,
-    private readonly keycloakService: KeycloakService
+    private readonly keycloakService: KeycloakService,
+    private readonly workflowParameterFilesService: WorkflowParameterFilesService
   ) {}
 
   @Mutation(() => WorkflowNode)
@@ -84,6 +89,28 @@ export class WorkflowNodeResolver {
     }
   }
 
+  @Mutation(() => [WorkflowParameterFileUpload], {
+    description: 'Create presigned S3 URLs to upload one or more workflow parameter files during final job submission.'
+  })
+  @UseGuards(AuthRolesGuard)
+  async createWorkflowParameterUploadUrls(
+    @Args('files', { type: () => [WorkflowParameterFileUploadRequest] }) files: WorkflowParameterFileUploadRequest[],
+    @CurrentUser() user: User
+  ): Promise<WorkflowParameterFileUpload[]> {
+    const userSub = user.sub ?? 'anonymous';
+    return Promise.all(
+      files.map((file) =>
+        this.workflowParameterFilesService.createPresignedUpload({
+          userSub,
+          clientToken: file.clientToken,
+          filename: file.filename,
+          contentType: file.contentType,
+          size: file.size
+        })
+      )
+    );
+  }
+
   @ResolveField(() => Workflow, { nullable: true, description: 'Parent workflow containing this node' })
   async workflow(@Parent() node: WorkflowNode): Promise<Workflow | null> {
     return this.workflowService.findWhereNodeId(node._id);
@@ -111,6 +138,41 @@ export class WorkflowNodeResolver {
   async formData(@Parent() node: WorkflowNode): Promise<FormDataEntry[]> {
     const service = node.service instanceof mongoose.Types.ObjectId ? await this.damplabServices.findOne(node.service.toString()) : (node.service as DampLabService);
     const multiValueParamIds = service?.parameters ? getMultiValueParamIds(service.parameters) : new Set<string>();
-    return normalizeFormDataToArray(node.formData, multiValueParamIds);
+    const normalized = normalizeFormDataToArray(node.formData, multiValueParamIds);
+    const fileParamIds = new Set<string>(
+      Array.isArray(service?.parameters)
+        ? service.parameters
+            .filter((p: any) => p && typeof p.id === 'string' && p.type === 'file')
+            .map((p: any) => p.id)
+        : []
+    );
+
+    const enrichFileMeta = async (raw: unknown): Promise<unknown> => {
+      if (typeof raw !== 'string') return raw;
+      let parsed: any;
+      try {
+        parsed = globalThis.JSON.parse(raw);
+      } catch {
+        return raw;
+      }
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.key !== 'string' || parsed.key.length === 0) {
+        return raw;
+      }
+      const url = await this.workflowParameterFilesService.createPresignedDownload(parsed.key, parsed.contentType);
+      return { ...parsed, url: url ?? undefined };
+    };
+
+    const enriched = await Promise.all(
+      normalized.map(async (entry) => {
+        if (!fileParamIds.has(entry.id)) return entry;
+        if (Array.isArray(entry.value)) {
+          const values = await Promise.all(entry.value.map((v) => enrichFileMeta(v)));
+          return { ...entry, value: values };
+        }
+        const value = await enrichFileMeta(entry.value);
+        return { ...entry, value };
+      })
+    );
+    return enriched;
   }
 }
