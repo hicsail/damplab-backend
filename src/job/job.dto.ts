@@ -1,7 +1,7 @@
 import { Field, ID, InputType, Int, ObjectType, PickType } from '@nestjs/graphql';
 import { Job, JobAttachment, JobState } from './job.model';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
-import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
+import { BadRequestException, Injectable, PipeTransform, Scope } from '@nestjs/common';
 import { JobService } from './job.service';
 
 @InputType()
@@ -66,7 +66,7 @@ export class JobAttachmentUpload {
   size: number;
 }
 
-@Injectable()
+@Injectable({ scope: Scope.REQUEST })
 export class CreateJobPipe implements PipeTransform<CreateJobInput, Promise<CreateJobPreProcessed>> {
   constructor(private readonly workflowPipe: AddWorkflowInputPipe) {}
 
