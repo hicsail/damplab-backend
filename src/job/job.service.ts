@@ -29,7 +29,7 @@ export class JobService {
         return createdWorkflow._id;
       })
     );
-    return this.jobModel.create({ ...createJobInput, workflows: workflowIDs });
+    return this.jobModel.create({ ...createJobInput, workflows: workflowIDs, submitted: new Date() });
   }
 
   async findAll(): Promise<Job[]> {
@@ -177,8 +177,14 @@ export class JobService {
   }
 
   private async latestSubmittedAt(): Promise<Date | null> {
-    const latest = await this.jobModel.findOne({}, { submitted: 1 }, { sort: { submitted: -1 } }).lean().exec();
-    return latest?.submitted ?? null;
+    const latestBySubmitted = await this.jobModel.findOne({}, { submitted: 1 }, { sort: { submitted: -1 } }).lean().exec();
+    const latestByCreated = await this.jobModel.findOne({}, { _id: 1 }, { sort: { _id: -1 } }).lean().exec();
+    const submittedAt = latestBySubmitted?.submitted ? new Date(latestBySubmitted.submitted) : null;
+    const createdAt = latestByCreated?._id ? new mongoose.Types.ObjectId(String(latestByCreated._id)).getTimestamp() : null;
+    if (submittedAt && createdAt) {
+      return submittedAt > createdAt ? submittedAt : createdAt;
+    }
+    return submittedAt ?? createdAt ?? null;
   }
 
   async getJobsFeedStatus(): Promise<JobFeedStatus> {
