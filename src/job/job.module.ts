@@ -10,12 +10,14 @@ import { CommentModule } from '../comment/comment.module';
 import { Comment, CommentSchema } from '../comment/comment.model';
 import { SOWModule } from '../sow/sow.module';
 import { JobAttachmentsService } from './job-attachments.service';
+import { JobFeedStatusEntity, JobFeedStatusEntitySchema } from './job-feed-status.model';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Job.name, schema: JobSchema },
-      { name: Comment.name, schema: CommentSchema }
+      { name: Comment.name, schema: CommentSchema },
+      { name: JobFeedStatusEntity.name, schema: JobFeedStatusEntitySchema }
     ]),
     forwardRef(() => WorkflowModule),
     forwardRef(() => CommentModule),

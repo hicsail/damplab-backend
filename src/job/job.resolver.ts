@@ -19,6 +19,7 @@ import { SOWService } from '../sow/sow.service';
 import { JobAttachmentsService } from './job-attachments.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { UpdateSOWInput } from '../sow/dto/update-sow.input';
+import { JobFeedStatus } from './job-feed-status.model';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -83,6 +84,22 @@ export class JobResolver {
   @Roles(Role.DamplabStaff)
   async jobByWorkflowId(@Args('workflow', { type: () => ID }, WorkflowPipe) workflow: Workflow): Promise<Job | null> {
     return this.jobService.findByWorkflow(workflow);
+  }
+
+  @Query(() => JobFeedStatus, {
+    description: 'Staff-only. Global unseen/submitted jobs feed status for the Home Jobs button badge.'
+  })
+  @Roles(Role.DamplabStaff)
+  async jobsFeedStatus(): Promise<JobFeedStatus> {
+    return this.jobService.getJobsFeedStatus();
+  }
+
+  @Mutation(() => JobFeedStatus, {
+    description: 'Staff-only. Marks the shared jobs feed as viewed by setting the global viewed timestamp.'
+  })
+  @Roles(Role.DamplabStaff)
+  async markJobsFeedViewed(): Promise<JobFeedStatus> {
+    return this.jobService.markJobsFeedViewed();
   }
 
   @Mutation(() => Job)

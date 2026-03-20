@@ -7,6 +7,7 @@ import { CreateJobFull } from './job.dto';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder } from './dto/jobs-query.dto';
+import { JobFeedStatus, JobFeedStatusEntity, JobFeedStatusEntityDocument } from './job-feed-status.model';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -14,7 +15,11 @@ const MAX_LIMIT = 100;
 
 @Injectable()
 export class JobService {
-  constructor(@InjectModel(Job.name) private readonly jobModel: Model<JobDocument>, @Inject(forwardRef(() => WorkflowService)) private readonly workflowService: WorkflowService) {}
+  constructor(
+    @InjectModel(Job.name) private readonly jobModel: Model<JobDocument>,
+    @InjectModel(JobFeedStatusEntity.name) private readonly jobFeedStatusModel: Model<JobFeedStatusEntityDocument>,
+    @Inject(forwardRef(() => WorkflowService)) private readonly workflowService: WorkflowService
+  ) {}
   private readonly logger = new Logger(JobService.name);
 
   async create(createJobInput: CreateJobFull): Promise<Job> {
@@ -169,5 +174,36 @@ export class JobService {
   async findAllJobsPaginated(input: AllJobsInput): Promise<JobsResult> {
     const { items, totalCount } = await this.runJobsPipeline({}, input);
     return { items, totalCount };
+  }
+
+  private async latestSubmittedAt(): Promise<Date | null> {
+    const latest = await this.jobModel.findOne({}, { submitted: 1 }, { sort: { submitted: -1 } }).lean().exec();
+    return latest?.submitted ?? null;
+  }
+
+  async getJobsFeedStatus(): Promise<JobFeedStatus> {
+    const [latestSubmittedAt, statusDoc] = await Promise.all([
+      this.latestSubmittedAt(),
+      this.jobFeedStatusModel.findOne({ key: 'global' }).lean().exec()
+    ]);
+    const viewedAt = statusDoc?.viewedAt ?? null;
+    const hasUnseen = Boolean(latestSubmittedAt && (!viewedAt || latestSubmittedAt > viewedAt));
+    return {
+      viewedAt,
+      latestSubmittedAt,
+      hasUnseen
+    };
+  }
+
+  async markJobsFeedViewed(now: Date = new Date()): Promise<JobFeedStatus> {
+    await this.jobFeedStatusModel
+      .findOneAndUpdate({ key: 'global' }, { $set: { viewedAt: now } }, { upsert: true, new: true })
+      .exec();
+    const latestSubmittedAt = await this.latestSubmittedAt();
+    return {
+      viewedAt: now,
+      latestSubmittedAt,
+      hasUnseen: Boolean(latestSubmittedAt && latestSubmittedAt > now)
+    };
   }
 }
