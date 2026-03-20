@@ -40,6 +40,6 @@ import { WorkflowParameterFilesService } from './services/workflow-parameter-fil
     AddNodeInputPipe,
     WorkflowParameterFilesService
   ],
-  exports: [WorkflowPipe, WorkflowService, AddWorkflowInputPipe]
+  exports: [WorkflowPipe, WorkflowService, WorkflowNodeService, AddWorkflowInputPipe]
 })
 export class WorkflowModule {}

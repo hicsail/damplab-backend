@@ -1,4 +1,4 @@
-import { UseGuards, Inject, forwardRef, Logger } from '@nestjs/common';
+import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
@@ -17,6 +17,8 @@ import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
 import { JobAttachmentsService } from './job-attachments.service';
+import { WorkflowNodeService } from '../workflow/services/node.service';
+import { UpdateSOWInput } from '../sow/dto/update-sow.input';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -26,6 +28,7 @@ export class JobResolver {
   constructor(
     private readonly jobService: JobService,
     private readonly workflowService: WorkflowService,
+    private readonly workflowNodeService: WorkflowNodeService,
     @Inject(forwardRef(() => CommentService))
     private readonly commentService: CommentService,
     @Inject(forwardRef(() => SOWService))
@@ -108,6 +111,70 @@ export class JobResolver {
       email: user.email,
       customerCategory
     });
+  }
+
+  @Mutation(() => Job, {
+    description: 'Change a submitted job customer category and reprice the existing SOW.'
+  })
+  async changeJobCustomerCategory(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @Args('customerCategory', { type: () => CustomerCategory }) customerCategory: CustomerCategory,
+    @CurrentUser() user: User,
+  ): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+
+    const roles = user.realm_access?.roles ?? [];
+    const isStaff = roles.includes(Role.DamplabStaff);
+    const isOwner = job.sub === user.sub;
+    if (!isStaff && !isOwner) {
+      throw new ForbiddenException('You do not have permission to change customer category for this job');
+    }
+
+    const updatedJob = await this.jobService.updateCustomerCategory(jobId, customerCategory);
+
+    const existingSow = await this.sowService.findByJobId(jobId);
+    if (existingSow) {
+      const existingServices = existingSow.services ?? [];
+
+      const orderedNodes: any[] = [];
+      for (const workflowId of job.workflows ?? []) {
+        const workflow = await this.workflowService.findById(String(workflowId));
+        if (!workflow) continue;
+
+        const nodeIds = (workflow.nodes ?? []).map((n: any) => String(n));
+        if (!nodeIds.length) continue;
+
+        const nodes = await this.workflowNodeService.getByIDs(nodeIds);
+        const byId = new Map(nodes.map((n: any) => [String(n._id), n]));
+
+        for (const nodeId of nodeIds) {
+          const node = byId.get(nodeId);
+          if (node) orderedNodes.push(node);
+        }
+      }
+
+      const servicesInput = orderedNodes.map((node: any, idx: number) => {
+        const existing = existingServices[idx];
+        const serviceId = String(node.service?._id ?? node.service);
+
+        return {
+          id: serviceId,
+          name: existing?.name ?? node.label ?? 'Service',
+          description: existing?.description ?? node.label ?? 'Service',
+          cost: existing?.cost ?? node.price ?? 0,
+          category: existing?.category ?? 'molecular-biology',
+          formData: node.formData ?? [],
+        };
+      });
+
+      const updateInput: UpdateSOWInput = { services: servicesInput } as any;
+      await this.sowService.update(String(existingSow._id), updateInput);
+    }
+
+    return updatedJob ?? job;
   }
 
   @Mutation(() => [JobAttachmentUpload], {

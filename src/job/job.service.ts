@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Job, JobAttachment, JobDocument, JobState } from './job.model';
+import { Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
@@ -61,6 +61,12 @@ export class JobService {
 
   async updateState(job: Job, newState: JobState): Promise<Job | null> {
     return this.jobModel.findOneAndUpdate({ _id: job._id }, { $set: { state: newState } }, { new: true }).exec();
+  }
+
+  async updateCustomerCategory(jobId: string, customerCategory: CustomerCategory): Promise<Job | null> {
+    return this.jobModel
+      .findOneAndUpdate({ _id: jobId }, { $set: { customerCategory } }, { new: true })
+      .exec();
   }
 
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {
