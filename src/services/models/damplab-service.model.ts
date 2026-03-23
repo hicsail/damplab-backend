@@ -29,6 +29,18 @@ export class DampLabService {
   @Field({ description: 'Human readable name of the service' })
   name: string;
 
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Service category number for downstream integrations.' })
+  serviceCategoryNumber?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Service category name for downstream integrations.' })
+  serviceCategoryName?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Service unit for downstream integrations.' })
+  unit?: string;
+
   @Prop()
   @Field({ description: 'URL to the icon of the service' })
   icon: string;
