@@ -140,6 +140,14 @@ export class DampLabService {
     defaultValue: []
   })
   deliverables!: string[];
+
+  @Prop({ default: false })
+  @Field(() => Boolean, {
+    nullable: true,
+    defaultValue: false,
+    description: 'When true, the service is soft-deleted: hidden from catalogs and connection pickers but still resolvable for historical workflows.'
+  })
+  isDeleted?: boolean;
 }
 
 export type DampLabServiceDocument = DampLabService & Document;

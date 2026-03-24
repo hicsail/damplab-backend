@@ -112,7 +112,7 @@ export class SOWService {
     return Promise.all(
       services.map(async (service) => {
         const serviceRecord = await this.dampLabServices.findOne(service.id);
-        if (!serviceRecord) {
+        if (!serviceRecord || serviceRecord.isDeleted === true) {
           throw new NotFoundException(`Service with ID ${service.id} not found`);
         }
         const cost = calculateServiceCost(serviceRecord, service.formData, service.cost, customerCategory);

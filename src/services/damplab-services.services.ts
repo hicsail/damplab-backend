@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { DampLabService, DampLabServiceDocument, ServicePricingMode } from './models/damplab-service.model';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -77,16 +77,17 @@ export class DampLabServices {
     return service;
   }
 
+  /** Active services only (for admin catalog, canvas palette, bundles, categories, allowedConnections). */
   async findAll(): Promise<DampLabService[]> {
-    const services = await this.dampLabServiceModel.find().exec();
+    const services = await this.dampLabServiceModel.find({ isDeleted: { $ne: true } }).exec();
     return services.map((service) => this.normalizeService(service));
   }
 
   /**
-   * Find a list of services by their IDs.
+   * Find a list of active services by their IDs (preserves caller order; omits missing and soft-deleted).
    */
   async findByIds(ids: mongoose.Types.ObjectId[]): Promise<DampLabService[]> {
-    const services = await this.dampLabServiceModel.find({ _id: { $in: ids } }).exec();
+    const services = await this.dampLabServiceModel.find({ _id: { $in: ids }, isDeleted: { $ne: true } }).exec();
     const serviceById = new Map(
       services.map((service) => [String(service._id), this.normalizeService(service)] as const)
     );
@@ -95,19 +96,33 @@ export class DampLabServices {
       .filter((service): service is DampLabService => Boolean(service));
   }
 
+  /**
+   * By database id, including soft-deleted (for workflow nodes and mutation targets).
+   */
   async findOne(id: string): Promise<DampLabService | null> {
     const service = await this.dampLabServiceModel.findById(id).exec();
     return service ? this.normalizeService(service) : null;
   }
 
+  /** Active service only; null if missing or soft-deleted. */
+  async findOneActive(id: string): Promise<DampLabService | null> {
+    const service = await this.dampLabServiceModel.findOne({ _id: id, isDeleted: { $ne: true } }).exec();
+    return service ? this.normalizeService(service) : null;
+  }
+
   async update(service: DampLabService, changes: ServiceChange): Promise<DampLabService> {
+    if (service.isDeleted === true) {
+      throw new BadRequestException(`Cannot update soft-deleted service ${service._id}`);
+    }
     await this.dampLabServiceModel.updateOne({ _id: service._id }, changes);
     const updated = await this.dampLabServiceModel.findById(service._id);
     return this.normalizeService(updated!);
   }
 
   async delete(service: DampLabService): Promise<void> {
-    // Remove all allowed connections first
+    if (service.isDeleted === true) {
+      return;
+    }
     await this.dampLabServiceModel.updateMany(
       {},
       {
@@ -115,7 +130,7 @@ export class DampLabServices {
       }
     );
 
-    await this.dampLabServiceModel.deleteOne({ _id: service._id });
+    await this.dampLabServiceModel.updateOne({ _id: service._id }, { $set: { isDeleted: true } });
   }
 
   async create(service: CreateService): Promise<DampLabService> {
@@ -126,5 +141,23 @@ export class DampLabServices {
     };
     const created = await this.dampLabServiceModel.create(serviceData);
     return this.normalizeService(created);
+  }
+
+  /**
+   * Stand-in when a workflow node still references a service id that no longer exists in the DB
+   * (e.g. legacy hard deletes). Keeps GraphQL and lab monitor from failing on missing documents.
+   */
+  placeholderForMissingService(id: string): DampLabService {
+    const stub = {
+      _id: id,
+      name: 'Unknown service (removed)',
+      icon: '',
+      parameters: [],
+      paramGroups: [] as any[],
+      allowedConnections: [] as mongoose.Types.ObjectId[],
+      description: 'This service is no longer in the catalog; the node still references its former id.',
+      deliverables: []
+    } as DampLabService;
+    return this.normalizeService(stub);
   }
 }

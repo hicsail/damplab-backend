@@ -1,7 +1,7 @@
-import { Injectable, PipeTransform, Scope, Inject } from '@nestjs/common';
+import { BadRequestException, Injectable, PipeTransform, Scope, Inject } from '@nestjs/common';
 import { ID, Field, InputType, OmitType } from '@nestjs/graphql';
 import { WorkflowNode, WorkflowNodeState } from '../models/node.model';
-import { DampLabServicePipe } from '../../services/damplab-services.pipe';
+import { DampLabServices } from '../../services/damplab-services.services';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-data.util';
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { REQUEST } from '@nestjs/core';
@@ -17,10 +17,13 @@ export type AddNodeInputFull = Omit<WorkflowNode, '_id'>;
 
 @Injectable({ scope: Scope.REQUEST })
 export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<AddNodeInputFull>> {
-  constructor(private readonly dampLabServicePipe: DampLabServicePipe, @Inject(REQUEST) private readonly request: any) {}
+  constructor(private readonly dampLabServices: DampLabServices, @Inject(REQUEST) private readonly request: any) {}
 
   async transform(value: AddNodeInput): Promise<AddNodeInputFull> {
-    const service = await this.dampLabServicePipe.transform(value.serviceId);
+    const service = await this.dampLabServices.findOneActive(value.serviceId);
+    if (!service) {
+      throw new BadRequestException(`DampLabService with ID ${value.serviceId} does not exist or is deleted`);
+    }
     const multiValueParamIds = getMultiValueParamIds(service.parameters);
     const formData = normalizeFormDataToArray(value.formData, multiValueParamIds);
     const roles: string[] = this.request?.user?.realm_access?.roles ?? [];

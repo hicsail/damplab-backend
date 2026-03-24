@@ -1,4 +1,4 @@
-import { UseGuards } from '@nestjs/common';
+import { Logger, UseGuards } from '@nestjs/common';
 import { WorkflowNode, WorkflowNodeState } from '../models/node.model';
 import { Parent, Resolver, ResolveField, Mutation, Query, ID, Args, Float } from '@nestjs/graphql';
 import { DampLabServices } from '../../services/damplab-services.services';
@@ -22,6 +22,8 @@ import { WorkflowParameterFilesService } from '../services/workflow-parameter-fi
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
+  private readonly logger = new Logger(WorkflowNodeResolver.name);
+
   constructor(
     private readonly damplabServices: DampLabServices,
     private readonly nodeService: WorkflowNodeService,
@@ -119,15 +121,15 @@ export class WorkflowNodeResolver {
   @ResolveField()
   async service(@Parent() node: WorkflowNode): Promise<DampLabService> {
     if (node.service instanceof mongoose.Types.ObjectId) {
-      const service = await this.damplabServices.findOne(node.service.toString());
+      const id = node.service.toString();
+      const service = await this.damplabServices.findOne(id);
       if (service !== null) {
         return service;
-      } else {
-        throw new Error(`Could not find service with ID ${node.service}`);
       }
-    } else {
-      return node.service as DampLabService;
+      this.logger.warn(`Missing DampLabService ${id} on workflow node ${node._id}; returning placeholder`);
+      return this.damplabServices.placeholderForMissingService(id);
     }
+    return node.service as DampLabService;
   }
 
   /**

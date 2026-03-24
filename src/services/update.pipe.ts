@@ -1,15 +1,21 @@
-import { Injectable, PipeTransform } from '@nestjs/common';
-import { DampLabServicePipe } from '../services/damplab-services.pipe';
+import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
+import { DampLabServices } from './damplab-services.services';
 import { ServiceChange } from './dtos/update.dto';
 
 @Injectable()
 export class ServiceUpdatePipe implements PipeTransform<ServiceChange, Promise<ServiceChange>> {
-  constructor(private readonly damplabServicePipe: DampLabServicePipe) {}
+  constructor(private readonly dampLabServices: DampLabServices) {}
 
   async transform(value: ServiceChange): Promise<ServiceChange> {
-    // If services is includes, make sure they are all valid
     if (value.allowedConnections) {
-      await Promise.all(value.allowedConnections.map((service) => this.damplabServicePipe.transform(service)));
+      await Promise.all(
+        value.allowedConnections.map(async (serviceId) => {
+          const active = await this.dampLabServices.findOneActive(serviceId);
+          if (!active) {
+            throw new BadRequestException(`DampLabService with ID ${serviceId} does not exist or is deleted`);
+          }
+        })
+      );
     }
 
     return value;
