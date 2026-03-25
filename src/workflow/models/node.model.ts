@@ -32,8 +32,8 @@ export class WorkflowNode {
   label: string;
 
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'WorkflowNode' })
-  @Field(() => DampLabService, { description: 'The service this node represents' })
-  service: mongoose.Types.ObjectId | DampLabService;
+  @Field(() => DampLabService, { nullable: true, description: 'The service this node represents' })
+  service: mongoose.Types.ObjectId | DampLabService | null;
 
   @Prop()
   @Field({ description: 'Additional instructions for this portion of the workflow' })

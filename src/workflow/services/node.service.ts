@@ -16,7 +16,7 @@ export class WorkflowNodeService {
 
   async create(newNode: AddNodeInputFull): Promise<WorkflowNode> {
     // TODO: Ensure the fields are valid
-    const node = { ...newNode, service: newNode.service._id };
+    const node = { ...newNode, service: newNode.service!._id };
     return this.workflowNodeModel.create(node);
   }
 
