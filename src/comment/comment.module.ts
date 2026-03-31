@@ -4,9 +4,10 @@ import { Comment, CommentSchema } from './comment.model';
 import { CommentResolver } from './comment.resolver';
 import { CommentService } from './comment.service';
 import { JobModule } from '../job/job.module';
+import { ActivityModule } from '../activity/activity.module';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: Comment.name, schema: CommentSchema }]), forwardRef(() => JobModule)],
+  imports: [MongooseModule.forFeature([{ name: Comment.name, schema: CommentSchema }]), forwardRef(() => JobModule), ActivityModule],
   providers: [CommentService, CommentResolver],
   exports: [CommentService]
 })

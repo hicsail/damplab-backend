@@ -20,6 +20,7 @@ import { JobAttachmentsService } from './job-attachments.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { UpdateSOWInput } from '../sow/dto/update-sow.input';
 import { JobFeedStatus } from './job-feed-status.model';
+import { ActivityService } from '../activity/activity.service';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -30,6 +31,7 @@ export class JobResolver {
     private readonly jobService: JobService,
     private readonly workflowService: WorkflowService,
     private readonly workflowNodeService: WorkflowNodeService,
+    private readonly activityService: ActivityService,
     @Inject(forwardRef(() => CommentService))
     private readonly commentService: CommentService,
     @Inject(forwardRef(() => SOWService))
@@ -121,7 +123,7 @@ export class JobResolver {
         : hasGroup(Role.ExternalCustomer)
         ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
         : undefined;
-    return this.jobService.create({
+    const created = await this.jobService.create({
       ...createJobInput,
       username: user.preferred_username,
       clientDisplayName: (createJobInput as any)?.clientDisplayName,
@@ -129,6 +131,13 @@ export class JobResolver {
       email: user.email,
       customerCategory
     });
+    await this.activityService.createEvent({
+      type: 'JOB_SUBMITTED',
+      message: `Job "${created.name}" was submitted`,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      jobId: String(created._id)
+    });
+    return created;
   }
 
   @Mutation(() => Job, {

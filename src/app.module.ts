@@ -20,6 +20,7 @@ import { AnnouncementModule } from './announcements/announcement.module';
 import { TemplateModule } from './template/template.module';
 import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
+import { ActivityModule } from './activity/activity.module';
 
 @Module({
   imports: [
@@ -55,7 +56,8 @@ import { CustomerManagementModule } from './customer-management/customer-managem
     AnnouncementModule,
     TemplateModule,
     BugReportModule,
-    CustomerManagementModule
+    CustomerManagementModule,
+    ActivityModule
   ],
   controllers: [AppController],
   providers: [AppService]

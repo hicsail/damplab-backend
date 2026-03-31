@@ -19,6 +19,7 @@ import { CurrentUser } from '../../auth/user.decorator';
 import { User } from '../../auth/user.interface';
 import { WorkflowParameterFileUpload, WorkflowParameterFileUploadRequest } from '../dtos/workflow-parameter-file.dto';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
+import { ActivityService } from '../../activity/activity.service';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
@@ -29,7 +30,8 @@ export class WorkflowNodeResolver {
     private readonly nodeService: WorkflowNodeService,
     private readonly workflowService: WorkflowService,
     private readonly keycloakService: KeycloakService,
-    private readonly workflowParameterFilesService: WorkflowParameterFilesService
+    private readonly workflowParameterFilesService: WorkflowParameterFilesService,
+    private readonly activityService: ActivityService
   ) {}
 
   @Mutation(() => WorkflowNode)
@@ -39,7 +41,19 @@ export class WorkflowNodeResolver {
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState
   ): Promise<WorkflowNode> {
-    return (await this.nodeService.updateState(workflowNode, newState))!;
+    const updated = (await this.nodeService.updateState(workflowNode, newState))!;
+    const serviceName =
+      (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
+      (updated as any)?.service?.name ||
+      'Service';
+    await this.activityService.createEvent({
+      type: 'LAB_NODE_STATE_CHANGED',
+      message: `Moved "${serviceName}" to ${newState}`,
+      actorDisplayName: undefined,
+      workflowNodeId: String(updated._id),
+      serviceName
+    });
+    return updated;
   }
 
   @Mutation(() => WorkflowNode)
@@ -50,7 +64,19 @@ export class WorkflowNodeResolver {
     @Args('assigneeId', { type: () => String, nullable: true }) assigneeId: string | null,
     @Args('assigneeDisplayName', { type: () => String, nullable: true }) assigneeDisplayName: string | null
   ): Promise<WorkflowNode> {
-    return (await this.nodeService.updateAssignee(workflowNode, assigneeId, assigneeDisplayName))!;
+    const updated = (await this.nodeService.updateAssignee(workflowNode, assigneeId, assigneeDisplayName))!;
+    const serviceName =
+      (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
+      (updated as any)?.service?.name ||
+      'Service';
+    await this.activityService.createEvent({
+      type: 'LAB_NODE_ASSIGNED',
+      message: assigneeDisplayName ? `Assigned "${serviceName}" to ${assigneeDisplayName}` : `Unassigned "${serviceName}"`,
+      actorDisplayName: undefined,
+      workflowNodeId: String(updated._id),
+      serviceName
+    });
+    return updated;
   }
 
   @Mutation(() => WorkflowNode)
@@ -60,7 +86,19 @@ export class WorkflowNodeResolver {
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('estimatedMinutes', { type: () => Float, nullable: true }) estimatedMinutes: number | null
   ): Promise<WorkflowNode> {
-    return (await this.nodeService.updateEstimatedMinutes(workflowNode, estimatedMinutes))!;
+    const updated = (await this.nodeService.updateEstimatedMinutes(workflowNode, estimatedMinutes))!;
+    const serviceName =
+      (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
+      (updated as any)?.service?.name ||
+      'Service';
+    await this.activityService.createEvent({
+      type: 'LAB_NODE_ESTIMATE_UPDATED',
+      message: estimatedMinutes != null ? `Updated estimate for "${serviceName}" to ${estimatedMinutes} min` : `Cleared estimate for "${serviceName}"`,
+      actorDisplayName: undefined,
+      workflowNodeId: String(updated._id),
+      serviceName
+    });
+    return updated;
   }
 
   @Query(() => [WorkflowNode], {
