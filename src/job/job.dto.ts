@@ -6,13 +6,13 @@ import { JobService } from './job.service';
 
 @InputType()
 // CreateJobInput is what the user supplies, and what the CreateJobPipe receives.
-export class CreateJobInput extends PickType(Job, ['name', 'institute', 'notes'] as const, InputType) {
+export class CreateJobInput extends PickType(Job, ['name', 'institute', 'notes', 'clientDisplayName'] as const, InputType) {
   @Field(() => [AddWorkflowInput], { description: 'The workflows that were submitted together' })
   workflows: AddWorkflowInput[];
 }
 
 // CreateJobPreProcessed is what the pipe outputs.
-export interface CreateJobPreProcessed extends Pick<Job, 'name' | 'institute' | 'notes' | 'state'> {
+export interface CreateJobPreProcessed extends Pick<Job, 'name' | 'institute' | 'notes' | 'clientDisplayName' | 'state'> {
   workflows: AddWorkflowInputFull[];
 }
 

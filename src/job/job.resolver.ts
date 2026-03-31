@@ -124,6 +124,7 @@ export class JobResolver {
     return this.jobService.create({
       ...createJobInput,
       username: user.preferred_username,
+      clientDisplayName: (createJobInput as any)?.clientDisplayName,
       sub: user.sub,
       email: user.email,
       customerCategory

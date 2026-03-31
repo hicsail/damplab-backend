@@ -62,6 +62,13 @@ export class Job {
   @Field({ description: 'Username of the person who submitted the job - from access token' })
   username: string;
 
+  @Prop({ required: false })
+  @Field({
+    description: 'Display name for the client (captured at checkout). Used for customer-facing documents like SOWs.',
+    nullable: true
+  })
+  clientDisplayName?: string;
+
   @Prop()
   @Field({ description: 'Subject id of the user - from access token' })
   sub: string;
