@@ -21,10 +21,18 @@ import { ScreeningResultSchema } from './models/screening-result.schema';
     ]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get('JWT_SECRET'),
-        signOptions: { expiresIn: '24h' }
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret || typeof secret !== 'string' || secret.trim().length === 0) {
+          console.error('MPI Module: JWT_SECRET is missing or invalid');
+          throw new Error('JWT_SECRET environment variable is not set or is invalid');
+        }
+        console.log('MPI Module: JWT_SECRET configured, length:', secret.length, 'type:', typeof secret);
+        return {
+          secret: secret,
+          signOptions: { expiresIn: '24h', algorithm: 'HS256' }
+        };
+      },
       inject: [ConfigService]
     })
   ],

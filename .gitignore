@@ -13,3 +13,5 @@
 /.vscode/
 .codebuddy/*
 .env.dev
+
+notes.md

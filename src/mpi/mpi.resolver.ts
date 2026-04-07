@@ -6,6 +6,8 @@ import { ScreeningResult } from './models/mpi.model';
 import { CreateSequenceInput, ScreeningInput, BatchScreeningInput } from './dtos/mpi.dto';
 import { Region } from './types';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
+import * as jwt from 'jsonwebtoken';
 
 interface Context {
   req: {
@@ -18,7 +20,7 @@ interface Context {
 @Injectable()
 @Resolver(() => Sequence)
 export class MPIResolver {
-  constructor(private readonly mpiService: MPIService, private readonly jwtService: JwtService) {}
+  constructor(private readonly mpiService: MPIService, private readonly jwtService: JwtService, private readonly configService: ConfigService) {}
 
   @Query(() => [Sequence])
   async sequences(): Promise<Sequence[]> {
@@ -43,7 +45,12 @@ export class MPIResolver {
     }
 
     try {
-      const payload = this.jwtService.verify(token);
+      const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        throw new Error('JWT_SECRET not configured');
+      }
+      // Use jsonwebtoken directly
+      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
       const screenings = await this.mpiService.getUserScreenings(payload.userId);
       return screenings.map((screening) => ({
         ...screening,
@@ -74,7 +81,12 @@ export class MPIResolver {
     }
 
     try {
-      const payload = this.jwtService.verify(token);
+      const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        throw new Error('JWT_SECRET not configured');
+      }
+      // Use jsonwebtoken directly
+      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
       return this.mpiService.createSequence(input, payload.userId);
     } catch (error) {
       throw new Error('Invalid token');
@@ -94,7 +106,12 @@ export class MPIResolver {
     }
 
     try {
-      const payload = this.jwtService.verify(token);
+      const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        throw new Error('JWT_SECRET not configured');
+      }
+      // Use jsonwebtoken directly
+      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
       return this.mpiService.screenSequence(input, payload.userId);
     } catch (error) {
       throw new Error('Invalid token');
@@ -114,7 +131,12 @@ export class MPIResolver {
     }
 
     try {
-      const payload = this.jwtService.verify(token);
+      const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        throw new Error('JWT_SECRET not configured');
+      }
+      // Use jsonwebtoken directly
+      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
       return this.mpiService.screenSequencesBatch(input, payload.userId);
     } catch (error) {
       throw new Error('Invalid token');

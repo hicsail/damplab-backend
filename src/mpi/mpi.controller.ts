@@ -3,10 +3,12 @@ import { MPIService } from './mpi.service';
 import { Request, Response } from 'express';
 import { JwtService } from '@nestjs/jwt';
 import { Body } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import * as jwt from 'jsonwebtoken';
 
 @Controller('mpi')
 export class MPIController {
-  constructor(private readonly mpiService: MPIService, private readonly jwtService: JwtService) {}
+  constructor(private readonly mpiService: MPIService, private readonly jwtService: JwtService, private readonly configService: ConfigService) {}
 
   @Get('login')
   async login(@Query('state') state: string, @Query('redirectTo') redirectTo: string, @Res() res: Response): Promise<void> {
@@ -40,11 +42,11 @@ export class MPIController {
       const { state: originalState, redirectTo } = JSON.parse(state);
 
       const { token } = await this.mpiService.exchangeCodeForToken(code, originalState);
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3100';
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
       const redirectUrl = `${frontendUrl}${redirectTo}?token=${encodeURIComponent(token)}`;
       res.redirect(redirectUrl);
     } catch (error) {
-      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3100';
+      const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
       res.redirect(`${frontendUrl}?error=auth_failed`);
     }
   }
@@ -62,13 +64,29 @@ export class MPIController {
     }
 
     try {
-      const payload = this.jwtService.verify(token);
+      // Get secret from ConfigService and use jsonwebtoken directly
+      const secret = this.configService.get<string>('JWT_SECRET');
+      console.log('MPI Status: Attempting verification, secret exists:', !!secret, 'secret type:', typeof secret, 'secret length:', secret?.length);
+      if (!secret) {
+        console.error('MPI Status: JWT_SECRET is missing from ConfigService');
+        return { loggedIn: false };
+      }
+      // Use jsonwebtoken directly to bypass NestJS JWT service issues
+      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
+      console.log('MPI Status: JWT verified, userId:', payload.userId);
       const userData = await this.mpiService.getUserData(payload.userId);
+      console.log('MPI Status: User data found:', !!userData);
       return {
         loggedIn: true,
         userInfo: userData
       };
     } catch (error) {
+      console.error('MPI Status check error:', error);
+      console.error('MPI Status check error message:', error?.message);
+      console.error('MPI Status check error stack:', error?.stack);
+      if (error?.response) {
+        console.error('MPI Status check error response:', error.response);
+      }
       return { loggedIn: false };
     }
   }
@@ -91,7 +109,12 @@ export class MPIController {
     }
 
     try {
-      const payload = this.jwtService.verify(token);
+      const secret = this.configService.get<string>('JWT_SECRET');
+      if (!secret) {
+        throw new HttpException('JWT_SECRET not configured', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+      // Use jsonwebtoken directly
+      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
       return await this.mpiService.logout(payload.userId);
     } catch (error) {
       throw new HttpException('Invalid token', HttpStatus.UNAUTHORIZED);

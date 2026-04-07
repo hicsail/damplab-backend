@@ -38,8 +38,11 @@ export class MPIService {
   private readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
 
   async getUserData(userId: string): Promise<any> {
+    console.log('MPI Service: Looking up user data for userId:', userId);
     const userData = await this.tokenStoreModel.findOne({ userId });
+    console.log('MPI Service: User data lookup result:', !!userData, 'has userInfo:', !!userData?.userInfo);
     if (!userData?.userInfo) {
+      console.error('MPI Service: User data not found for userId:', userId);
       throw new HttpException('User data not found', HttpStatus.NOT_FOUND);
     }
     return userData.userInfo;
@@ -69,9 +72,10 @@ export class MPIService {
       });
 
       const userInfo = userInfoResponse.data;
+      console.log('MPI Service: Saving user data for userId:', userInfo.sub);
 
       // Store in MongoDB instead of in-memory
-      await this.tokenStoreModel.findOneAndUpdate(
+      const savedData = await this.tokenStoreModel.findOneAndUpdate(
         { userId: userInfo.sub },
         {
           accessToken: access_token,
@@ -79,10 +83,12 @@ export class MPIService {
           accessTokenExpiration: new Date(Date.now() + tokenResponse.data.expires_in * 1000),
           userInfo: userInfo
         },
-        { upsert: true }
+        { upsert: true, new: true }
       );
+      console.log('MPI Service: User data saved:', !!savedData, 'userId:', savedData?.userId);
 
       const sessionToken = this.jwtService.sign({ userId: userInfo.sub }, { expiresIn: '24h' });
+      console.log('MPI Service: JWT token created for userId:', userInfo.sub);
 
       return {
         token: sessionToken,
