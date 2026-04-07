@@ -4,7 +4,7 @@ import { Connection, Types, Model } from 'mongoose';
 import { ServiceInput } from './dtos/service.dto';
 import { CategoryInput } from './dtos/category.dto';
 import { BundleInput } from './dtos/bundle.dto';
-// Import only the interfaces, not the document types
+import { Model, Types } from 'mongoose';
 import { DampLabService, DampLabServiceDocument } from '../services/models/damplab-service.model';
 import { Category, CategoryDocument } from '../categories/category.model';
 import { Bundle, BundleDocument } from '../bundles/bundles.model';
@@ -56,6 +56,8 @@ export class ResetService {
       const result = await this.serviceModel.create({
         name: service.name,
         icon: service.icon,
+        price: service.price,
+        pricingMode: service.pricingMode,
         parameters: service.parameters,
         allowedConnections: [],
         result: service.result,

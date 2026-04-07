@@ -3,6 +3,7 @@ import { GqlContextType, GqlExecutionContext } from '@nestjs/graphql';
 import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { Reflector } from '@nestjs/core';
+import { ConfigService } from '@nestjs/config';
 import { ROLES_KEY } from './roles/roles.decorator';
 import { Role } from './roles/roles.enum';
 import { User } from './user.interface';
@@ -16,7 +17,7 @@ interface RequestWithAuth extends Request {
 
 @Injectable()
 export class AuthRolesGuard implements CanActivate {
-  constructor(private jwtService: JwtService, private reflector: Reflector) {}
+  constructor(private configService: ConfigService, private jwtService: JwtService, private reflector: Reflector) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     let request;
@@ -29,7 +30,11 @@ export class AuthRolesGuard implements CanActivate {
     }
 
     const token = this.extractTokenFromHeader(request);
-    if (!token) {
+    if (token === undefined) {
+      if (this.configService.get('auth.disable')) {
+        console.debug('Auth is disabled for development - AuthRolesGuard not enforcing auth.');
+        return true;
+      }
       throw new UnauthorizedException('No token found');
     }
 
@@ -46,6 +51,10 @@ export class AuthRolesGuard implements CanActivate {
       const roles = payload.realm_access?.roles ?? [];
       const hasRole = requiredRoles.some((role) => roles.includes(role));
       if (!hasRole) {
+        if (this.configService.get('auth.disable')) {
+          console.debug('Auth is disabled for development - AuthRolesGuard not enforcing auth roles.');
+          return true;
+        }
         throw new ForbiddenException('You do not have the required role');
       }
     } catch (error) {

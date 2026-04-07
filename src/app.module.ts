@@ -13,10 +13,14 @@ import { WorkflowModule } from './workflow/workflow.module';
 import { CategoriesModule } from './categories/categories.module';
 import { BundlesModule } from './bundles/bundles.module';
 import { JobModule } from './job/job.module';
+import { SOWModule } from './sow/sow.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
 import { AnnouncementModule } from './announcements/announcement.module';
 import { TemplateModule } from './template/template.module';
+import { BugReportModule } from './bug-report/bug-report.module';
+import { CustomerManagementModule } from './customer-management/customer-management.module';
+import { ActivityModule } from './activity/activity.module';
 import { MPIModule } from './mpi/mpi.module';
 import { JwtModule } from '@nestjs/jwt';
 
@@ -26,7 +30,8 @@ import { JwtModule } from '@nestjs/jwt';
     getConfigModule(),
     GraphQLModule.forRoot<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: true
+      autoSchemaFile: true,
+      graphiql: true
     }),
 
     // Load the MongoDB connection based on the config service
@@ -43,16 +48,18 @@ import { JwtModule } from '@nestjs/jwt';
     CategoriesModule,
     BundlesModule,
     JobModule,
+    SOWModule,
 
     // NOTE: The Reset module is for development purposes only and will
     // be removed in future version
     ResetModule,
 
     CommentModule,
-
     AnnouncementModule,
-
     TemplateModule,
+    BugReportModule,
+    CustomerManagementModule,
+    ActivityModule,
 
     MPIModule,
 
@@ -82,13 +89,14 @@ export class AppModule {}
  *   If no ENV_FILE is provided:
  *   → Loads `.env`
  */
-function getConfigModule(): DynamicModule {
+function getConfigModule(): Promise<DynamicModule> {
   // Determine which .env file to load
   const envFile = process.env.ENV_FILE ? `.env.${process.env.ENV_FILE}` : '.env';
 
   console.info(`Loading config from: ${envFile}`);
   return ConfigModule.forRoot({
     envFilePath: envFile,
-    load: [config]
+    load: [config],
+    isGlobal: true
   });
 }

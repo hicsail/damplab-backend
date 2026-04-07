@@ -7,6 +7,8 @@ import { BundlesService } from './bundles.service';
 import { BundlesPipe } from './bundles.pipe';
 import { BundleChange } from './dtos/update.dto';
 import { BundleUpdatePipe } from './update.pipe';
+import { CreateBundle } from './dtos/create.dto';
+import { CreateBundlePipe } from './create.pipe';
 
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles/roles.decorator';
@@ -26,6 +28,19 @@ export class BundlesResolver {
   @Roles(Role.DamplabStaff)
   async updateBundle(@Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle, @Args('changes', { type: () => BundleChange }, BundleUpdatePipe) changes: BundleChange): Promise<Bundle> {
     return this.bundlesService.update(bundle, changes);
+  }
+
+  @Mutation(() => Boolean)
+  @Roles(Role.DamplabStaff)
+  async deleteBundle(@Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle): Promise<boolean> {
+    await this.bundlesService.delete(bundle);
+    return true;
+  }
+
+  @Mutation(() => Bundle)
+  @Roles(Role.DamplabStaff)
+  async createBundle(@Args('bundle', CreateBundlePipe) bundle: CreateBundle): Promise<Bundle> {
+    return this.bundlesService.create(bundle);
   }
 
   @ResolveField()

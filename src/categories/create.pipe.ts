@@ -1,15 +1,17 @@
-import { Injectable, PipeTransform } from '@nestjs/common';
-import { DampLabServicePipe } from '../services/damplab-services.pipe';
+import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
+import { DampLabServices } from '../services/damplab-services.services';
 import { CreateCategory } from './dtos/create.dto';
 
 @Injectable()
 export class CreateCategoryPipe implements PipeTransform<CreateCategory, Promise<CreateCategory>> {
-  constructor(private readonly damplabServicePipe: DampLabServicePipe) {}
+  constructor(private readonly dampLabServices: DampLabServices) {}
 
   async transform(value: CreateCategory): Promise<CreateCategory> {
-    // Ensure the services are valid
-    for (const service of value.services) {
-      await this.damplabServicePipe.transform(service);
+    for (const serviceId of value.services) {
+      const active = await this.dampLabServices.findOneActive(serviceId);
+      if (!active) {
+        throw new BadRequestException(`DampLabService with ID ${serviceId} does not exist or is deleted`);
+      }
     }
 
     return value;

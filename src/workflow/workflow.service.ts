@@ -1,17 +1,20 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import mongoose, { Model } from 'mongoose';
 import { Workflow, WorkflowDocument, WorkflowState } from './models/workflow.model';
 import { AddWorkflowInputFull } from './dtos/add-workflow.input';
 import { WorkflowNodeService } from './services/node.service';
 import { WorkflowEdgeService } from './services/edge.service';
+import { JobService } from '../job/job.service';
 
 @Injectable()
 export class WorkflowService {
   constructor(
     @InjectModel(Workflow.name) private readonly workflowModel: Model<WorkflowDocument>,
     private readonly nodeService: WorkflowNodeService,
-    private readonly edgeService: WorkflowEdgeService
+    private readonly edgeService: WorkflowEdgeService,
+    @Inject(forwardRef(() => JobService))
+    private readonly jobService: JobService
   ) {}
 
   async create(createWorkflowInput: AddWorkflowInputFull): Promise<Workflow> {
@@ -48,7 +51,19 @@ export class WorkflowService {
     return this.workflowModel.find({ state });
   }
 
+  /** Workflows in this state that belong to jobs accepted by technicians (for lab monitor). */
+  async getByStateForApprovedJobs(state: WorkflowState): Promise<Workflow[]> {
+    const approvedWorkflowIds = await this.jobService.getWorkflowIdsForApprovedJobs();
+    if (approvedWorkflowIds.length === 0) return [];
+    return this.workflowModel.find({ state, _id: { $in: approvedWorkflowIds } });
+  }
+
   async findByIds(ids: mongoose.Types.ObjectId[]): Promise<Workflow[]> {
     return this.workflowModel.find({ _id: { $in: ids } });
+  }
+
+  /** Find the workflow that contains this node (for lab monitor node → workflow → job). */
+  async findWhereNodeId(nodeId: string): Promise<Workflow | null> {
+    return this.workflowModel.findOne({ nodes: new mongoose.Types.ObjectId(nodeId) }).exec();
   }
 }

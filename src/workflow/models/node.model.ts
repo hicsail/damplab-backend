@@ -32,15 +32,17 @@ export class WorkflowNode {
   label: string;
 
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'WorkflowNode' })
-  @Field(() => DampLabService, { description: 'The service this node represents' })
-  service: mongoose.Types.ObjectId | DampLabService;
+  @Field(() => DampLabService, { nullable: true, description: 'The service this node represents' })
+  service: mongoose.Types.ObjectId | DampLabService | null;
 
   @Prop()
   @Field({ description: 'Additional instructions for this portion of the workflow' })
   additionalInstructions: string;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
-  @Field(() => JSON, { description: 'Parameters defined earlier in the graph' })
+  @Field(() => JSON, {
+    description: 'Parameters defined earlier in the graph. Always returned as an array of { id, value }; multi-value params have value: string[]. Stored in array shape for new/updated nodes.'
+  })
   formData: any;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
@@ -54,6 +56,22 @@ export class WorkflowNode {
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'Snapshot of service price at submission time' })
   price?: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Keycloak sub (or id) of assigned staff member' })
+  assigneeId?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Display name of assigned staff member' })
+  assigneeDisplayName?: string;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Estimated duration in minutes (lab monitor)' })
+  estimatedMinutes?: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When node entered IN_PROGRESS (for elapsed time)' })
+  startedAt?: Date;
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;

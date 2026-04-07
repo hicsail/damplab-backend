@@ -1,18 +1,18 @@
-import { InputType, PickType, Field } from '@nestjs/graphql';
-import { Job, JobState } from './job.model';
+import { Field, ID, InputType, Int, ObjectType, PickType } from '@nestjs/graphql';
+import { Job, JobAttachment, JobState } from './job.model';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
-import { BadRequestException, Injectable, PipeTransform } from '@nestjs/common';
+import { BadRequestException, Injectable, PipeTransform, Scope } from '@nestjs/common';
 import { JobService } from './job.service';
 
 @InputType()
 // CreateJobInput is what the user supplies, and what the CreateJobPipe receives.
-export class CreateJobInput extends PickType(Job, ['name', 'institute', 'notes'] as const, InputType) {
+export class CreateJobInput extends PickType(Job, ['name', 'institute', 'notes', 'clientDisplayName'] as const, InputType) {
   @Field(() => [AddWorkflowInput], { description: 'The workflows that were submitted together' })
   workflows: AddWorkflowInput[];
 }
 
 // CreateJobPreProcessed is what the pipe outputs.
-export interface CreateJobPreProcessed extends Pick<Job, 'name' | 'institute' | 'notes' | 'state'> {
+export interface CreateJobPreProcessed extends Pick<Job, 'name' | 'institute' | 'notes' | 'clientDisplayName' | 'state'> {
   workflows: AddWorkflowInputFull[];
 }
 
@@ -21,7 +21,52 @@ export interface CreateJobFull extends Omit<Job, '_id' | 'workflows' | 'submitte
   workflows: AddWorkflowInputFull[];
 }
 
-@Injectable()
+@InputType()
+export class JobAttachmentInput {
+  @Field()
+  filename: string;
+
+  @Field()
+  key: string;
+
+  @Field()
+  contentType: string;
+
+  @Field(() => Int)
+  size: number;
+}
+
+@InputType()
+export class JobAttachmentUploadRequest {
+  @Field()
+  filename: string;
+
+  @Field()
+  contentType: string;
+
+  @Field(() => Int)
+  size: number;
+}
+
+@ObjectType()
+export class JobAttachmentUpload {
+  @Field()
+  filename: string;
+
+  @Field()
+  uploadUrl: string;
+
+  @Field()
+  key: string;
+
+  @Field()
+  contentType: string;
+
+  @Field(() => Int)
+  size: number;
+}
+
+@Injectable({ scope: Scope.REQUEST })
 export class CreateJobPipe implements PipeTransform<CreateJobInput, Promise<CreateJobPreProcessed>> {
   constructor(private readonly workflowPipe: AddWorkflowInputPipe) {}
 

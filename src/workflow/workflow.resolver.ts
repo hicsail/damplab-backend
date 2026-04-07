@@ -1,4 +1,4 @@
-import { UseGuards } from '@nestjs/common';
+import { UseGuards, Inject, forwardRef } from '@nestjs/common';
 import { Resolver, Query, Mutation, Args, ResolveField, Parent, ID } from '@nestjs/graphql';
 import { Workflow, WorkflowState } from './models/workflow.model';
 import { WorkflowService } from './workflow.service';
@@ -10,11 +10,19 @@ import { WorkflowPipe } from './workflow.pipe';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
+import { Job } from '../job/job.model';
+import { JobService } from '../job/job.service';
 
 @Resolver(() => Workflow)
 @UseGuards(AuthRolesGuard)
 export class WorkflowResolver {
-  constructor(private readonly workflowService: WorkflowService, private readonly nodeService: WorkflowNodeService, private readonly edgeService: WorkflowEdgeService) {}
+  constructor(
+    private readonly workflowService: WorkflowService,
+    private readonly nodeService: WorkflowNodeService,
+    private readonly edgeService: WorkflowEdgeService,
+    @Inject(forwardRef(() => JobService))
+    private readonly jobService: JobService
+  ) {}
 
   @Query(() => Workflow, { nullable: true })
   @Roles(Role.DamplabStaff)
@@ -34,6 +42,14 @@ export class WorkflowResolver {
     return this.workflowService.getByState(state);
   }
 
+  @Query(() => [Workflow], {
+    description: 'Workflows in this state that belong to jobs accepted by technicians (for lab monitor).'
+  })
+  @Roles(Role.DamplabStaff)
+  async getWorkflowsByStateForLabMonitor(@Args('state', { type: () => WorkflowState }) state: WorkflowState): Promise<Workflow[]> {
+    return this.workflowService.getByStateForApprovedJobs(state);
+  }
+
   @ResolveField()
   async nodes(@Parent() workflow: Workflow): Promise<WorkflowNode[]> {
     return this.nodeService.getByIDs(workflow.nodes.map((node) => node._id.toString()));
@@ -42,5 +58,10 @@ export class WorkflowResolver {
   @ResolveField()
   async edges(@Parent() workflow: Workflow): Promise<WorkflowEdge[]> {
     return this.edgeService.getByIDs(workflow.edges.map((edge) => edge._id.toString()));
+  }
+
+  @ResolveField(() => Job, { nullable: true, description: 'The parent job this workflow belongs to' })
+  async job(@Parent() workflow: Workflow): Promise<Job | null> {
+    return this.jobService.findByWorkflow(workflow);
   }
 }

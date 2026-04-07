@@ -2,7 +2,7 @@ import { Field, InputType, OmitType } from '@nestjs/graphql';
 import { AddNodeInput, AddNodeInputFull, AddNodeInputPipe } from './add-node.input';
 import { AddEdgeInput } from './add-edge.input';
 import { Workflow } from '../models/workflow.model';
-import { Injectable, PipeTransform } from '@nestjs/common';
+import { Injectable, PipeTransform, Scope } from '@nestjs/common';
 
 /**
  * Input for making a new workflow. Removes the ID field from the workflow
@@ -23,7 +23,7 @@ export interface AddWorkflowInputFull extends Omit<Workflow, '_id' | 'nodes' | '
 }
 
 /** Verifies the services are valid */
-@Injectable()
+@Injectable({ scope: Scope.REQUEST })
 export class AddWorkflowInputPipe implements PipeTransform<AddWorkflowInput, Promise<AddWorkflowInputFull>> {
   constructor(private nodePipe: AddNodeInputPipe) {}
 
