@@ -8,6 +8,7 @@ import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder } from './dto/jobs-query.dto';
 import { JobFeedStatus, JobFeedStatusEntity, JobFeedStatusEntityDocument } from './job-feed-status.model';
+import { AddWorkflowInputFull } from '../workflow/dtos/add-workflow.input';
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -29,7 +30,36 @@ export class JobService {
         return createdWorkflow._id;
       })
     );
-    return this.jobModel.create({ ...createJobInput, workflows: workflowIDs, submitted: new Date() });
+
+    // Generate a customer-facing 5-digit numeric jobId (e.g., "04217").
+    // Note: This is separate from Mongo _id and is used only for display/reference.
+    const pad5 = (n: number): string => String(n).padStart(5, '0');
+    const nextJobId = async (): Promise<string> => {
+      const latest = await this.jobModel
+        .findOne({ jobId: { $exists: true, $ne: null } }, { jobId: 1 }, { sort: { jobId: -1 } })
+        .lean()
+        .exec();
+      const latestNum = latest?.jobId && /^\d+$/.test(String(latest.jobId)) ? Number(latest.jobId) : 0;
+      return pad5(latestNum + 1);
+    };
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const jobId = await nextJobId();
+      try {
+        return await this.jobModel.create({ ...createJobInput, jobId, workflows: workflowIDs, submitted: new Date() });
+      } catch (err: any) {
+        // Retry on duplicate key (race condition).
+        const code = err?.code;
+        if (code === 11000) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    // If we still collide repeatedly, fall back to a random 5-digit value (still unique-index protected).
+    // This is extremely unlikely; if it happens, it indicates heavy concurrent submissions.
+    const fallback = pad5(Math.floor(Math.random() * 100000));
+    return this.jobModel.create({ ...createJobInput, jobId: fallback, workflows: workflowIDs, submitted: new Date() });
   }
 
   async findAll(): Promise<Job[]> {
@@ -69,9 +99,7 @@ export class JobService {
   }
 
   async updateCustomerCategory(jobId: string, customerCategory: CustomerCategory): Promise<Job | null> {
-    return this.jobModel
-      .findOneAndUpdate({ _id: jobId }, { $set: { customerCategory } }, { new: true })
-      .exec();
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { customerCategory } }, { new: true }).exec();
   }
 
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {
@@ -96,6 +124,15 @@ export class JobService {
         { new: true }
       )
       .exec();
+  }
+
+  /**
+   * Append a newly-created workflow to an existing job.
+   * Intended for staff/technicians to update job scope as requirements change.
+   */
+  async addWorkflow(jobId: string, workflowInput: AddWorkflowInputFull): Promise<Job | null> {
+    const createdWorkflow = await this.workflowService.create(workflowInput);
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $push: { workflows: createdWorkflow._id } }, { new: true }).exec();
   }
 
   /**
@@ -177,8 +214,14 @@ export class JobService {
   }
 
   private async latestSubmittedAt(): Promise<Date | null> {
-    const latestBySubmitted = await this.jobModel.findOne({}, { submitted: 1 }, { sort: { submitted: -1 } }).lean().exec();
-    const latestByCreated = await this.jobModel.findOne({}, { _id: 1 }, { sort: { _id: -1 } }).lean().exec();
+    const latestBySubmitted = await this.jobModel
+      .findOne({}, { submitted: 1 }, { sort: { submitted: -1 } })
+      .lean()
+      .exec();
+    const latestByCreated = await this.jobModel
+      .findOne({}, { _id: 1 }, { sort: { _id: -1 } })
+      .lean()
+      .exec();
     const submittedAt = latestBySubmitted?.submitted ? new Date(latestBySubmitted.submitted) : null;
     const createdAt = latestByCreated?._id ? new mongoose.Types.ObjectId(String(latestByCreated._id)).getTimestamp() : null;
     if (submittedAt && createdAt) {
@@ -188,10 +231,7 @@ export class JobService {
   }
 
   async getJobsFeedStatus(): Promise<JobFeedStatus> {
-    const [latestSubmittedAt, statusDoc] = await Promise.all([
-      this.latestSubmittedAt(),
-      this.jobFeedStatusModel.findOne({ key: 'global' }).lean().exec()
-    ]);
+    const [latestSubmittedAt, statusDoc] = await Promise.all([this.latestSubmittedAt(), this.jobFeedStatusModel.findOne({ key: 'global' }).lean().exec()]);
     const viewedAt = statusDoc?.viewedAt ?? null;
     const hasUnseen = Boolean(latestSubmittedAt && (!viewedAt || latestSubmittedAt > viewedAt));
     return {
@@ -202,9 +242,7 @@ export class JobService {
   }
 
   async markJobsFeedViewed(now: Date = new Date()): Promise<JobFeedStatus> {
-    await this.jobFeedStatusModel
-      .findOneAndUpdate({ key: 'global' }, { $set: { viewedAt: now } }, { upsert: true, new: true })
-      .exec();
+    await this.jobFeedStatusModel.findOneAndUpdate({ key: 'global' }, { $set: { viewedAt: now } }, { upsert: true, new: true }).exec();
     const latestSubmittedAt = await this.latestSubmittedAt();
     return {
       viewedAt: now,

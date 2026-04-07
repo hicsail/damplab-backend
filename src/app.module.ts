@@ -21,6 +21,7 @@ import { TemplateModule } from './template/template.module';
 import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
 import { ActivityModule } from './activity/activity.module';
+import { InvoiceModule } from './invoice/invoice.module';
 
 @Module({
   imports: [
@@ -57,7 +58,8 @@ import { ActivityModule } from './activity/activity.module';
     TemplateModule,
     BugReportModule,
     CustomerManagementModule,
-    ActivityModule
+    ActivityModule,
+    InvoiceModule
   ],
   controllers: [AppController],
   providers: [AppService]

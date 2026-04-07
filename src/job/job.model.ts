@@ -52,6 +52,10 @@ export class Job {
   @Field(() => ID, { name: 'id' })
   _id: string;
 
+  @Prop({ required: true })
+  @Field({ description: 'Customer-facing job identifier (5-digit numeric string)' })
+  jobId: string;
+
   @Prop()
   @Field({ description: 'Human readable name of the workflow' })
   name: string;
@@ -126,3 +130,6 @@ export class Job {
 
 export type JobDocument = Job & Document;
 export const JobSchema = SchemaFactory.createForClass(Job);
+
+// Ensure customer-facing jobId is unique.
+JobSchema.index({ jobId: 1 }, { unique: true });

@@ -21,11 +21,62 @@ import { WorkflowNodeService } from '../workflow/services/node.service';
 import { UpdateSOWInput } from '../sow/dto/update-sow.input';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
+import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
 export class JobResolver {
   private readonly logger = new Logger(JobResolver.name);
+
+  /**
+   * Rebuild SOW line items from all workflows on the job (ordered nodes).
+   * Keeps invoice / SOW in sync when workflows are added (e.g. addWorkflowToJob) or repriced.
+   */
+  private async syncSowServicesFromJobWorkflows(jobId: string): Promise<void> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) return;
+
+    const existingSow = await this.sowService.findByJobId(jobId);
+    if (!existingSow) return;
+
+    const existingServices = existingSow.services ?? [];
+
+    const orderedNodes: any[] = [];
+    for (const workflowId of job.workflows ?? []) {
+      const workflow = await this.workflowService.findById(String(workflowId));
+      if (!workflow) continue;
+
+      const nodeIds = (workflow.nodes ?? []).map((n: any) => String(n));
+      if (!nodeIds.length) continue;
+
+      const nodes = await this.workflowNodeService.getByIDs(nodeIds);
+      const byId = new Map(nodes.map((n: any) => [String(n._id), n]));
+
+      for (const nodeId of nodeIds) {
+        const node = byId.get(nodeId);
+        if (node) orderedNodes.push(node);
+      }
+    }
+
+    if (orderedNodes.length === 0) return;
+
+    const servicesInput = orderedNodes.map((node: any, idx: number) => {
+      const existing = existingServices[idx];
+      const serviceId = String(node.service?._id ?? node.service);
+
+      return {
+        id: serviceId,
+        name: existing?.name ?? node.label ?? 'Service',
+        description: existing?.description ?? node.label ?? 'Service',
+        cost: existing?.cost ?? node.price ?? 0,
+        category: existing?.category ?? 'molecular-biology',
+        formData: node.formData ?? []
+      };
+    });
+
+    const updateInput: UpdateSOWInput = { services: servicesInput } as any;
+    await this.sowService.update(String(existingSow._id), updateInput);
+  }
 
   constructor(
     private readonly jobService: JobService,
@@ -141,12 +192,43 @@ export class JobResolver {
   }
 
   @Mutation(() => Job, {
+    description: 'Staff-only. Add a new workflow (service(s) + parameters) to an existing job.'
+  })
+  @Roles(Role.DamplabStaff)
+  async addWorkflowToJob(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @Args('workflow', { type: () => AddWorkflowInput }, AddWorkflowInputPipe) workflow: AddWorkflowInputFull,
+    @CurrentUser() user: User
+  ): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+
+    const updated = await this.jobService.addWorkflow(jobId, workflow);
+    if (!updated) {
+      throw new Error('Unable to update job with new workflow');
+    }
+
+    await this.syncSowServicesFromJobWorkflows(jobId);
+
+    await this.activityService.createEvent({
+      type: 'JOB_UPDATED',
+      message: `Added workflow "${workflow?.name ?? 'Workflow'}" to job "${job.name}"`,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      jobId: String(job._id)
+    });
+
+    return updated;
+  }
+
+  @Mutation(() => Job, {
     description: 'Change a submitted job customer category and reprice the existing SOW.'
   })
   async changeJobCustomerCategory(
     @Args('jobId', { type: () => ID }) jobId: string,
     @Args('customerCategory', { type: () => CustomerCategory }) customerCategory: CustomerCategory,
-    @CurrentUser() user: User,
+    @CurrentUser() user: User
   ): Promise<Job> {
     const job = await this.jobService.findById(jobId);
     if (!job) {
@@ -162,44 +244,7 @@ export class JobResolver {
 
     const updatedJob = await this.jobService.updateCustomerCategory(jobId, customerCategory);
 
-    const existingSow = await this.sowService.findByJobId(jobId);
-    if (existingSow) {
-      const existingServices = existingSow.services ?? [];
-
-      const orderedNodes: any[] = [];
-      for (const workflowId of job.workflows ?? []) {
-        const workflow = await this.workflowService.findById(String(workflowId));
-        if (!workflow) continue;
-
-        const nodeIds = (workflow.nodes ?? []).map((n: any) => String(n));
-        if (!nodeIds.length) continue;
-
-        const nodes = await this.workflowNodeService.getByIDs(nodeIds);
-        const byId = new Map(nodes.map((n: any) => [String(n._id), n]));
-
-        for (const nodeId of nodeIds) {
-          const node = byId.get(nodeId);
-          if (node) orderedNodes.push(node);
-        }
-      }
-
-      const servicesInput = orderedNodes.map((node: any, idx: number) => {
-        const existing = existingServices[idx];
-        const serviceId = String(node.service?._id ?? node.service);
-
-        return {
-          id: serviceId,
-          name: existing?.name ?? node.label ?? 'Service',
-          description: existing?.description ?? node.label ?? 'Service',
-          cost: existing?.cost ?? node.price ?? 0,
-          category: existing?.category ?? 'molecular-biology',
-          formData: node.formData ?? [],
-        };
-      });
-
-      const updateInput: UpdateSOWInput = { services: servicesInput } as any;
-      await this.sowService.update(String(existingSow._id), updateInput);
-    }
+    await this.syncSowServicesFromJobWorkflows(jobId);
 
     return updatedJob ?? job;
   }

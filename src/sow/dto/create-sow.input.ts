@@ -88,7 +88,11 @@ export class CreateSOWInput {
   @Field({ description: 'ID of the job this SOW is for' })
   jobId: string;
 
-  @Field({ description: 'SOW number (auto-generated if not provided)', nullable: true })
+  @Field({
+    description: 'Ignored — SOW number is always assigned by the server on create.',
+    nullable: true,
+    deprecationReason: 'SOW numbers are server-generated; do not send this field.'
+  })
   sowNumber?: string;
 
   @Field({ description: 'Date the SOW was created', nullable: true })
