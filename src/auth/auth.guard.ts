@@ -8,8 +8,6 @@ import { ROLES_KEY } from './roles/roles.decorator';
 import { Role } from './roles/roles.enum';
 import { User } from './user.interface';
 
-import { ConfigService } from '@nestjs/config';
-
 interface RequestWithAuth extends Request {
   user?: any;
 }

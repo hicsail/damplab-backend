@@ -4,7 +4,6 @@ import { Connection, Types, Model } from 'mongoose';
 import { ServiceInput } from './dtos/service.dto';
 import { CategoryInput } from './dtos/category.dto';
 import { BundleInput } from './dtos/bundle.dto';
-import { Model, Types } from 'mongoose';
 import { DampLabService, DampLabServiceDocument } from '../services/models/damplab-service.model';
 import { Category, CategoryDocument } from '../categories/category.model';
 import { Bundle, BundleDocument } from '../bundles/bundles.model';

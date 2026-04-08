@@ -4,7 +4,7 @@ import { json, urlencoded } from 'express';
 import * as cookieParser from 'cookie-parser';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { cors: true, bodyParser: false });
+  const app = await NestFactory.create(AppModule, { bodyParser: false });
   // Allow larger GraphQL payloads (e.g. SOW signature images as base64). Default would be ~100KB.
   app.use(json({ limit: '2mb' }));
   app.use(urlencoded({ extended: true, limit: '2mb' }));

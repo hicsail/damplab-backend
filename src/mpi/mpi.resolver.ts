@@ -9,10 +9,13 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as jwt from 'jsonwebtoken';
 
-interface Context {
+interface GqlContext {
   req: {
     headers: {
       authorization?: string;
+    };
+    cookies?: {
+      mpi_session?: string;
     };
   };
 }
@@ -21,6 +24,19 @@ interface Context {
 @Resolver(() => Sequence)
 export class MPIResolver {
   constructor(private readonly mpiService: MPIService, private readonly jwtService: JwtService, private readonly configService: ConfigService) {}
+
+  private getMpiUserId(context: GqlContext): string {
+    const token = context.req.cookies?.mpi_session;
+    if (!token) {
+      throw new Error('Not authenticated with MPI');
+    }
+    const secret = this.configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new Error('JWT_SECRET not configured');
+    }
+    const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
+    return payload.userId;
+  }
 
   @Query(() => [Sequence])
   async sequences(): Promise<Sequence[]> {
@@ -33,114 +49,38 @@ export class MPIResolver {
   }
 
   @Query(() => [ScreeningResult])
-  async getUserScreenings(@Context() context: Context): Promise<ScreeningResult[]> {
-    const authHeader = context.req.headers.authorization;
-    if (!authHeader) {
-      throw new Error('No authorization header');
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-      throw new Error('No token provided');
-    }
-
-    try {
-      const secret = this.configService.get<string>('JWT_SECRET');
-      if (!secret) {
-        throw new Error('JWT_SECRET not configured');
+  async getUserScreenings(@Context() context: GqlContext): Promise<ScreeningResult[]> {
+    const userId = this.getMpiUserId(context);
+    const screenings = await this.mpiService.getUserScreenings(userId);
+    return screenings.map((screening) => ({
+      ...screening,
+      sequence: {
+        ...screening.sequence,
+        seq: screening.sequence.seq || '',
+        type: screening.sequence.type || 'unknown',
+        annotations: screening.sequence.annotations || [],
+        userId: screening.sequence.userId || userId,
+        mpiId: screening.sequence.mpiId || ''
       }
-      // Use jsonwebtoken directly
-      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
-      const screenings = await this.mpiService.getUserScreenings(payload.userId);
-      return screenings.map((screening) => ({
-        ...screening,
-        sequence: {
-          ...screening.sequence,
-          seq: screening.sequence.seq || '',
-          type: screening.sequence.type || 'unknown',
-          annotations: screening.sequence.annotations || [],
-          userId: screening.sequence.userId || payload.userId,
-          mpiId: screening.sequence.mpiId || ''
-        }
-      }));
-    } catch (error) {
-      throw new Error('Invalid token');
-    }
+    }));
   }
 
   @Mutation(() => Sequence)
-  async createSequence(@Args('input') input: CreateSequenceInput, @Context() context: Context): Promise<Sequence> {
-    const authHeader = context.req.headers.authorization;
-    if (!authHeader) {
-      throw new Error('No authorization header');
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-      throw new Error('No token provided');
-    }
-
-    try {
-      const secret = this.configService.get<string>('JWT_SECRET');
-      if (!secret) {
-        throw new Error('JWT_SECRET not configured');
-      }
-      // Use jsonwebtoken directly
-      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
-      return this.mpiService.createSequence(input, payload.userId);
-    } catch (error) {
-      throw new Error('Invalid token');
-    }
+  async createSequence(@Args('input') input: CreateSequenceInput, @Context() context: GqlContext): Promise<Sequence> {
+    const userId = this.getMpiUserId(context);
+    return this.mpiService.createSequence(input, userId);
   }
 
   @Mutation(() => ScreeningResult)
-  async screenSequence(@Args('input') input: ScreeningInput, @Context() context: Context): Promise<ScreeningResult> {
-    const authHeader = context.req.headers.authorization;
-    if (!authHeader) {
-      throw new Error('No authorization header');
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-      throw new Error('No token provided');
-    }
-
-    try {
-      const secret = this.configService.get<string>('JWT_SECRET');
-      if (!secret) {
-        throw new Error('JWT_SECRET not configured');
-      }
-      // Use jsonwebtoken directly
-      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
-      return this.mpiService.screenSequence(input, payload.userId);
-    } catch (error) {
-      throw new Error('Invalid token');
-    }
+  async screenSequence(@Args('input') input: ScreeningInput, @Context() context: GqlContext): Promise<ScreeningResult> {
+    const userId = this.getMpiUserId(context);
+    return this.mpiService.screenSequence(input, userId);
   }
 
   @Mutation(() => [ScreeningResult])
-  async screenSequencesBatch(@Args('input') input: BatchScreeningInput, @Context() context: Context): Promise<ScreeningResult[]> {
-    const authHeader = context.req.headers.authorization;
-    if (!authHeader) {
-      throw new Error('No authorization header');
-    }
-
-    const token = authHeader.split(' ')[1];
-    if (!token) {
-      throw new Error('No token provided');
-    }
-
-    try {
-      const secret = this.configService.get<string>('JWT_SECRET');
-      if (!secret) {
-        throw new Error('JWT_SECRET not configured');
-      }
-      // Use jsonwebtoken directly
-      const payload = jwt.verify(token, secret, { algorithms: ['HS256'] }) as any;
-      return this.mpiService.screenSequencesBatch(input, payload.userId);
-    } catch (error) {
-      throw new Error('Invalid token');
-    }
+  async screenSequencesBatch(@Args('input') input: BatchScreeningInput, @Context() context: GqlContext): Promise<ScreeningResult[]> {
+    const userId = this.getMpiUserId(context);
+    return this.mpiService.screenSequencesBatch(input, userId);
   }
 
   @Mutation(() => Boolean)
