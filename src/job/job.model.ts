@@ -52,9 +52,13 @@ export class Job {
   @Field(() => ID, { name: 'id' })
   _id: string;
 
-  @Prop({ required: true })
-  @Field({ description: 'Customer-facing job identifier (5-digit numeric string)' })
-  jobId: string;
+  /** Assigned on create for new jobs; omitted on legacy jobs submitted before this field existed. */
+  @Prop({ required: false })
+  @Field({
+    description: 'Customer-facing job identifier (5-digit numeric string). Null for legacy jobs.',
+    nullable: true
+  })
+  jobId?: string;
 
   @Prop()
   @Field({ description: 'Human readable name of the workflow' })
@@ -131,5 +135,5 @@ export class Job {
 export type JobDocument = Job & Document;
 export const JobSchema = SchemaFactory.createForClass(Job);
 
-// Ensure customer-facing jobId is unique.
-JobSchema.index({ jobId: 1 }, { unique: true });
+// Unique among jobs that have a display id; sparse so many legacy docs without jobId do not conflict.
+JobSchema.index({ jobId: 1 }, { unique: true, sparse: true });
