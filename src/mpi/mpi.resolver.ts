@@ -3,7 +3,7 @@ import { Injectable, UseGuards } from '@nestjs/common';
 import { MPIService } from './mpi.service';
 import { Sequence } from './models/mpi.model';
 import { ScreeningResult } from './models/mpi.model';
-import { CreateSequenceInput, ScreeningInput, BatchScreeningInput } from './dtos/mpi.dto';
+import { BatchScreeningInput, BatchCreateSequencesInput } from './dtos/mpi.dto';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
@@ -13,21 +13,9 @@ import { User } from '../auth/user.interface';
 export class MPIResolver {
   constructor(private readonly mpiService: MPIService) {}
 
-  @Query(() => [Sequence])
-  @UseGuards(AuthRolesGuard)
-  async sequences(): Promise<Sequence[]> {
-    return this.mpiService.getSequences();
-  }
-
-  @Query(() => Sequence, { nullable: true })
-  @UseGuards(AuthRolesGuard)
-  async sequence(@Args('id') id: string): Promise<Sequence | null> {
-    return this.mpiService.getSequence(id);
-  }
-
   @Query(() => [ScreeningResult])
   @UseGuards(AuthRolesGuard)
-  async getUserScreenings(): Promise<ScreeningResult[]> {
+  async orgScreenings(): Promise<ScreeningResult[]> {
     const screenings = await this.mpiService.getOrgScreenings();
     return screenings.map((screening) => ({
       ...screening,
@@ -42,16 +30,13 @@ export class MPIResolver {
     }));
   }
 
-  @Mutation(() => Sequence)
+  @Mutation(() => [Sequence])
   @UseGuards(AuthRolesGuard)
-  async createSequence(@Args('input') input: CreateSequenceInput, @CurrentUser() user: User): Promise<Sequence> {
-    return this.mpiService.createSequence(input, user.sub);
-  }
-
-  @Mutation(() => ScreeningResult)
-  @UseGuards(AuthRolesGuard)
-  async screenSequence(@Args('input') input: ScreeningInput, @CurrentUser() user: User): Promise<ScreeningResult> {
-    return this.mpiService.screenSequence(input, user.sub);
+  async createSequencesBatch(
+    @Args('input') input: BatchCreateSequencesInput,
+    @CurrentUser() user: User
+  ): Promise<Sequence[]> {
+    return this.mpiService.createSequencesBatch(input.sequences, user.sub);
   }
 
   @Mutation(() => [ScreeningResult])

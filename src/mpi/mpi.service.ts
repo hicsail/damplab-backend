@@ -4,18 +4,12 @@ import { Model } from 'mongoose';
 import axios from 'axios';
 import { Sequence, ScreeningResult } from './types';
 import { Region } from './types';
-import { CreateSequenceInput, ScreeningInput } from './dtos/mpi.dto';
+import { BatchScreeningInput, CreateSequenceInput } from './dtos/mpi.dto';
 import { httpExceptionFromMpiAxiosError } from './mpi-http.util';
+import { MAX_MPI_SEQUENCE_BATCH } from './mpi.constants';
 
-interface BatchCreateResponse {
-  results: any[];
-  errors: any[];
-  summary: {
-    total: number;
-    successful: number;
-    failed: number;
-  };
-}
+/** No timeout — SecureDNA screening can run for a long time. */
+const MPI_AXIOS_REQUEST_CONFIG = { timeout: 0 as const };
 
 /** One element from MPI POST /secure-dna/screen (always returns an array) */
 interface MpiScreeningItem {
@@ -48,6 +42,27 @@ function formatThreatsFromMpi(threats: unknown[] | undefined): Array<{
 /** M2M auth maps to one MPI org user; only list sequences registered with MPI (mpiId). */
 function orgSequenceFilter(): Record<string, unknown> {
   return { mpiId: { $exists: true, $nin: [null, ''] } };
+}
+
+/**
+ * MPI Prisma `Annotation` uses `name`, not `description`. DAMPLab GraphQL uses `description`
+ * for feature labels; map so MPI create succeeds while we still persist the original shape locally.
+ */
+function bodyForMpiCreateSequence(input: CreateSequenceInput): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    name: input.name,
+    type: input.type,
+    seq: input.seq
+  };
+  if (input.annotations?.length) {
+    body.annotations = input.annotations.map((a) => ({
+      start: a.start,
+      end: a.end,
+      type: a.type,
+      name: (a.description?.trim() || a.type || 'feature').slice(0, 500)
+    }));
+  }
+  return body;
 }
 
 @Injectable()
@@ -99,12 +114,17 @@ export class MPIService {
     const token = await this.getServiceToken();
 
     try {
-      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/sequences`, input, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
+      const mpiResponse = await axios.post(
+        `${process.env.MPI_BACKEND}/sequences`,
+        bodyForMpiCreateSequence(input),
+        {
+          ...MPI_AXIOS_REQUEST_CONFIG,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
         }
-      });
+      );
 
       const now = new Date();
       const sequence = new this.sequenceModel({
@@ -127,46 +147,20 @@ export class MPIService {
     }
   }
 
-  async createSequences(sequences: Sequence[], userId?: string): Promise<BatchCreateResponse> {
-    const results = [];
-    const errors = [];
-
-    for (const sequence of sequences) {
-      try {
-        const result = await this.createSequence(sequence, userId);
-        results.push({
-          success: true,
-          sequence: result,
-          name: sequence.name
-        });
-      } catch (error) {
-        errors.push({
-          success: false,
-          error: error.message,
-          name: sequence.name,
-          sequence: sequence
-        });
-        console.error(`Failed to create sequence ${sequence.name}:`, error);
-      }
+  async createSequencesBatch(inputs: CreateSequenceInput[], userId?: string): Promise<Sequence[]> {
+    if (inputs.length === 0) {
+      throw new HttpException('No sequences to create', HttpStatus.BAD_REQUEST);
     }
-
-    return {
-      results,
-      errors,
-      summary: {
-        total: sequences.length,
-        successful: results.length,
-        failed: errors.length
-      }
-    };
+    if (inputs.length > MAX_MPI_SEQUENCE_BATCH) {
+      throw new HttpException(
+        `At most ${MAX_MPI_SEQUENCE_BATCH} sequences per batch`,
+        HttpStatus.BAD_REQUEST
+      );
+    }
+    return Promise.all(inputs.map((input) => this.createSequence(input, userId)));
   }
 
-  async getSequences(): Promise<Sequence[]> {
-    const sequences = await this.sequenceModel.find(orgSequenceFilter()).exec();
-    return sequences.map((seq) => seq.toJSON() as unknown as Sequence);
-  }
-
-  async getSequence(id: string): Promise<Sequence | null> {
+  private async getSequence(id: string): Promise<Sequence | null> {
     const sequence = await this.sequenceModel.findOne({ _id: id, ...orgSequenceFilter() }).exec();
     if (!sequence) return null;
     return sequence;
@@ -196,50 +190,6 @@ export class MPIService {
     return populatedResult.toJSON() as unknown as ScreeningResult;
   }
 
-  async screenSequence(input: ScreeningInput, userId?: string): Promise<ScreeningResult> {
-    const sequence = await this.getSequence(input.sequenceId);
-    if (!sequence) {
-      throw new HttpException('Sequence not found', HttpStatus.NOT_FOUND);
-    }
-    if (!sequence.mpiId) {
-      throw new HttpException('Sequence has no MPI id', HttpStatus.BAD_REQUEST);
-    }
-
-    const token = await this.getServiceToken();
-
-    try {
-      const body: Record<string, unknown> = {
-        sequenceId: sequence.mpiId,
-        region: input.region
-      };
-      if (input.providerReference?.trim()) {
-        body.provider_reference = input.providerReference.trim();
-      }
-
-      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen`, body, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const raw = mpiResponse.data;
-      const items: MpiScreeningItem[] = Array.isArray(raw) ? raw : [raw];
-      const mpiItem = items[0];
-      if (!mpiItem) {
-        throw new HttpException('Empty screening response from MPI', HttpStatus.BAD_GATEWAY);
-      }
-
-      return this.saveScreeningResult(sequence, mpiItem, input.region, userId);
-    } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      this.logger.error('Error in screenSequence', error);
-      throw httpExceptionFromMpiAxiosError(error, 'Failed to screen sequence in MPI');
-    }
-  }
-
   /**
    * All screening rows tied to org MPI sequences (M2M identity), not filtered by DAMPLab user.
    */
@@ -256,11 +206,14 @@ export class MPIService {
     return filtered.map((screening) => screening.toJSON() as unknown as ScreeningResult);
   }
 
-  async screenSequencesBatch(
-    input: { sequenceIds: string[]; region: Region; providerReference?: string },
-    userId?: string
-  ): Promise<ScreeningResult[]> {
+  async screenSequencesBatch(input: BatchScreeningInput, userId?: string): Promise<ScreeningResult[]> {
     const uniqueIds = [...new Set(input.sequenceIds)];
+    if (uniqueIds.length > MAX_MPI_SEQUENCE_BATCH) {
+      throw new HttpException(
+        `At most ${MAX_MPI_SEQUENCE_BATCH} sequences per screening request`,
+        HttpStatus.BAD_REQUEST
+      );
+    }
     const sequences = await Promise.all(uniqueIds.map((id) => this.getSequence(id)));
 
     const missing = sequences.filter((s) => !s);
@@ -286,6 +239,7 @@ export class MPIService {
 
     try {
       const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen`, body, {
+        ...MPI_AXIOS_REQUEST_CONFIG,
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'

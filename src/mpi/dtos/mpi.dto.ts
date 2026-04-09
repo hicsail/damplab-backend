@@ -32,18 +32,6 @@ export class CreateSequenceInput {
 }
 
 @InputType()
-export class ScreeningInput {
-  @Field()
-  sequenceId: string;
-
-  @Field(() => String)
-  region: Region;
-
-  @Field({ nullable: true, description: 'Optional batch label forwarded to MPI; auto-generated there if omitted' })
-  providerReference?: string;
-}
-
-@InputType()
 export class BatchScreeningInput {
   @Field(() => [String])
   sequenceIds: string[];
@@ -53,4 +41,10 @@ export class BatchScreeningInput {
 
   @Field({ nullable: true, description: 'Optional batch label forwarded to MPI; auto-generated there if omitted' })
   providerReference?: string;
+}
+
+@InputType()
+export class BatchCreateSequencesInput {
+  @Field(() => [CreateSequenceInput], { description: 'At most 100 sequences per request (MPI SecureDNA batch limit).' })
+  sequences: CreateSequenceInput[];
 }
