@@ -125,8 +125,7 @@ export class KeycloakService {
   /** Same precedence as `JobResolver.createJob` / `AddNodeInputPipe`. */
   deriveCustomerCategoryFromGroups(groups: { name?: string; path?: string }[]): CustomerCategory | undefined {
     const claims = this.claimsFromGroupList(groups);
-    const hasGroup = (groupName: string): boolean =>
-      claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
+    const hasGroup = (groupName: string): boolean => claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
     if (hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)) return CustomerCategory.INTERNAL_CUSTOMERS;
     if (hasGroup(Role.ExternalCustomerAcademic)) return CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC;
     if (hasGroup(Role.ExternalCustomerMarket)) return CustomerCategory.EXTERNAL_CUSTOMER_MARKET;
