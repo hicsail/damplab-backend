@@ -22,7 +22,6 @@ import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
 import { ActivityModule } from './activity/activity.module';
 import { MPIModule } from './mpi/mpi.module';
-import { JwtModule } from '@nestjs/jwt';
 
 @Module({
   imports: [
@@ -61,12 +60,7 @@ import { JwtModule } from '@nestjs/jwt';
     CustomerManagementModule,
     ActivityModule,
 
-    MPIModule,
-
-    JwtModule.register({
-      secret: process.env.JWT_SECRET,
-      signOptions: { expiresIn: '7d' }
-    })
+    MPIModule
   ],
   controllers: [AppController],
   providers: [AppService]

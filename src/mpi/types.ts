@@ -28,12 +28,6 @@ export enum Region {
   PRC = 'prc'
 }
 
-export interface ScreeningInput {
-  sequenceId: string;
-  region: Region;
-  provider_reference?: string;
-}
-
 export interface HitRegion {
   seq: string;
   seq_range_start: number;

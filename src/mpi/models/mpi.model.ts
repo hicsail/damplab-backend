@@ -126,6 +126,9 @@ export class ScreeningResult {
   @Field()
   status: string;
 
+  @Field({ nullable: true, description: 'Batch id from MPI (provider_reference)' })
+  providerReference?: string;
+
   @Field()
   userId: string;
 

@@ -1,16 +1,11 @@
-import { Injectable, UnauthorizedException, HttpException, HttpStatus } from '@nestjs/common';
+import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import axios from 'axios';
-import { Sequence, ScreeningResult, HazardHits } from './types';
-import { TokenStore, TokenStoreDocument } from './models/token-store.model';
-import { ScreeningInput, Region } from './types';
-import { JwtService } from '@nestjs/jwt';
-import { CreateSequenceInput } from './dtos/mpi.dto';
-
-const TOKEN_STORE_MODEL = 'TokenStore';
-const SEQUENCE_MODEL = 'Sequence';
-const SCREENING_RESULT_MODEL = 'ScreeningResult';
+import { Sequence, ScreeningResult } from './types';
+import { Region } from './types';
+import { CreateSequenceInput, ScreeningInput } from './dtos/mpi.dto';
+import { httpExceptionFromMpiAxiosError } from './mpi-http.util';
 
 interface BatchCreateResponse {
   results: any[];
@@ -22,170 +17,86 @@ interface BatchCreateResponse {
   };
 }
 
+/** One element from MPI POST /secure-dna/screen (always returns an array) */
+interface MpiScreeningItem {
+  sequenceId: string;
+  status: 'granted' | 'denied';
+  threats?: unknown[];
+  providerReference?: string | null;
+  region?: string;
+}
+
+function formatThreatsFromMpi(threats: unknown[] | undefined): Array<{
+  name: string;
+  hit_regions: Array<{ seq: string; seq_range_start: number; seq_range_end: number }>;
+  is_wild_type: boolean;
+  references: string[];
+}> {
+  return (threats || []).map((threat: any) => ({
+    name: threat.most_likely_organism?.name || 'Unknown Organism',
+    hit_regions:
+      threat.hit_regions?.map((region: any) => ({
+        seq: region.seq,
+        seq_range_start: region.seq_range_start,
+        seq_range_end: region.seq_range_end
+      })) || [],
+    is_wild_type: threat.is_wild_type ?? false,
+    references: threat.organisms?.map((org: any) => org.name) || []
+  }));
+}
+
+/** M2M auth maps to one MPI org user; only list sequences registered with MPI (mpiId). */
+function orgSequenceFilter(): Record<string, unknown> {
+  return { mpiId: { $exists: true, $nin: [null, ''] } };
+}
+
 @Injectable()
 export class MPIService {
+  private readonly logger = new Logger(MPIService.name);
+  private cachedToken: string | null = null;
+  private tokenExpiresAt = 0;
+  private readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
+
   constructor(
-    private readonly jwtService: JwtService,
-    @InjectModel(TOKEN_STORE_MODEL) private tokenStoreModel: Model<TokenStore>,
     @InjectModel('Sequence') private sequenceModel: Model<Sequence>,
     @InjectModel('ScreeningResult') private screeningResultModel: Model<ScreeningResult>
   ) {}
 
-  // Default user ID for backward compatibility
-  private defaultUserId = 'default_user';
-
-  // Token refresh threshold (5 minutes)
-  private readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
-
-  async getUserData(userId: string): Promise<any> {
-    console.log('MPI Service: Looking up user data for userId:', userId);
-    const userData = await this.tokenStoreModel.findOne({ userId });
-    console.log('MPI Service: User data lookup result:', !!userData, 'has userInfo:', !!userData?.userInfo);
-    if (!userData?.userInfo) {
-      console.error('MPI Service: User data not found for userId:', userId);
-      throw new HttpException('User data not found', HttpStatus.NOT_FOUND);
+  private async getServiceToken(): Promise<string> {
+    if (this.cachedToken && Date.now() < this.tokenExpiresAt - this.TOKEN_REFRESH_THRESHOLD) {
+      return this.cachedToken;
     }
-    return userData.userInfo;
-  }
-
-  async isLoggedIn(userId?: string): Promise<boolean> {
-    const id = userId || this.defaultUserId;
-    const userData = await this.tokenStoreModel.findOne({ userId: id });
-    return Boolean(userData?.accessToken && userData.accessTokenExpiration > new Date());
-  }
-
-  async exchangeCodeForToken(code: string, state: string): Promise<{ token: string; userInfo: any }> {
-    try {
-      const tokenResponse = await axios.post(`https://${process.env.AUTH0_DOMAIN}/oauth/token`, {
-        grant_type: 'authorization_code',
-        client_id: process.env.AUTH0_CLIENT_ID,
-        client_secret: process.env.AUTH0_CLIENT_SECRET,
-        code: code,
-        redirect_uri: process.env.AUTH0_CALLBACK_URL,
-        state: state
-      });
-
-      const { access_token } = tokenResponse.data;
-
-      const userInfoResponse = await axios.get(`https://${process.env.AUTH0_DOMAIN}/userinfo`, {
-        headers: { Authorization: `Bearer ${access_token}` }
-      });
-
-      const userInfo = userInfoResponse.data;
-      console.log('MPI Service: Saving user data for userId:', userInfo.sub);
-
-      // Store in MongoDB instead of in-memory
-      const savedData = await this.tokenStoreModel.findOneAndUpdate(
-        { userId: userInfo.sub },
-        {
-          accessToken: access_token,
-          refreshToken: tokenResponse.data.refresh_token,
-          accessTokenExpiration: new Date(Date.now() + tokenResponse.data.expires_in * 1000),
-          userInfo: userInfo
-        },
-        { upsert: true, new: true }
-      );
-      console.log('MPI Service: User data saved:', !!savedData, 'userId:', savedData?.userId);
-
-      const sessionToken = this.jwtService.sign({ userId: userInfo.sub }, { expiresIn: '24h' });
-      console.log('MPI Service: JWT token created for userId:', userInfo.sub);
-
-      return {
-        token: sessionToken,
-        userInfo: userInfo
-      };
-    } catch (error) {
-      if (axios.isAxiosError(error)) {
-        if (error.response?.status === 400) {
-          throw new HttpException('Invalid authorization code', HttpStatus.BAD_REQUEST);
-        } else if (error.response?.status === 401) {
-          throw new HttpException('Authentication failed', HttpStatus.UNAUTHORIZED);
-        }
-      }
-      throw new HttpException('Failed to exchange code for token', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
-
-  async getAccessToken(userId?: string): Promise<string> {
-    const id = userId || this.defaultUserId;
-    const userData = await this.tokenStoreModel.findOne({ userId: id });
-
-    if (!userData) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
-
-    // Check if token needs refresh (within 5 minutes of expiration)
-    const fiveMinutesFromNow = new Date(Date.now() + this.TOKEN_REFRESH_THRESHOLD);
-    if (userData.accessTokenExpiration < fiveMinutesFromNow) {
-      try {
-        await this.refreshToken(id);
-        const refreshedData = await this.tokenStoreModel.findOne({ userId: id });
-        if (!refreshedData) {
-          throw new UnauthorizedException('Failed to refresh token');
-        }
-        return refreshedData.accessToken;
-      } catch (error) {
-        console.error('Token refresh failed:', error);
-        throw new UnauthorizedException('Failed to refresh token');
-      }
-    }
-
-    return userData.accessToken;
-  }
-
-  async refreshToken(userId: string): Promise<void> {
-    const userData = await this.tokenStoreModel.findOne({ userId });
-    if (!userData || !userData.refreshToken) {
-      throw new UnauthorizedException('No refresh token found');
-    }
-
-    const tokenUrl = `https://${process.env.AUTH0_DOMAIN}/oauth/token`;
-    const payload = {
-      grant_type: 'refresh_token',
-      client_id: process.env.AUTH0_CLIENT_ID,
-      client_secret: process.env.AUTH0_CLIENT_SECRET,
-      refresh_token: userData.refreshToken
-    };
 
     try {
-      const response = await axios.post(tokenUrl, payload, {
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      const { access_token, refresh_token, expires_in } = response.data;
-      const accessTokenExpiration = new Date(Date.now() + expires_in * 1000);
-
-      // Update token in MongoDB
-      await this.tokenStoreModel.findOneAndUpdate(
-        { userId },
-        {
-          accessToken: access_token,
-          refreshToken: refresh_token || userData.refreshToken,
-          accessTokenExpiration
-        }
-      );
+      return await this.fetchServiceToken();
     } catch (error) {
-      console.error('Token refresh error:', error.response?.data || error.message);
-      if (axios.isAxiosError(error) && error.response?.status === 401) {
-        // If refresh token is invalid, clear the token store
-        await this.tokenStoreModel.deleteOne({ userId });
-      }
-      throw new Error('Failed to refresh token');
+      // Single retry: clear cache and try once more
+      this.cachedToken = null;
+      this.tokenExpiresAt = 0;
+      return await this.fetchServiceToken();
     }
   }
 
-  async logout(userId?: string): Promise<string> {
-    const id = userId || this.defaultUserId;
-    await this.tokenStoreModel.deleteOne({ userId: id });
-    return 'Successfully logged out, you can close this tab now.';
+  private async fetchServiceToken(): Promise<string> {
+    try {
+      const response = await axios.post(`https://${process.env.AUTH0_DOMAIN}/oauth/token`, {
+        grant_type: 'client_credentials',
+        client_id: process.env.MPI_M2M_CLIENT_ID,
+        client_secret: process.env.MPI_M2M_CLIENT_SECRET,
+        audience: process.env.AUTH0_AUDIENCE
+      });
+
+      const token = response.data.access_token;
+      this.cachedToken = token;
+      this.tokenExpiresAt = Date.now() + response.data.expires_in * 1000;
+      return token;
+    } catch (error) {
+      throw httpExceptionFromMpiAxiosError(error, 'Failed to obtain MPI service token');
+    }
   }
 
   async createSequence(input: CreateSequenceInput, userId?: string): Promise<Sequence> {
-    // First create in MPI backend
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
+    const token = await this.getServiceToken();
 
     try {
       const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/sequences`, input, {
@@ -195,22 +106,24 @@ export class MPIService {
         }
       });
 
-      // Then create in our database with the MPI ID
       const now = new Date();
       const sequence = new this.sequenceModel({
         ...input,
         type: input.type || 'unknown',
         annotations: input.annotations || [],
         userId: userId || 'system',
-        mpiId: mpiResponse.data.id, // Store the MPI ID
+        mpiId: mpiResponse.data.id,
         created_at: now,
         updated_at: now
       });
       const savedSequence = await sequence.save();
       return savedSequence.toJSON() as unknown as Sequence;
     } catch (error) {
-      console.error('Failed to create sequence in MPI:', error);
-      throw new HttpException('Failed to create sequence in MPI', HttpStatus.INTERNAL_SERVER_ERROR);
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error('Failed to create sequence in MPI', error);
+      throw httpExceptionFromMpiAxiosError(error, 'Failed to create sequence in MPI');
     }
   }
 
@@ -224,7 +137,7 @@ export class MPIService {
         results.push({
           success: true,
           sequence: result,
-          name: sequence.name // Including name for easier identification
+          name: sequence.name
         });
       } catch (error) {
         errors.push({
@@ -248,158 +161,174 @@ export class MPIService {
     };
   }
 
-  async getSequences(userId?: string): Promise<Sequence[]> {
-    const query = userId ? { userId } : {};
-    const sequences = await this.sequenceModel.find(query).exec();
+  async getSequences(): Promise<Sequence[]> {
+    const sequences = await this.sequenceModel.find(orgSequenceFilter()).exec();
     return sequences.map((seq) => seq.toJSON() as unknown as Sequence);
   }
 
-  async getSequence(id: string, userId?: string): Promise<Sequence | null> {
-    const query = userId ? { _id: id, userId } : { _id: id };
-    const sequence = await this.sequenceModel.findOne(query).exec();
+  async getSequence(id: string): Promise<Sequence | null> {
+    const sequence = await this.sequenceModel.findOne({ _id: id, ...orgSequenceFilter() }).exec();
     if (!sequence) return null;
     return sequence;
   }
 
-  async updateSequence(id: string, sequence: Partial<Sequence>, userId?: string): Promise<any> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const response = await axios.patch(`${process.env.MPI_BACKEND}/sequences/${id}`, sequence, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
+  private async saveScreeningResult(
+    sequence: Sequence,
+    mpiItem: MpiScreeningItem,
+    region: Region,
+    userId?: string
+  ): Promise<ScreeningResult> {
+    const formattedThreats = formatThreatsFromMpi(mpiItem.threats);
+    const result = new this.screeningResultModel({
+      sequence: sequence._id,
+      region,
+      status: mpiItem.status,
+      threats: formattedThreats,
+      userId: userId || sequence.userId,
+      providerReference: mpiItem.providerReference ?? undefined
     });
-    return response.data;
-  }
+    const savedResult = await result.save();
+    const populatedResult = await this.screeningResultModel.findById(savedResult._id).populate('sequence').exec();
 
-  async deleteSequence(id: string, userId?: string): Promise<boolean> {
-    const query = userId ? { _id: id, userId } : { _id: id };
-    const result = await this.sequenceModel.findOneAndDelete(query).exec();
-    return !!result;
+    if (!populatedResult) {
+      throw new HttpException('Failed to retrieve populated screening result', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    return populatedResult.toJSON() as unknown as ScreeningResult;
   }
 
   async screenSequence(input: ScreeningInput, userId?: string): Promise<ScreeningResult> {
-    // First get the sequence from our database
-    const sequence = await this.getSequence(input.sequenceId, userId);
+    const sequence = await this.getSequence(input.sequenceId);
     if (!sequence) {
       throw new HttpException('Sequence not found', HttpStatus.NOT_FOUND);
     }
-
-    // Get MPI token
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
+    if (!sequence.mpiId) {
+      throw new HttpException('Sequence has no MPI id', HttpStatus.BAD_REQUEST);
     }
+
+    const token = await this.getServiceToken();
 
     try {
-      // Call MPI backend for screening
-      const mpiResponse = await axios.post(
-        `${process.env.MPI_BACKEND}/secure-dna/screen`,
-        {
-          sequenceId: sequence.mpiId, // Use the MPI ID
-          region: input.region
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
+      const body: Record<string, unknown> = {
+        sequenceId: sequence.mpiId,
+        region: input.region
+      };
+      if (input.providerReference?.trim()) {
+        body.provider_reference = input.providerReference.trim();
+      }
+
+      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen`, body, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
         }
-      );
-
-      // Format threats to match our schema
-      const formattedThreats = (mpiResponse.data.threats || []).map((threat: any) => ({
-        name: threat.most_likely_organism?.name || 'Unknown Organism',
-        hit_regions:
-          threat.hit_regions?.map((region: any) => ({
-            seq: region.seq,
-            seq_range_start: region.seq_range_start,
-            seq_range_end: region.seq_range_end
-          })) || [],
-        is_wild_type: threat.is_wild_type || false,
-        references: threat.organisms?.map((org: any) => org.name) || []
-      }));
-
-      // Create screening result with MPI response
-      const result = new this.screeningResultModel({
-        sequence: sequence._id,
-        region: input.region,
-        status: mpiResponse.data.status,
-        threats: formattedThreats,
-        userId: userId || sequence.userId
       });
-      const savedResult = await result.save();
 
-      // Populate the sequence field before returning
-      const populatedResult = await this.screeningResultModel.findById(savedResult._id).populate('sequence').exec();
-
-      if (!populatedResult) {
-        throw new HttpException('Failed to retrieve populated screening result', HttpStatus.INTERNAL_SERVER_ERROR);
+      const raw = mpiResponse.data;
+      const items: MpiScreeningItem[] = Array.isArray(raw) ? raw : [raw];
+      const mpiItem = items[0];
+      if (!mpiItem) {
+        throw new HttpException('Empty screening response from MPI', HttpStatus.BAD_GATEWAY);
       }
-      return populatedResult.toJSON() as unknown as ScreeningResult;
+
+      return this.saveScreeningResult(sequence, mpiItem, input.region, userId);
     } catch (error) {
-      console.error('Error in screenSequence:', error);
-      throw new HttpException('Failed to screen sequence in MPI', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
-
-  async getScreeningResults(sequenceId: string, userId?: string): Promise<ScreeningResult[]> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
-    }
-    const response = await axios.get(`${process.env.MPI_BACKEND}/secure-dna/screen/${sequenceId}`, {
-      headers: {
-        Authorization: `Bearer ${token}`
+      if (error instanceof HttpException) {
+        throw error;
       }
-    });
-    return response.data;
-  }
-
-  async getUserScreenings(userId?: string): Promise<ScreeningResult[]> {
-    const token = await this.getAccessToken(userId);
-    if (!token) {
-      throw new UnauthorizedException('No token found, log in to MPI first');
+      this.logger.error('Error in screenSequence', error);
+      throw httpExceptionFromMpiAxiosError(error, 'Failed to screen sequence in MPI');
     }
-
-    // Get screenings from our local MongoDB
-    const localScreenings = await this.screeningResultModel.find({ userId }).populate('sequence').exec();
-    return localScreenings.map((screening) => screening.toJSON() as unknown as ScreeningResult);
   }
 
-  async screenSequencesBatch(input: { sequenceIds: string[]; region: Region }, userId?: string): Promise<ScreeningResult[]> {
-    const results: ScreeningResult[] = [];
+  /**
+   * All screening rows tied to org MPI sequences (M2M identity), not filtered by DAMPLab user.
+   */
+  async getOrgScreenings(): Promise<ScreeningResult[]> {
+    const localScreenings = await this.screeningResultModel
+      .find({})
+      .populate({
+        path: 'sequence',
+        match: orgSequenceFilter()
+      })
+      .exec();
 
-    // First verify all sequences exist
-    const sequences = await Promise.all(input.sequenceIds.map((id) => this.getSequence(id, userId)));
+    const filtered = localScreenings.filter((s) => s.sequence != null);
+    return filtered.map((screening) => screening.toJSON() as unknown as ScreeningResult);
+  }
 
-    // Check if any sequences were not found
-    const missingSequences = sequences.filter((seq) => !seq);
-    if (missingSequences.length > 0) {
+  async screenSequencesBatch(
+    input: { sequenceIds: string[]; region: Region; providerReference?: string },
+    userId?: string
+  ): Promise<ScreeningResult[]> {
+    const uniqueIds = [...new Set(input.sequenceIds)];
+    const sequences = await Promise.all(uniqueIds.map((id) => this.getSequence(id)));
+
+    const missing = sequences.filter((s) => !s);
+    if (missing.length > 0) {
       throw new HttpException('One or more sequences not found', HttpStatus.NOT_FOUND);
     }
 
-    // Start screening process for all sequences
-    for (const sequence of sequences) {
-      if (!sequence) continue; // Skip if sequence not found
-
-      try {
-        const result = await this.screenSequence(
-          {
-            sequenceId: sequence._id!.toString(),
-            region: input.region
-          },
-          userId
-        );
-        results.push(result);
-      } catch (error) {
-        console.error(`Failed to screen sequence ${sequence._id}:`, error);
-      }
+    const valid = sequences.filter((s): s is Sequence => !!s);
+    const missingMpi = valid.filter((s) => !s.mpiId);
+    if (missingMpi.length > 0) {
+      throw new HttpException('One or more sequences are missing MPI id', HttpStatus.BAD_REQUEST);
     }
 
-    return results;
+    const token = await this.getServiceToken();
+
+    const body: Record<string, unknown> = {
+      sequenceIds: valid.map((s) => s.mpiId!),
+      region: input.region
+    };
+    if (input.providerReference?.trim()) {
+      body.provider_reference = input.providerReference.trim();
+    }
+
+    try {
+      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen`, body, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const raw = mpiResponse.data;
+      const items: MpiScreeningItem[] = Array.isArray(raw) ? raw : [raw];
+      const byMpiId = new Map(valid.map((s) => [s.mpiId!, s]));
+      const expectedMpiIds = new Set(valid.map((s) => s.mpiId!));
+
+      for (const mpiItem of items) {
+        if (!byMpiId.has(mpiItem.sequenceId)) {
+          throw new HttpException(
+            `MPI screening response included unknown sequence id: ${mpiItem.sequenceId}`,
+            HttpStatus.BAD_GATEWAY
+          );
+        }
+      }
+
+      for (const mpiId of expectedMpiIds) {
+        if (!items.some((it) => it.sequenceId === mpiId)) {
+          throw new HttpException(
+            `MPI screening response missing result for sequence id: ${mpiId}`,
+            HttpStatus.BAD_GATEWAY
+          );
+        }
+      }
+
+      const saved: ScreeningResult[] = [];
+      for (const mpiItem of items) {
+        const sequence = byMpiId.get(mpiItem.sequenceId)!;
+        const row = await this.saveScreeningResult(sequence, mpiItem, input.region, userId);
+        saved.push(row);
+      }
+
+      return saved;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      this.logger.error('Error in screenSequencesBatch', error);
+      throw httpExceptionFromMpiAxiosError(error, 'Failed to screen sequences in MPI');
+    }
   }
 }

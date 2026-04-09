@@ -38,6 +38,9 @@ export class ScreeningInput {
 
   @Field(() => String)
   region: Region;
+
+  @Field({ nullable: true, description: 'Optional batch label forwarded to MPI; auto-generated there if omitted' })
+  providerReference?: string;
 }
 
 @InputType()
@@ -47,4 +50,7 @@ export class BatchScreeningInput {
 
   @Field(() => String)
   region: Region;
+
+  @Field({ nullable: true, description: 'Optional batch label forwarded to MPI; auto-generated there if omitted' })
+  providerReference?: string;
 }

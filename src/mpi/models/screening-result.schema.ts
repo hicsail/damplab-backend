@@ -21,7 +21,9 @@ export const ScreeningResultSchema = new Schema(
     region: { type: String, required: true, enum: Object.values(Region) },
     threats: { type: [HazardHitsSchema], default: [] },
     status: { type: String, required: true, enum: ['granted', 'denied'] },
-    userId: { type: String, required: true }
+    userId: { type: String, required: true },
+    /** Echoes MPI batch / provider_reference (same for all rows from one screen call) */
+    providerReference: { type: String, required: false }
   },
   {
     timestamps: true,
