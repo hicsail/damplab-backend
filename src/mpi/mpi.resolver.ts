@@ -32,10 +32,7 @@ export class MPIResolver {
 
   @Mutation(() => [Sequence])
   @UseGuards(AuthRolesGuard)
-  async createSequencesBatch(
-    @Args('input') input: BatchCreateSequencesInput,
-    @CurrentUser() user: User
-  ): Promise<Sequence[]> {
+  async createSequencesBatch(@Args('input') input: BatchCreateSequencesInput, @CurrentUser() user: User): Promise<Sequence[]> {
     return this.mpiService.createSequencesBatch(input.sequences, user.sub);
   }
 

@@ -10,4 +10,3 @@ export class CreateInvoiceInput {
   })
   serviceIds: string[];
 }
-

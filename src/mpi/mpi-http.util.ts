@@ -11,13 +11,7 @@ function pickSafeMessage(data: unknown): string | undefined {
     return undefined;
   }
   const o = data as Record<string, unknown>;
-  const candidates = [
-    o.message,
-    o.error_description,
-    o.error,
-    o.detail,
-    o.title
-  ];
+  const candidates = [o.message, o.error_description, o.error, o.detail, o.title];
   for (const c of candidates) {
     if (typeof c === 'string' && c.trim()) {
       return c.trim();

@@ -72,10 +72,7 @@ export class MPIService {
   private tokenExpiresAt = 0;
   private readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
 
-  constructor(
-    @InjectModel('Sequence') private sequenceModel: Model<Sequence>,
-    @InjectModel('ScreeningResult') private screeningResultModel: Model<ScreeningResult>
-  ) {}
+  constructor(@InjectModel('Sequence') private sequenceModel: Model<Sequence>, @InjectModel('ScreeningResult') private screeningResultModel: Model<ScreeningResult>) {}
 
   private async getServiceToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.tokenExpiresAt - this.TOKEN_REFRESH_THRESHOLD) {
@@ -114,17 +111,13 @@ export class MPIService {
     const token = await this.getServiceToken();
 
     try {
-      const mpiResponse = await axios.post(
-        `${process.env.MPI_BACKEND}/sequences`,
-        bodyForMpiCreateSequence(input),
-        {
-          ...MPI_AXIOS_REQUEST_CONFIG,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
+      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/sequences`, bodyForMpiCreateSequence(input), {
+        ...MPI_AXIOS_REQUEST_CONFIG,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json'
         }
-      );
+      });
 
       const now = new Date();
       const sequence = new this.sequenceModel({
@@ -152,10 +145,7 @@ export class MPIService {
       throw new HttpException('No sequences to create', HttpStatus.BAD_REQUEST);
     }
     if (inputs.length > MAX_MPI_SEQUENCE_BATCH) {
-      throw new HttpException(
-        `At most ${MAX_MPI_SEQUENCE_BATCH} sequences per batch`,
-        HttpStatus.BAD_REQUEST
-      );
+      throw new HttpException(`At most ${MAX_MPI_SEQUENCE_BATCH} sequences per batch`, HttpStatus.BAD_REQUEST);
     }
     return Promise.all(inputs.map((input) => this.createSequence(input, userId)));
   }
@@ -166,12 +156,7 @@ export class MPIService {
     return sequence;
   }
 
-  private async saveScreeningResult(
-    sequence: Sequence,
-    mpiItem: MpiScreeningItem,
-    region: Region,
-    userId?: string
-  ): Promise<ScreeningResult> {
+  private async saveScreeningResult(sequence: Sequence, mpiItem: MpiScreeningItem, region: Region, userId?: string): Promise<ScreeningResult> {
     const formattedThreats = formatThreatsFromMpi(mpiItem.threats);
     const result = new this.screeningResultModel({
       sequence: sequence._id,
@@ -209,10 +194,7 @@ export class MPIService {
   async screenSequencesBatch(input: BatchScreeningInput, userId?: string): Promise<ScreeningResult[]> {
     const uniqueIds = [...new Set(input.sequenceIds)];
     if (uniqueIds.length > MAX_MPI_SEQUENCE_BATCH) {
-      throw new HttpException(
-        `At most ${MAX_MPI_SEQUENCE_BATCH} sequences per screening request`,
-        HttpStatus.BAD_REQUEST
-      );
+      throw new HttpException(`At most ${MAX_MPI_SEQUENCE_BATCH} sequences per screening request`, HttpStatus.BAD_REQUEST);
     }
     const sequences = await Promise.all(uniqueIds.map((id) => this.getSequence(id)));
 
@@ -253,19 +235,13 @@ export class MPIService {
 
       for (const mpiItem of items) {
         if (!byMpiId.has(mpiItem.sequenceId)) {
-          throw new HttpException(
-            `MPI screening response included unknown sequence id: ${mpiItem.sequenceId}`,
-            HttpStatus.BAD_GATEWAY
-          );
+          throw new HttpException(`MPI screening response included unknown sequence id: ${mpiItem.sequenceId}`, HttpStatus.BAD_GATEWAY);
         }
       }
 
       for (const mpiId of expectedMpiIds) {
         if (!items.some((it) => it.sequenceId === mpiId)) {
-          throw new HttpException(
-            `MPI screening response missing result for sequence id: ${mpiId}`,
-            HttpStatus.BAD_GATEWAY
-          );
+          throw new HttpException(`MPI screening response missing result for sequence id: ${mpiId}`, HttpStatus.BAD_GATEWAY);
         }
       }
 

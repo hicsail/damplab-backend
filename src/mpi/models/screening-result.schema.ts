@@ -1,5 +1,4 @@
 import { Schema } from 'mongoose';
-import { SequenceSchema } from './sequence.schema';
 import { Region } from '../types';
 
 export const HazardHitsSchema = new Schema({
