@@ -20,3 +20,4 @@ export class ActivityResolver {
     return this.activityService.listEvents({ limit, since });
   }
 }
+

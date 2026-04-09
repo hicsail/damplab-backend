@@ -93,6 +93,67 @@ function resolveCategoryPrice(
   return normalizePrice(pricing?.legacy ?? input.price);
 }
 
+function calculateParameterCost(parameters: unknown, rawFormData: unknown): number {
+  if (!Array.isArray(parameters)) return 0;
+
+  const paramsById = new Map<string, ServiceParameterDefinition>();
+  for (const param of parameters as ServiceParameterDefinition[]) {
+    if (!param || typeof param !== 'object') continue;
+    const id = typeof param.id === 'string' ? param.id : undefined;
+    if (!id) continue;
+    paramsById.set(id, param);
+  }
+
+  const multiValueParamIds = getMultiValueParamIds(parameters);
+  const formData = normalizeFormDataToArray(rawFormData, multiValueParamIds);
+  const formDataMap = new Map(formData.map((entry) => [entry.id, entry.value]));
+
+  let total = 0;
+
+  paramsById.forEach((param, id) => {
+    const rawValue = formDataMap.get(id);
+    const isMulti = multiValueParamIds.has(id) || Array.isArray(rawValue);
+
+    const options = Array.isArray(param.options) ? param.options : undefined;
+    const hasOptionPricing =
+      typeof param.type === 'string' && (param.type === 'dropdown' || param.type === 'enum') && !!options && options.some((opt) => resolveCategoryPrice(opt, undefined) !== undefined);
+
+    // When dropdown options have prices, use option-level pricing.
+    if (hasOptionPricing && options) {
+      const valuesArray = Array.isArray(rawValue) ? rawValue : rawValue != null ? [rawValue] : [];
+
+      for (const v of valuesArray) {
+        if (v === null || v === undefined || v === '') continue;
+        const optId = String(v);
+        const opt = options.find((o) => typeof o.id === 'string' && o.id === optId);
+        if (!opt) continue;
+        const price = resolveCategoryPrice(opt, undefined);
+        if (price === undefined) continue;
+        total += price;
+      }
+
+      return;
+    }
+
+    // Fallback: parameter-level pricing using per-parameter price and count of values.
+    const unitPrice = resolveCategoryPrice(param, undefined);
+    if (unitPrice === undefined) return;
+
+    let quantity = 0;
+    if (isMulti) {
+      if (Array.isArray(rawValue)) quantity = rawValue.length;
+      else if (rawValue !== null && rawValue !== undefined) quantity = 1;
+    } else if (rawValue !== null && rawValue !== undefined) {
+      quantity = 1;
+    }
+    if (quantity === 0) return;
+
+    total += unitPrice * quantity;
+  });
+
+  return total;
+}
+
 function getMultiplier(parameters: unknown, rawFormData: unknown): number {
   if (!Array.isArray(parameters)) return 1;
 
@@ -140,7 +201,8 @@ export function calculateServiceCost(service: DampLabService, rawFormData: unkno
   let baseCost = 0;
 
   if (pricingMode === ServicePricingMode.PARAMETER) {
-    // Parameter/option level pricing can also be category-specific; resolve inside calculateParameterCostWithCategory.
+    // Parameter/option level pricing can also be category-specific; resolve inside calculateParameterCost.
+    // To preserve the old signature, we pass category through by closing over it via resolveCategoryPrice below.
     baseCost = calculateParameterCostWithCategory(service.parameters, rawFormData, customerCategory);
   } else {
     const servicePrice = resolveCategoryPrice(

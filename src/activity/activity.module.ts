@@ -10,3 +10,4 @@ import { ActivityResolver } from './activity.resolver';
   exports: [ActivityService]
 })
 export class ActivityModule {}
+

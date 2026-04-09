@@ -24,7 +24,10 @@ describe('ActivityService', () => {
     };
 
     const moduleRef = await Test.createTestingModule({
-      providers: [ActivityService, { provide: getModelToken(ActivityEventEntity.name), useValue: model }]
+      providers: [
+        ActivityService,
+        { provide: getModelToken(ActivityEventEntity.name), useValue: model }
+      ]
     }).compile();
 
     const svc = moduleRef.get(ActivityService);
@@ -37,3 +40,4 @@ describe('ActivityService', () => {
     expect(events[1].message).toBe('hello');
   });
 });
+

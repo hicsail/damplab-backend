@@ -11,7 +11,10 @@ import { ActivityService } from '../activity/activity.service';
 @Resolver(() => Comment)
 @UseGuards(AuthRolesGuard)
 export class CommentResolver {
-  constructor(private readonly commentService: CommentService, private readonly activityService: ActivityService) {}
+  constructor(
+    private readonly commentService: CommentService,
+    private readonly activityService: ActivityService
+  ) {}
 
   @Query(() => Comment, { nullable: true, description: 'Get comment by ID' })
   async commentById(@Args('id', { type: () => ID }) id: string): Promise<Comment | null> {

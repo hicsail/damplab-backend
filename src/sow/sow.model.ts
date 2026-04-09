@@ -2,6 +2,7 @@ import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, registerEnumType, Float } from '@nestjs/graphql';
+import JSON from 'graphql-type-json';
 import { Job } from '../job/job.model';
 
 export enum SOWStatus {

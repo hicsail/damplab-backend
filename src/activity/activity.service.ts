@@ -41,3 +41,4 @@ export class ActivityService {
     return this.activityModel.find(filter).sort({ createdAt: -1 }).limit(limit).lean().exec();
   }
 }
+

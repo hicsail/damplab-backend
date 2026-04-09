@@ -1,5 +1,5 @@
 import { InputType, Field, Float } from '@nestjs/graphql';
-import { SOWServiceInput, SOWPricingAdjustmentInput, SOWDiscountInput } from './create-sow.input';
+import { SOWTimelineInput, SOWResourcesInput, SOWPricingInput, SOWServiceInput, SOWPricingAdjustmentInput, SOWDiscountInput } from './create-sow.input';
 import { SOWStatus } from '../sow.model';
 
 @InputType()
