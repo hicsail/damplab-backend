@@ -22,6 +22,24 @@ export class SOWService {
   ) {}
 
   /**
+   * Server-assigned SOW number for a new SOW. Clients must not supply sowNumber.
+   * Prefer `SOW <5-digit job display id>` when the job has one and it is unused; otherwise global sequence.
+   */
+  private async resolveSowNumberForNewSow(job: Job): Promise<string> {
+    const display = (job as any).jobId as string | undefined;
+    if (display != null && String(display).trim() !== '') {
+      const digits = String(display).replace(/\D/g, '');
+      const core = digits || String(display).trim();
+      const candidate = `SOW ${core.padStart(5, '0')}`;
+      const taken = await this.sowModel.findOne({ sowNumber: candidate }).exec();
+      if (!taken) {
+        return candidate;
+      }
+    }
+    return this.generateSOWNumber();
+  }
+
+  /**
    * Generate the next SOW number in sequence (e.g., "SOW 001", "SOW 002")
    */
   async generateSOWNumber(): Promise<string> {
@@ -189,17 +207,8 @@ export class SOWService {
     // Validate input data
     this.validateSOWData(createSOWInput);
 
-    // Generate SOW number if not provided
-    let sowNumber = createSOWInput.sowNumber;
-    if (!sowNumber) {
-      sowNumber = await this.generateSOWNumber();
-    } else {
-      // Check if provided SOW number is unique
-      const existingSOWWithNumber = await this.sowModel.findOne({ sowNumber }).exec();
-      if (existingSOWWithNumber) {
-        throw new BadRequestException(`SOW number ${sowNumber} already exists`);
-      }
-    }
+    // Always assign on the server; ignore any client-provided sowNumber.
+    const sowNumber = await this.resolveSowNumberForNewSow(job);
 
     // Transform services
     const services = await this.transformServices(createSOWInput.services, (job as any).customerCategory);
@@ -258,14 +267,6 @@ export class SOWService {
     // Validate input data
     this.validateSOWData(updateSOWInput);
 
-    // Check SOW number uniqueness if being updated
-    if (updateSOWInput.sowNumber && updateSOWInput.sowNumber !== sow.sowNumber) {
-      const existingSOWWithNumber = await this.sowModel.findOne({ sowNumber: updateSOWInput.sowNumber }).exec();
-      if (existingSOWWithNumber) {
-        throw new BadRequestException(`SOW number ${updateSOWInput.sowNumber} already exists`);
-      }
-    }
-
     // Transform services if provided
     let services = sow.services;
     if (updateSOWInput.services) {
@@ -283,7 +284,7 @@ export class SOWService {
       updatedAt: new Date()
     };
 
-    if (updateSOWInput.sowNumber !== undefined) updateData.sowNumber = updateSOWInput.sowNumber;
+    // sowNumber is never updated from the API (server-assigned at create).
     if (updateSOWInput.date !== undefined) updateData.date = updateSOWInput.date;
     if (updateSOWInput.sowTitle !== undefined) updateData.sowTitle = updateSOWInput.sowTitle;
     if (updateSOWInput.clientName !== undefined) updateData.clientName = updateSOWInput.clientName;
@@ -439,9 +440,8 @@ export class SOWService {
     const existingSOW = await this.findByJobId(jobId);
 
     if (existingSOW) {
-      // Update existing SOW
+      // Update existing SOW (do not pass sowNumber — it stays server-assigned)
       const updateInput: UpdateSOWInput = {
-        sowNumber: createSOWInput.sowNumber,
         date: createSOWInput.date,
         sowTitle: createSOWInput.sowTitle,
         clientName: createSOWInput.clientName,

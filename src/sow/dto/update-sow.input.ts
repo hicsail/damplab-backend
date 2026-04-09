@@ -40,7 +40,11 @@ export class UpdateSOWPricingInput {
 
 @InputType()
 export class UpdateSOWInput {
-  @Field({ description: 'SOW number', nullable: true })
+  @Field({
+    description: 'Ignored — SOW numbers are immutable after create.',
+    nullable: true,
+    deprecationReason: 'SOW numbers cannot be changed via update.'
+  })
   sowNumber?: string;
 
   @Field({ description: 'Date the SOW was created', nullable: true })

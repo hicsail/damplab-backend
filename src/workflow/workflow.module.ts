@@ -42,6 +42,6 @@ import { ActivityModule } from '../activity/activity.module';
     AddNodeInputPipe,
     WorkflowParameterFilesService
   ],
-  exports: [WorkflowPipe, WorkflowService, WorkflowNodeService, AddWorkflowInputPipe]
+  exports: [WorkflowPipe, WorkflowService, WorkflowNodeService, AddWorkflowInputPipe, AddNodeInputPipe]
 })
 export class WorkflowModule {}
