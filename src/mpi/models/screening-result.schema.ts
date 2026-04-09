@@ -28,15 +28,16 @@ export const ScreeningResultSchema = new Schema(
   {
     timestamps: true,
     toJSON: {
-      transform: function (doc, ret): any {
-        ret.id = ret._id;
-        ret.created_at = ret.createdAt;
-        ret.updated_at = ret.updatedAt;
-        delete ret._id;
-        delete ret.__v;
-        delete ret.createdAt;
-        delete ret.updatedAt;
-        return ret;
+      transform: function (_doc, ret): Record<string, unknown> {
+        const r = ret as Record<string, unknown>;
+        r.id = r._id;
+        r.created_at = r.createdAt;
+        r.updated_at = r.updatedAt;
+        delete r._id;
+        delete r.__v;
+        delete r.createdAt;
+        delete r.updatedAt;
+        return r;
       }
     }
   }
