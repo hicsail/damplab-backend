@@ -1,6 +1,6 @@
-import { Sequence, ScreeningResult, HazardHits } from './models/mpi.model';
+import type { Sequence, SecureDnaHazardHit, ScreeningBatch } from './models/mpi.model';
 
-export type { Sequence, ScreeningResult, HazardHits };
+export type { Sequence, SecureDnaHazardHit, ScreeningBatch };
 
 export type eLabsStatus = 'PENDING' | 'PROGRESS' | 'COMPLETED';
 
@@ -45,7 +45,7 @@ export interface RecordHit {
   fasta_header: string;
   line_number_range: number[];
   sequence_length: number;
-  hits_by_hazard: HazardHits[];
+  hits_by_hazard: SecureDnaHazardHit[];
 }
 
 export interface ScreeningResponse {

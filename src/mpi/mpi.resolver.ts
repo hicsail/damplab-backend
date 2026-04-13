@@ -1,33 +1,47 @@
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { Injectable, UseGuards } from '@nestjs/common';
 import { MPIService } from './mpi.service';
-import { Sequence } from './models/mpi.model';
-import { ScreeningResult } from './models/mpi.model';
+import { Sequence, ScreeningBatch } from './models/mpi.model';
 import { BatchScreeningInput, BatchCreateSequencesInput } from './dtos/mpi.dto';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
+
+function normalizeSequence(seq: Record<string, unknown>): Sequence {
+  return {
+    id: String(seq.id ?? ''),
+    name: (seq.name as string) || '',
+    type: (seq.type as Sequence['type']) || 'unknown',
+    seq: (seq.seq as string) || '',
+    annotations: (seq.annotations as Sequence['annotations']) || [],
+    userId: (seq.userId as string) || '',
+    mpiId: (seq.mpiId as string) || '',
+    created_at: seq.created_at as Date,
+    updated_at: seq.updated_at as Date
+  };
+}
+
+function normalizeScreeningBatch(batch: Record<string, unknown>): ScreeningBatch {
+  const sequences = ((batch.sequences as Record<string, unknown>[]) || []).map((slice) => ({
+    ...slice,
+    sequence: normalizeSequence((slice.sequence as Record<string, unknown>) || {})
+  }));
+  return {
+    ...batch,
+    sequences
+  } as ScreeningBatch;
+}
 
 @Injectable()
 @Resolver(() => Sequence)
 export class MPIResolver {
   constructor(private readonly mpiService: MPIService) {}
 
-  @Query(() => [ScreeningResult])
+  @Query(() => [ScreeningBatch])
   @UseGuards(AuthRolesGuard)
-  async orgScreenings(): Promise<ScreeningResult[]> {
-    const screenings = await this.mpiService.getOrgScreenings();
-    return screenings.map((screening) => ({
-      ...screening,
-      sequence: {
-        ...screening.sequence,
-        seq: screening.sequence.seq || '',
-        type: screening.sequence.type || 'unknown',
-        annotations: screening.sequence.annotations || [],
-        userId: screening.sequence.userId || '',
-        mpiId: screening.sequence.mpiId || ''
-      }
-    }));
+  async orgScreenings(): Promise<ScreeningBatch[]> {
+    const batches = await this.mpiService.getOrgScreenings();
+    return batches.map((b) => normalizeScreeningBatch(b as unknown as Record<string, unknown>));
   }
 
   @Mutation(() => [Sequence])
@@ -36,9 +50,10 @@ export class MPIResolver {
     return this.mpiService.createSequencesBatch(input.sequences, user.sub);
   }
 
-  @Mutation(() => [ScreeningResult])
+  @Mutation(() => ScreeningBatch)
   @UseGuards(AuthRolesGuard)
-  async screenSequencesBatch(@Args('input') input: BatchScreeningInput, @CurrentUser() user: User): Promise<ScreeningResult[]> {
-    return this.mpiService.screenSequencesBatch(input, user.sub);
+  async screenSequencesBatch(@Args('input') input: BatchScreeningInput, @CurrentUser() user: User): Promise<ScreeningBatch> {
+    const batch = await this.mpiService.screenSequencesBatch(input, user.sub);
+    return normalizeScreeningBatch(batch as unknown as Record<string, unknown>);
   }
 }

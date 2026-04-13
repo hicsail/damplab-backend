@@ -1,9 +1,10 @@
 import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Document, Model } from 'mongoose';
 import axios from 'axios';
-import { Sequence, ScreeningResult } from './types';
+import { Sequence } from './types';
 import { Region } from './types';
+import { ScreeningBatch } from './models/mpi.model';
 import { BatchScreeningInput, CreateSequenceInput } from './dtos/mpi.dto';
 import { httpExceptionFromMpiAxiosError } from './mpi-http.util';
 import { MAX_MPI_SEQUENCE_BATCH } from './mpi.constants';
@@ -11,32 +12,56 @@ import { MAX_MPI_SEQUENCE_BATCH } from './mpi.constants';
 /** No timeout — SecureDNA screening can run for a long time. */
 const MPI_AXIOS_REQUEST_CONFIG = { timeout: 0 as const };
 
-/** One element from MPI POST /secure-dna/screen (always returns an array) */
-interface MpiScreeningItem {
-  sequenceId: string;
-  status: 'granted' | 'denied';
-  threats?: unknown[];
-  providerReference?: string | null;
-  region?: string;
+interface MpiDiagnostic {
+  diagnostic: string;
+  additional_info: string;
+  line_number_range?: [number, number] | number[] | null;
 }
 
-function formatThreatsFromMpi(threats: unknown[] | undefined): Array<{
-  name: string;
-  hit_regions: Array<{ seq: string; seq_range_start: number; seq_range_end: number }>;
-  is_wild_type: boolean;
-  references: string[];
-}> {
-  return (threats || []).map((threat: any) => ({
-    name: threat.most_likely_organism?.name || 'Unknown Organism',
-    hit_regions:
-      threat.hit_regions?.map((region: any) => ({
-        seq: region.seq,
-        seq_range_start: region.seq_range_start,
-        seq_range_end: region.seq_range_end
-      })) || [],
-    is_wild_type: threat.is_wild_type ?? false,
-    references: threat.organisms?.map((org: any) => org.name) || []
-  }));
+interface MpiScreeningBatchResponse {
+  id: string;
+  createdAt: string | Date;
+  synthesisPermission: 'granted' | 'denied';
+  region: string;
+  providerReference?: string | null;
+  hitsByRecord?: unknown[];
+  warnings?: MpiDiagnostic[];
+  errors?: MpiDiagnostic[];
+  verifiable?: Record<string, unknown>;
+  sequences: Array<{
+    sequenceId: string;
+    name: string;
+    order: number;
+    originalSeq: string;
+    threats: unknown[];
+    warning?: string;
+  }>;
+}
+
+function normalizeDiagnostic(d: MpiDiagnostic): {
+  diagnostic: string;
+  additional_info: string;
+  line_number_range?: number[];
+} {
+  const lr = d.line_number_range;
+  const out: { diagnostic: string; additional_info: string; line_number_range?: number[] } = {
+    diagnostic: d.diagnostic,
+    additional_info: d.additional_info
+  };
+  if (lr != null && Array.isArray(lr) && lr.length >= 2) {
+    out.line_number_range = [Number(lr[0]), Number(lr[1])];
+  }
+  return out;
+}
+
+function assertScreeningBatchResponse(raw: unknown): asserts raw is MpiScreeningBatchResponse {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new HttpException('MPI screening returned an invalid response body', HttpStatus.BAD_GATEWAY);
+  }
+  const o = raw as Record<string, unknown>;
+  if (!Array.isArray(o.sequences)) {
+    throw new HttpException('MPI screening response missing sequences array', HttpStatus.BAD_GATEWAY);
+  }
 }
 
 /** M2M auth maps to one MPI org user; only list sequences registered with MPI (mpiId). */
@@ -72,7 +97,10 @@ export class MPIService {
   private tokenExpiresAt = 0;
   private readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
 
-  constructor(@InjectModel('Sequence') private sequenceModel: Model<Sequence>, @InjectModel('ScreeningResult') private screeningResultModel: Model<ScreeningResult>) {}
+  constructor(
+    @InjectModel('Sequence') private sequenceModel: Model<Sequence>,
+    @InjectModel('ScreeningBatch') private screeningBatchModel: Model<Document>
+  ) {}
 
   private async getServiceToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.tokenExpiresAt - this.TOKEN_REFRESH_THRESHOLD) {
@@ -82,7 +110,6 @@ export class MPIService {
     try {
       return await this.fetchServiceToken();
     } catch (error) {
-      // Single retry: clear cache and try once more
       this.cachedToken = null;
       this.tokenExpiresAt = 0;
       return await this.fetchServiceToken();
@@ -156,42 +183,26 @@ export class MPIService {
     return sequence;
   }
 
-  private async saveScreeningResult(sequence: Sequence, mpiItem: MpiScreeningItem, region: Region, userId?: string): Promise<ScreeningResult> {
-    const formattedThreats = formatThreatsFromMpi(mpiItem.threats);
-    const result = new this.screeningResultModel({
-      sequence: sequence._id,
-      region,
-      status: mpiItem.status,
-      threats: formattedThreats,
-      userId: userId || sequence.userId,
-      providerReference: mpiItem.providerReference ?? undefined
-    });
-    const savedResult = await result.save();
-    const populatedResult = await this.screeningResultModel.findById(savedResult._id).populate('sequence').exec();
-
-    if (!populatedResult) {
-      throw new HttpException('Failed to retrieve populated screening result', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-    return populatedResult.toJSON() as unknown as ScreeningResult;
-  }
-
   /**
-   * All screening rows tied to org MPI sequences (M2M identity), not filtered by DAMPLab user.
+   * All screening batches that include at least one org MPI sequence (M2M identity), not filtered by DAMPLab user.
    */
-  async getOrgScreenings(): Promise<ScreeningResult[]> {
-    const localScreenings = await this.screeningResultModel
-      .find({})
-      .populate({
-        path: 'sequence',
-        match: orgSequenceFilter()
-      })
+  async getOrgScreenings(): Promise<ScreeningBatch[]> {
+    const orgSequences = await this.sequenceModel.find(orgSequenceFilter()).select('_id').lean().exec();
+    const ids = orgSequences.map((s) => s._id);
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const batches = await this.screeningBatchModel
+      .find({ 'sequences.sequence': { $in: ids } })
+      .populate('sequences.sequence')
+      .sort({ createdAt: -1 })
       .exec();
 
-    const filtered = localScreenings.filter((s) => s.sequence != null);
-    return filtered.map((screening) => screening.toJSON() as unknown as ScreeningResult);
+    return batches.map((b) => b.toJSON() as unknown as ScreeningBatch);
   }
 
-  async screenSequencesBatch(input: BatchScreeningInput, userId?: string): Promise<ScreeningResult[]> {
+  async screenSequencesBatch(input: BatchScreeningInput, userId?: string): Promise<ScreeningBatch> {
     const uniqueIds = [...new Set(input.sequenceIds)];
     if (uniqueIds.length > MAX_MPI_SEQUENCE_BATCH) {
       throw new HttpException(`At most ${MAX_MPI_SEQUENCE_BATCH} sequences per screening request`, HttpStatus.BAD_REQUEST);
@@ -229,30 +240,64 @@ export class MPIService {
       });
 
       const raw = mpiResponse.data;
-      const items: MpiScreeningItem[] = Array.isArray(raw) ? raw : [raw];
+      assertScreeningBatchResponse(raw);
+      const data = raw;
+
       const byMpiId = new Map(valid.map((s) => [s.mpiId!, s]));
       const expectedMpiIds = new Set(valid.map((s) => s.mpiId!));
+      const sliceIds = new Set(data.sequences.map((s) => s.sequenceId));
 
-      for (const mpiItem of items) {
-        if (!byMpiId.has(mpiItem.sequenceId)) {
-          throw new HttpException(`MPI screening response included unknown sequence id: ${mpiItem.sequenceId}`, HttpStatus.BAD_GATEWAY);
-        }
+      if (data.sequences.length !== expectedMpiIds.size) {
+        throw new HttpException(
+          `MPI screening sequences count (${data.sequences.length}) does not match request (${expectedMpiIds.size})`,
+          HttpStatus.BAD_GATEWAY
+        );
       }
 
       for (const mpiId of expectedMpiIds) {
-        if (!items.some((it) => it.sequenceId === mpiId)) {
-          throw new HttpException(`MPI screening response missing result for sequence id: ${mpiId}`, HttpStatus.BAD_GATEWAY);
+        if (!sliceIds.has(mpiId)) {
+          throw new HttpException(`MPI screening response missing slice for sequence id: ${mpiId}`, HttpStatus.BAD_GATEWAY);
         }
       }
 
-      const saved: ScreeningResult[] = [];
-      for (const mpiItem of items) {
-        const sequence = byMpiId.get(mpiItem.sequenceId)!;
-        const row = await this.saveScreeningResult(sequence, mpiItem, input.region, userId);
-        saved.push(row);
+      for (const sid of sliceIds) {
+        if (!byMpiId.has(sid)) {
+          throw new HttpException(`MPI screening response included unknown sequence id: ${sid}`, HttpStatus.BAD_GATEWAY);
+        }
       }
 
-      return saved;
+      const sequenceSlices = data.sequences.map((slice) => {
+        const seq = byMpiId.get(slice.sequenceId)!;
+        return {
+          sequence: seq._id,
+          mpiSequenceId: slice.sequenceId,
+          name: slice.name,
+          order: slice.order,
+          originalSeq: slice.originalSeq,
+          threats: slice.threats ?? [],
+          ...(slice.warning ? { warning: slice.warning } : {})
+        };
+      });
+
+      const created = await this.screeningBatchModel.create({
+        mpiBatchId: data.id,
+        mpiCreatedAt: new Date(data.createdAt),
+        synthesisPermission: data.synthesisPermission,
+        region: input.region as Region,
+        providerReference: data.providerReference ?? null,
+        hitsByRecord: data.hitsByRecord ?? [],
+        warnings: (data.warnings ?? []).map(normalizeDiagnostic),
+        errors: (data.errors ?? []).map(normalizeDiagnostic),
+        verifiable: data.verifiable,
+        sequences: sequenceSlices,
+        userId: userId || valid[0].userId
+      });
+
+      const populated = await this.screeningBatchModel.findById(created._id).populate('sequences.sequence').exec();
+      if (!populated) {
+        throw new HttpException('Failed to load screening batch after save', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+      return populated.toJSON() as unknown as ScreeningBatch;
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;

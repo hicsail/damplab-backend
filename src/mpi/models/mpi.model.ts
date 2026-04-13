@@ -1,10 +1,19 @@
 import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
 import { Region } from '../types';
 
-// Register enums
 registerEnumType(Region, {
   name: 'Region',
   description: 'The region for screening'
+});
+
+export enum SecureDnaHitKind {
+  NUC = 'nuc',
+  AA = 'aa'
+}
+
+registerEnumType(SecureDnaHitKind, {
+  name: 'SecureDnaHitKind',
+  description: 'Nucleotide vs amino-acid hit from SecureDNA'
 });
 
 @ObjectType()
@@ -18,7 +27,7 @@ export class Annotation {
   @Field()
   type: string;
 
-  @Field({ nullable: true })
+  @Field(() => String, { nullable: true })
   description?: string;
 }
 
@@ -79,19 +88,56 @@ export class HitRegion {
   seq_range_end: number;
 }
 
+/** SecureDNA / MPI hazard hit shape (full `hits_by_record` / per-sequence `threats` entry). */
 @ObjectType()
-export class HazardHits {
-  @Field()
-  name: string;
+export class SecureDnaHazardHit {
+  @Field(() => SecureDnaHitKind)
+  type: SecureDnaHitKind;
+
+  @Field(() => Boolean, { nullable: true })
+  is_wild_type: boolean | null;
 
   @Field(() => [HitRegion])
   hit_regions: HitRegion[];
 
-  @Field()
-  is_wild_type: boolean;
+  @Field(() => Organism)
+  most_likely_organism: Organism;
 
-  @Field(() => [String], { defaultValue: [] })
-  references: string[];
+  @Field(() => [Organism])
+  organisms: Organism[];
+}
+
+@ObjectType()
+export class ScreeningDiagnostic {
+  @Field()
+  diagnostic: string;
+
+  @Field()
+  additional_info: string;
+
+  @Field(() => [Number], { nullable: true })
+  line_number_range?: number[] | null;
+}
+
+@ObjectType()
+export class VerifiableScreening {
+  @Field(() => String, { nullable: true })
+  synthclient_version?: string;
+
+  @Field(() => String, { nullable: true })
+  response_json?: string;
+
+  @Field(() => String, { nullable: true })
+  signature?: string;
+
+  @Field(() => String, { nullable: true })
+  public_key?: string;
+
+  @Field(() => String, { nullable: true })
+  history?: string;
+
+  @Field(() => String, { nullable: true })
+  sha3_256?: string;
 }
 
 @ObjectType()
@@ -105,29 +151,68 @@ export class RecordHit {
   @Field()
   sequence_length: number;
 
-  @Field(() => [HazardHits])
-  hits_by_hazard: HazardHits[];
+  @Field(() => [SecureDnaHazardHit])
+  hits_by_hazard: SecureDnaHazardHit[];
 }
 
 @ObjectType()
-export class ScreeningResult {
+export class ScreeningBatchSequenceSlice {
+  @Field(() => Sequence)
+  sequence: Sequence;
+
+  @Field()
+  mpiSequenceId: string;
+
+  @Field()
+  name: string;
+
+  @Field()
+  order: number;
+
+  @Field()
+  originalSeq: string;
+
+  @Field(() => [SecureDnaHazardHit])
+  threats: SecureDnaHazardHit[];
+
+  @Field(() => String, { nullable: true })
+  warning?: string;
+}
+
+@ObjectType()
+export class ScreeningBatch {
   @Field(() => ID)
   id: string;
 
-  @Field(() => Sequence)
-  sequence: Sequence;
+  @Field()
+  mpiBatchId: string;
+
+  @Field()
+  mpiCreatedAt: Date;
+
+  @Field()
+  synthesisPermission: string;
 
   @Field(() => String)
   region: Region;
 
-  @Field(() => [HazardHits])
-  threats: HazardHits[];
+  @Field(() => String, { nullable: true })
+  providerReference?: string | null;
 
-  @Field()
-  status: string;
+  @Field(() => [RecordHit])
+  hitsByRecord: RecordHit[];
 
-  @Field({ nullable: true, description: 'Batch id from MPI (provider_reference)' })
-  providerReference?: string;
+  @Field(() => [ScreeningDiagnostic])
+  warnings: ScreeningDiagnostic[];
+
+  @Field(() => [ScreeningDiagnostic])
+  errors: ScreeningDiagnostic[];
+
+  @Field(() => VerifiableScreening, { nullable: true })
+  verifiable?: VerifiableScreening;
+
+  @Field(() => [ScreeningBatchSequenceSlice])
+  sequences: ScreeningBatchSequenceSlice[];
 
   @Field()
   userId: string;

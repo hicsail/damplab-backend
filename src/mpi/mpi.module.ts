@@ -4,14 +4,14 @@ import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MPIResolver } from './mpi.resolver';
 import { SequenceSchema } from './models/sequence.schema';
-import { ScreeningResultSchema } from './models/screening-result.schema';
+import { ScreeningBatchSchema } from './models/screening-batch.schema';
 
 @Module({
   imports: [
     ConfigModule,
     MongooseModule.forFeature([
       { name: 'Sequence', schema: SequenceSchema },
-      { name: 'ScreeningResult', schema: ScreeningResultSchema }
+      { name: 'ScreeningBatch', schema: ScreeningBatchSchema }
     ])
   ],
   providers: [MPIService, MPIResolver],
