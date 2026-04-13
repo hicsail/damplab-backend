@@ -97,10 +97,7 @@ export class MPIService {
   private tokenExpiresAt = 0;
   private readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
 
-  constructor(
-    @InjectModel('Sequence') private sequenceModel: Model<Sequence>,
-    @InjectModel('ScreeningBatch') private screeningBatchModel: Model<Document>
-  ) {}
+  constructor(@InjectModel('Sequence') private sequenceModel: Model<Sequence>, @InjectModel('ScreeningBatch') private screeningBatchModel: Model<Document>) {}
 
   private async getServiceToken(): Promise<string> {
     if (this.cachedToken && Date.now() < this.tokenExpiresAt - this.TOKEN_REFRESH_THRESHOLD) {
@@ -248,10 +245,7 @@ export class MPIService {
       const sliceIds = new Set(data.sequences.map((s) => s.sequenceId));
 
       if (data.sequences.length !== expectedMpiIds.size) {
-        throw new HttpException(
-          `MPI screening sequences count (${data.sequences.length}) does not match request (${expectedMpiIds.size})`,
-          HttpStatus.BAD_GATEWAY
-        );
+        throw new HttpException(`MPI screening sequences count (${data.sequences.length}) does not match request (${expectedMpiIds.size})`, HttpStatus.BAD_GATEWAY);
       }
 
       for (const mpiId of expectedMpiIds) {
