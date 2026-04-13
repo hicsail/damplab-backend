@@ -12,8 +12,7 @@ export class CustomerManagementResolver {
   constructor(private readonly keycloakService: KeycloakService) {}
 
   @Query(() => [KeycloakUserCustomerManagement], {
-    description:
-      'Staff: search Keycloak users by name/email/username and return inferred customer pricing category from group membership.'
+    description: 'Staff: search Keycloak users by name/email/username and return inferred customer pricing category from group membership.'
   })
   @UseGuards(AuthRolesGuard)
   @Roles(Role.DamplabStaff)
@@ -22,9 +21,7 @@ export class CustomerManagementResolver {
     @Args('max', { type: () => Int, nullable: true, defaultValue: 25 }) max: number
   ): Promise<KeycloakUserCustomerManagement[]> {
     if (!this.keycloakService.isConfigured()) {
-      throw new BadRequestException(
-        'Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).'
-      );
+      throw new BadRequestException('Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).');
     }
     const trimmed = (search ?? '').trim();
     if (trimmed.length < 2) {
@@ -35,8 +32,7 @@ export class CustomerManagementResolver {
   }
 
   @Mutation(() => KeycloakUserCustomerManagement, {
-    description:
-      'Staff: set a user’s Keycloak pricing customer group to match the given category, or clear all such groups when category is omitted.'
+    description: 'Staff: set a user’s Keycloak pricing customer group to match the given category, or clear all such groups when category is omitted.'
   })
   @UseGuards(AuthRolesGuard)
   @Roles(Role.DamplabStaff)
@@ -45,9 +41,7 @@ export class CustomerManagementResolver {
     @Args('category', { type: () => CustomerCategory, nullable: true }) category: CustomerCategory | null
   ): Promise<KeycloakUserCustomerManagement> {
     if (!this.keycloakService.isConfigured()) {
-      throw new BadRequestException(
-        'Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).'
-      );
+      throw new BadRequestException('Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).');
     }
     try {
       await this.keycloakService.setUserCustomerCategory(userId, category ?? null);

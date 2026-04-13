@@ -1,5 +1,5 @@
 import { Field, ID, InputType, ObjectType } from '@nestjs/graphql';
-import { BugAttachment, BugReport } from './bug-report.model';
+import { BugAttachment } from './bug-report.model';
 
 @InputType({ description: 'Input for creating a new bug report' })
 export class CreateBugReportInput {

@@ -9,3 +9,9 @@
 
 # Local
 .env
+
+/.vscode/
+.codebuddy/*
+.env.dev
+
+notes.md

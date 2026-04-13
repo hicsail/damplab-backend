@@ -22,6 +22,7 @@ import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
 import { ActivityModule } from './activity/activity.module';
 import { InvoiceModule } from './invoice/invoice.module';
+import { MPIModule } from './mpi/mpi.module';
 
 @Module({
   imports: [
@@ -59,7 +60,8 @@ import { InvoiceModule } from './invoice/invoice.module';
     BugReportModule,
     CustomerManagementModule,
     ActivityModule,
-    InvoiceModule
+    InvoiceModule,
+    MPIModule
   ],
   controllers: [AppController],
   providers: [AppService]
