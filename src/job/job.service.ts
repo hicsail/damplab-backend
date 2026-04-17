@@ -102,6 +102,12 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { customerCategory } }, { new: true }).exec();
   }
 
+  async appendScreeningBatchId(jobId: string, screeningBatchId: mongoose.Types.ObjectId): Promise<Job | null> {
+    return this.jobModel
+      .findOneAndUpdate({ _id: jobId }, { $push: { screeningBatchIds: screeningBatchId } }, { new: true })
+      .exec();
+  }
+
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {
     this.logger.log(`addAttachments called for jobId=${jobId} with ${attachments.length} attachment(s)`);
     this.logger.debug(`Attachments payload: ${JSON.stringify(attachments)}`);

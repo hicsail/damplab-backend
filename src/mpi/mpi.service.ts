@@ -174,6 +174,91 @@ export class MPIService {
     return Promise.all(inputs.map((input) => this.createSequence(input, userId)));
   }
 
+  /**
+   * Ensure a local MPI-backed sequence exists with the given stable name and current seq (job screening).
+   * Updates MPI + Mongo when the sequence content changes; keeps the same Mongo _id so history stays valid.
+   */
+  async upsertSequenceForScreening(name: string, seq: string, userId: string): Promise<Sequence> {
+    const trimmed = seq.trim();
+    if (!trimmed.length) {
+      throw new HttpException('Empty sequence', HttpStatus.BAD_REQUEST);
+    }
+    const existing = await this.sequenceModel.findOne({ name, ...orgSequenceFilter() }).exec();
+    if (existing) {
+      const prev = String(existing.seq ?? '');
+      if (prev.trim().toUpperCase().replace(/\s+/g, '') === trimmed.toUpperCase().replace(/\s+/g, '')) {
+        return existing.toJSON() as unknown as Sequence;
+      }
+      return this.replaceSequenceSequence(existing as unknown as Record<string, unknown> & { _id?: unknown; mpiId?: string }, trimmed, userId);
+    }
+    return this.createSequence({ name, type: 'dna', seq: trimmed }, userId);
+  }
+
+  private async replaceSequenceSequence(existing: Record<string, unknown> & { _id?: unknown; mpiId?: string }, newSeq: string, userId: string): Promise<Sequence> {
+    const mpiId = existing.mpiId as string;
+    const token = await this.getServiceToken();
+    const url = `${process.env.MPI_BACKEND}/sequences/${encodeURIComponent(mpiId)}`;
+    try {
+      await axios.patch(
+        url,
+        { seq: newSeq },
+        {
+          ...MPI_AXIOS_REQUEST_CONFIG,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      const updated = await this.sequenceModel
+        .findByIdAndUpdate(existing._id, { seq: newSeq, updated_at: new Date() }, { new: true })
+        .exec();
+      if (!updated) {
+        throw new HttpException('Failed to update sequence after MPI patch', HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+      return updated.toJSON() as unknown as Sequence;
+    } catch (patchErr) {
+      this.logger.warn(`MPI sequence PATCH failed for ${mpiId}; creating a new MPI sequence and re-linking`, patchErr);
+      return this.recreateMpiSequenceForExistingDoc(existing, newSeq, userId);
+    }
+  }
+
+  private async recreateMpiSequenceForExistingDoc(
+    existing: Record<string, unknown> & { _id?: unknown; name?: string; type?: string },
+    newSeq: string,
+    userId: string
+  ): Promise<Sequence> {
+    const token = await this.getServiceToken();
+    const body = bodyForMpiCreateSequence({
+      name: String(existing.name ?? ''),
+      type: (existing.type as 'dna' | 'rna' | 'aa' | 'unknown') || 'dna',
+      seq: newSeq
+    });
+    const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/sequences`, body, {
+      ...MPI_AXIOS_REQUEST_CONFIG,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    const updated = await this.sequenceModel
+      .findByIdAndUpdate(
+        existing._id,
+        {
+          mpiId: mpiResponse.data.id,
+          seq: newSeq,
+          userId: userId || (existing.userId as string) || 'system',
+          updated_at: new Date()
+        },
+        { new: true }
+      )
+      .exec();
+    if (!updated) {
+      throw new HttpException('Failed to re-link sequence after MPI recreate', HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+    return updated.toJSON() as unknown as Sequence;
+  }
+
   private async getSequence(id: string): Promise<Sequence | null> {
     const sequence = await this.sequenceModel.findOne({ _id: id, ...orgSequenceFilter() }).exec();
     if (!sequence) return null;

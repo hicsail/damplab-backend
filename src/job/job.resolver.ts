@@ -2,7 +2,7 @@ import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundExce
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
-import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
+import { Job, JobAttachment, JobState, CustomerCategory, JobScreeningStatus, JobScreeningBatchDisplay } from './job.model';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { Comment } from '../comment/comment.model';
@@ -22,6 +22,9 @@ import { UpdateSOWInput } from '../sow/dto/update-sow.input';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
+import { JobScreeningService } from './job-screening.service';
+import { ScreeningBatch } from '../mpi/models/mpi.model';
+import { normalizeScreeningBatchForGraphql } from '../mpi/mpi-screening-batch.graphql.util';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -87,7 +90,8 @@ export class JobResolver {
     private readonly commentService: CommentService,
     @Inject(forwardRef(() => SOWService))
     private readonly sowService: SOWService,
-    private readonly jobAttachmentsService: JobAttachmentsService
+    private readonly jobAttachmentsService: JobAttachmentsService,
+    private readonly jobScreeningService: JobScreeningService
   ) {}
 
   @Query(() => [Job])
@@ -322,6 +326,28 @@ export class JobResolver {
   @Roles(Role.DamplabStaff)
   async changeJobState(@Args('job', { type: () => ID }, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState): Promise<Job> {
     return (await this.jobService.updateState(job, newState))!;
+  }
+
+  @Mutation(() => ScreeningBatch, {
+    description: 'Staff: screen all gibson-assembly insert and m-cloning vector/insert sequences for this job in one MPI batch.'
+  })
+  @Roles(Role.DamplabStaff)
+  async screenJobSequences(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<ScreeningBatch> {
+    const batch = await this.jobScreeningService.screenJobSequences(jobId, user.sub);
+    return normalizeScreeningBatchForGraphql(batch as unknown as Record<string, unknown>);
+  }
+
+  @ResolveField(() => JobScreeningStatus, { description: 'SecureDNA screening gate for SOW / job acceptance' })
+  async jobScreeningStatus(@Parent() job: Job): Promise<JobScreeningStatus> {
+    return this.jobScreeningService.getJobScreeningStatus(job);
+  }
+
+  @ResolveField(() => JobScreeningBatchDisplay, {
+    nullable: true,
+    description: 'Latest SecureDNA batch on this job with per-sequence slices for job tracking UI'
+  })
+  async jobScreeningBatchDisplay(@Parent() job: Job): Promise<JobScreeningBatchDisplay | null> {
+    return this.jobScreeningService.getJobScreeningBatchDisplay(job);
   }
 
   @ResolveField()

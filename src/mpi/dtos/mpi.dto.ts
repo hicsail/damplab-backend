@@ -45,6 +45,6 @@ export class BatchScreeningInput {
 
 @InputType()
 export class BatchCreateSequencesInput {
-  @Field(() => [CreateSequenceInput], { description: 'At most 100 sequences per request (MPI SecureDNA batch limit).' })
+  @Field(() => [CreateSequenceInput], { description: 'At most 1000 sequences per request (MPI SecureDNA batch limit).' })
   sequences: CreateSequenceInput[];
 }
