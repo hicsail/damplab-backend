@@ -2,6 +2,7 @@ import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Document, Model } from 'mongoose';
 import axios from 'axios';
+import { randomUUID } from 'crypto';
 import { Sequence } from './types';
 import { Region } from './types';
 import { ScreeningBatch } from './models/mpi.model';
@@ -18,24 +19,20 @@ interface MpiDiagnostic {
   line_number_range?: [number, number] | number[] | null;
 }
 
-interface MpiScreeningBatchResponse {
-  id: string;
-  createdAt: string | Date;
-  synthesisPermission: 'granted' | 'denied';
-  region: string;
-  providerReference?: string | null;
-  hitsByRecord?: unknown[];
+interface MpiPassthroughRecordHit {
+  fasta_header: string;
+  line_number_range: number[];
+  sequence_length: number;
+  hits_by_hazard: unknown[];
+}
+
+interface MpiPassthroughResponse {
+  synthesis_permission: 'granted' | 'denied';
+  provider_reference?: string | null;
+  hits_by_record?: MpiPassthroughRecordHit[];
   warnings?: MpiDiagnostic[];
   errors?: MpiDiagnostic[];
   verifiable?: Record<string, unknown>;
-  sequences: Array<{
-    sequenceId: string;
-    name: string;
-    order: number;
-    originalSeq: string;
-    threats: unknown[];
-    warning?: string;
-  }>;
 }
 
 function normalizeDiagnostic(d: MpiDiagnostic): {
@@ -54,19 +51,51 @@ function normalizeDiagnostic(d: MpiDiagnostic): {
   return out;
 }
 
-function assertScreeningBatchResponse(raw: unknown): asserts raw is MpiScreeningBatchResponse {
+function assertPassthroughResponse(raw: unknown): asserts raw is MpiPassthroughResponse {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new HttpException('MPI screening returned an invalid response body', HttpStatus.BAD_GATEWAY);
   }
   const o = raw as Record<string, unknown>;
-  if (!Array.isArray(o.sequences)) {
-    throw new HttpException('MPI screening response missing sequences array', HttpStatus.BAD_GATEWAY);
+  if (o.synthesis_permission !== 'granted' && o.synthesis_permission !== 'denied') {
+    throw new HttpException('MPI passthrough response missing synthesis_permission', HttpStatus.BAD_GATEWAY);
   }
 }
 
 /** M2M auth maps to one MPI org user; only list sequences registered with MPI (mpiId). */
 function orgSequenceFilter(): Record<string, unknown> {
   return { mpiId: { $exists: true, $nin: [null, ''] } };
+}
+
+function normalizeSequenceValue(value: string): string {
+  return value.trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function normalizeFastaHeader(header: string): string {
+  return header.trim().replace(/^>+\s*/, '').trim();
+}
+
+function sequenceStableId(seq: Sequence): string {
+  const s = seq as unknown as { id?: string; _id?: string };
+  return String(s.id ?? s._id ?? '');
+}
+
+function mapHitsBySequenceId(sequenceIds: string[], hitsByRecord?: MpiPassthroughRecordHit[]): Map<string, unknown[]> {
+  const threatsById = new Map<string, unknown[]>(sequenceIds.map((id) => [id, []]));
+  if (!hitsByRecord?.length) return threatsById;
+
+  const idSet = new Set(sequenceIds);
+  for (const record of hitsByRecord) {
+    const normalized = normalizeFastaHeader(record.fasta_header);
+    let targetId: string | undefined;
+    if (idSet.has(normalized)) {
+      targetId = normalized;
+    } else {
+      targetId = sequenceIds.find((id) => id === normalized || normalized.endsWith(id) || id.endsWith(normalized));
+    }
+    if (!targetId) continue;
+    threatsById.set(targetId, record.hits_by_hazard ?? []);
+  }
+  return threatsById;
 }
 
 /**
@@ -132,36 +161,24 @@ export class MPIService {
   }
 
   async createSequence(input: CreateSequenceInput, userId?: string): Promise<Sequence> {
-    const token = await this.getServiceToken();
-
-    try {
-      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/sequences`, bodyForMpiCreateSequence(input), {
-        ...MPI_AXIOS_REQUEST_CONFIG,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      const now = new Date();
-      const sequence = new this.sequenceModel({
-        ...input,
-        type: input.type || 'unknown',
-        annotations: input.annotations || [],
-        userId: userId || 'system',
-        mpiId: mpiResponse.data.id,
-        created_at: now,
-        updated_at: now
-      });
-      const savedSequence = await sequence.save();
-      return savedSequence.toJSON() as unknown as Sequence;
-    } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      this.logger.error('Failed to create sequence in MPI', error);
-      throw httpExceptionFromMpiAxiosError(error, 'Failed to create sequence in MPI');
+    const trimmedSeq = input.seq?.trim();
+    if (!trimmedSeq) {
+      throw new HttpException('Sequence cannot be empty', HttpStatus.BAD_REQUEST);
     }
+    const now = new Date();
+    const sequence = new this.sequenceModel({
+      ...input,
+      type: input.type || 'unknown',
+      seq: trimmedSeq,
+      annotations: input.annotations || [],
+      userId: userId || 'system',
+      // Kept for backward compatibility with existing schema/queries.
+      mpiId: `local-${randomUUID()}`,
+      created_at: now,
+      updated_at: now
+    });
+    const savedSequence = await sequence.save();
+    return savedSequence.toJSON() as unknown as Sequence;
   }
 
   async createSequencesBatch(inputs: CreateSequenceInput[], userId?: string): Promise<Sequence[]> {
@@ -174,10 +191,7 @@ export class MPIService {
     return Promise.all(inputs.map((input) => this.createSequence(input, userId)));
   }
 
-  /**
-   * Ensure a local MPI-backed sequence exists with the given stable name and current seq (job screening).
-   * Updates MPI + Mongo when the sequence content changes; keeps the same Mongo _id so history stays valid.
-   */
+  /** Ensure a local sequence exists for job screening and update content when changed. */
   async upsertSequenceForScreening(name: string, seq: string, userId: string): Promise<Sequence> {
     const trimmed = seq.trim();
     if (!trimmed.length) {
@@ -186,77 +200,18 @@ export class MPIService {
     const existing = await this.sequenceModel.findOne({ name, ...orgSequenceFilter() }).exec();
     if (existing) {
       const prev = String(existing.seq ?? '');
-      if (prev.trim().toUpperCase().replace(/\s+/g, '') === trimmed.toUpperCase().replace(/\s+/g, '')) {
+      if (normalizeSequenceValue(prev) === normalizeSequenceValue(trimmed)) {
         return existing.toJSON() as unknown as Sequence;
       }
-      return this.replaceSequenceSequence(existing as unknown as Record<string, unknown> & { _id?: unknown; mpiId?: string }, trimmed, userId);
-    }
-    return this.createSequence({ name, type: 'dna', seq: trimmed }, userId);
-  }
-
-  private async replaceSequenceSequence(existing: Record<string, unknown> & { _id?: unknown; mpiId?: string }, newSeq: string, userId: string): Promise<Sequence> {
-    const mpiId = existing.mpiId as string;
-    const token = await this.getServiceToken();
-    const url = `${process.env.MPI_BACKEND}/sequences/${encodeURIComponent(mpiId)}`;
-    try {
-      await axios.patch(
-        url,
-        { seq: newSeq },
-        {
-          ...MPI_AXIOS_REQUEST_CONFIG,
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
       const updated = await this.sequenceModel
-        .findByIdAndUpdate(existing._id, { seq: newSeq, updated_at: new Date() }, { new: true })
+        .findByIdAndUpdate(existing._id, { seq: trimmed, userId: userId || existing.userId, updated_at: new Date() }, { new: true })
         .exec();
       if (!updated) {
-        throw new HttpException('Failed to update sequence after MPI patch', HttpStatus.INTERNAL_SERVER_ERROR);
+        throw new HttpException('Failed to update sequence', HttpStatus.INTERNAL_SERVER_ERROR);
       }
       return updated.toJSON() as unknown as Sequence;
-    } catch (patchErr) {
-      this.logger.warn(`MPI sequence PATCH failed for ${mpiId}; creating a new MPI sequence and re-linking`, patchErr);
-      return this.recreateMpiSequenceForExistingDoc(existing, newSeq, userId);
     }
-  }
-
-  private async recreateMpiSequenceForExistingDoc(
-    existing: Record<string, unknown> & { _id?: unknown; name?: string; type?: string },
-    newSeq: string,
-    userId: string
-  ): Promise<Sequence> {
-    const token = await this.getServiceToken();
-    const body = bodyForMpiCreateSequence({
-      name: String(existing.name ?? ''),
-      type: (existing.type as 'dna' | 'rna' | 'aa' | 'unknown') || 'dna',
-      seq: newSeq
-    });
-    const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/sequences`, body, {
-      ...MPI_AXIOS_REQUEST_CONFIG,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    const updated = await this.sequenceModel
-      .findByIdAndUpdate(
-        existing._id,
-        {
-          mpiId: mpiResponse.data.id,
-          seq: newSeq,
-          userId: userId || (existing.userId as string) || 'system',
-          updated_at: new Date()
-        },
-        { new: true }
-      )
-      .exec();
-    if (!updated) {
-      throw new HttpException('Failed to re-link sequence after MPI recreate', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-    return updated.toJSON() as unknown as Sequence;
+    return this.createSequence({ name, type: 'dna', seq: trimmed }, userId);
   }
 
   private async getSequence(id: string): Promise<Sequence | null> {
@@ -297,15 +252,11 @@ export class MPIService {
     }
 
     const valid = sequences.filter((s): s is Sequence => !!s);
-    const missingMpi = valid.filter((s) => !s.mpiId);
-    if (missingMpi.length > 0) {
-      throw new HttpException('One or more sequences are missing MPI id', HttpStatus.BAD_REQUEST);
-    }
 
     const token = await this.getServiceToken();
 
     const body: Record<string, unknown> = {
-      sequenceIds: valid.map((s) => s.mpiId!),
+      fasta: valid.map((s) => `>${sequenceStableId(s)}\n${String(s.seq ?? '')}`).join('\n'),
       region: input.region
     };
     if (input.providerReference?.trim()) {
@@ -313,7 +264,7 @@ export class MPIService {
     }
 
     try {
-      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen`, body, {
+      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen/passthrough`, body, {
         ...MPI_AXIOS_REQUEST_CONFIG,
         headers: {
           Authorization: `Bearer ${token}`,
@@ -322,49 +273,30 @@ export class MPIService {
       });
 
       const raw = mpiResponse.data;
-      assertScreeningBatchResponse(raw);
+      assertPassthroughResponse(raw);
       const data = raw;
+      const ids = valid.map((s) => sequenceStableId(s));
+      const threatsById = mapHitsBySequenceId(ids, data.hits_by_record);
 
-      const byMpiId = new Map(valid.map((s) => [s.mpiId!, s]));
-      const expectedMpiIds = new Set(valid.map((s) => s.mpiId!));
-      const sliceIds = new Set(data.sequences.map((s) => s.sequenceId));
-
-      if (data.sequences.length !== expectedMpiIds.size) {
-        throw new HttpException(`MPI screening sequences count (${data.sequences.length}) does not match request (${expectedMpiIds.size})`, HttpStatus.BAD_GATEWAY);
-      }
-
-      for (const mpiId of expectedMpiIds) {
-        if (!sliceIds.has(mpiId)) {
-          throw new HttpException(`MPI screening response missing slice for sequence id: ${mpiId}`, HttpStatus.BAD_GATEWAY);
-        }
-      }
-
-      for (const sid of sliceIds) {
-        if (!byMpiId.has(sid)) {
-          throw new HttpException(`MPI screening response included unknown sequence id: ${sid}`, HttpStatus.BAD_GATEWAY);
-        }
-      }
-
-      const sequenceSlices = data.sequences.map((slice) => {
-        const seq = byMpiId.get(slice.sequenceId)!;
+      const sequenceSlices = valid.map((seq, order) => {
+        const stableId = sequenceStableId(seq);
         return {
-          sequence: seq._id,
-          mpiSequenceId: slice.sequenceId,
-          name: slice.name,
-          order: slice.order,
-          originalSeq: slice.originalSeq,
-          threats: slice.threats ?? [],
-          ...(slice.warning ? { warning: slice.warning } : {})
+          sequence: (seq as unknown as { _id: unknown })._id,
+          mpiSequenceId: stableId,
+          name: String((seq as unknown as { name?: string }).name ?? ''),
+          order,
+          originalSeq: String((seq as unknown as { seq?: string }).seq ?? ''),
+          threats: threatsById.get(stableId) ?? []
         };
       });
 
       const created = await this.screeningBatchModel.create({
-        mpiBatchId: data.id,
-        mpiCreatedAt: new Date(data.createdAt),
-        synthesisPermission: data.synthesisPermission,
+        mpiBatchId: `passthrough-${randomUUID()}`,
+        mpiCreatedAt: new Date(),
+        synthesisPermission: data.synthesis_permission,
         region: input.region as Region,
-        providerReference: data.providerReference ?? null,
-        hitsByRecord: data.hitsByRecord ?? [],
+        providerReference: data.provider_reference ?? input.providerReference?.trim() ?? null,
+        hitsByRecord: data.hits_by_record ?? [],
         warnings: (data.warnings ?? []).map(normalizeDiagnostic),
         errors: (data.errors ?? []).map(normalizeDiagnostic),
         verifiable: data.verifiable,
@@ -382,7 +314,7 @@ export class MPIService {
         throw error;
       }
       this.logger.error('Error in screenSequencesBatch', error);
-      throw httpExceptionFromMpiAxiosError(error, 'Failed to screen sequences in MPI');
+      throw httpExceptionFromMpiAxiosError(error, 'Failed to screen sequences in MPI passthrough');
     }
   }
 }
