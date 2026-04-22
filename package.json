@@ -22,7 +22,10 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --forceExit --detectOpenHandles",
-    "initdb": "cd ./scripts; npm install; npm run build; node --env-file=../.env ./bin/dev load all"
+    "initdb": "cd ./scripts; npm install; npm run build; node --env-file=../.env ./bin/dev load all",
+    "securedna:up": "docker compose -f secure_dna/docker-compose.yml up -d",
+    "securedna:down": "docker compose -f secure_dna/docker-compose.yml down",
+    "securedna:logs": "docker compose -f secure_dna/docker-compose.yml logs -f"
   },
   "dependencies": {
     "@apollo/server": "^5.2.0",

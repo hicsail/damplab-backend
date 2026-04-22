@@ -11,7 +11,7 @@ import { httpExceptionFromMpiAxiosError } from './mpi-http.util';
 import { MAX_MPI_SEQUENCE_BATCH } from './mpi.constants';
 
 /** No timeout — SecureDNA screening can run for a long time. */
-const MPI_AXIOS_REQUEST_CONFIG = { timeout: 0 as const };
+const SECUREDNA_AXIOS_REQUEST_CONFIG = { timeout: 0 as const };
 
 interface MpiDiagnostic {
   diagnostic: string;
@@ -51,13 +51,13 @@ function normalizeDiagnostic(d: MpiDiagnostic): {
   return out;
 }
 
-function assertPassthroughResponse(raw: unknown): asserts raw is MpiPassthroughResponse {
+function assertSynthclientScreenResponse(raw: unknown): asserts raw is MpiPassthroughResponse {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new HttpException('MPI screening returned an invalid response body', HttpStatus.BAD_GATEWAY);
+    throw new HttpException('SecureDNA synthclient returned an invalid response body', HttpStatus.BAD_GATEWAY);
   }
   const o = raw as Record<string, unknown>;
   if (o.synthesis_permission !== 'granted' && o.synthesis_permission !== 'denied') {
-    throw new HttpException('MPI passthrough response missing synthesis_permission', HttpStatus.BAD_GATEWAY);
+    throw new HttpException('SecureDNA response missing synthesis_permission', HttpStatus.BAD_GATEWAY);
   }
 }
 
@@ -119,46 +119,22 @@ function bodyForMpiCreateSequence(input: CreateSequenceInput): Record<string, un
   return body;
 }
 
+function secureDnaBaseUrl(): string {
+  const raw = process.env.SECUREDNA_API_URL?.trim();
+  if (!raw) {
+    throw new HttpException(
+      'SecureDNA is not configured: set SECUREDNA_API_URL (e.g. http://127.0.0.1:8787 for local synthclient)',
+      HttpStatus.SERVICE_UNAVAILABLE
+    );
+  }
+  return raw.replace(/\/+$/, '');
+}
+
 @Injectable()
 export class MPIService {
   private readonly logger = new Logger(MPIService.name);
-  private cachedToken: string | null = null;
-  private tokenExpiresAt = 0;
-  private readonly TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
 
   constructor(@InjectModel('Sequence') private sequenceModel: Model<Sequence>, @InjectModel('ScreeningBatch') private screeningBatchModel: Model<Document>) {}
-
-  private async getServiceToken(): Promise<string> {
-    if (this.cachedToken && Date.now() < this.tokenExpiresAt - this.TOKEN_REFRESH_THRESHOLD) {
-      return this.cachedToken;
-    }
-
-    try {
-      return await this.fetchServiceToken();
-    } catch (error) {
-      this.cachedToken = null;
-      this.tokenExpiresAt = 0;
-      return await this.fetchServiceToken();
-    }
-  }
-
-  private async fetchServiceToken(): Promise<string> {
-    try {
-      const response = await axios.post(`https://${process.env.AUTH0_DOMAIN}/oauth/token`, {
-        grant_type: 'client_credentials',
-        client_id: process.env.MPI_M2M_CLIENT_ID,
-        client_secret: process.env.MPI_M2M_CLIENT_SECRET,
-        audience: process.env.AUTH0_AUDIENCE
-      });
-
-      const token = response.data.access_token;
-      this.cachedToken = token;
-      this.tokenExpiresAt = Date.now() + response.data.expires_in * 1000;
-      return token;
-    } catch (error) {
-      throw httpExceptionFromMpiAxiosError(error, 'Failed to obtain MPI service token');
-    }
-  }
 
   async createSequence(input: CreateSequenceInput, userId?: string): Promise<Sequence> {
     const trimmedSeq = input.seq?.trim();
@@ -253,8 +229,6 @@ export class MPIService {
 
     const valid = sequences.filter((s): s is Sequence => !!s);
 
-    const token = await this.getServiceToken();
-
     const body: Record<string, unknown> = {
       fasta: valid.map((s) => `>${sequenceStableId(s)}\n${String(s.seq ?? '')}`).join('\n'),
       region: input.region
@@ -264,16 +238,16 @@ export class MPIService {
     }
 
     try {
-      const mpiResponse = await axios.post(`${process.env.MPI_BACKEND}/secure-dna/screen/passthrough`, body, {
-        ...MPI_AXIOS_REQUEST_CONFIG,
+      const base = secureDnaBaseUrl();
+      const screenResponse = await axios.post(`${base}/v1/screen`, body, {
+        ...SECUREDNA_AXIOS_REQUEST_CONFIG,
         headers: {
-          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json'
         }
       });
 
-      const raw = mpiResponse.data;
-      assertPassthroughResponse(raw);
+      const raw = screenResponse.data;
+      assertSynthclientScreenResponse(raw);
       const data = raw;
       const ids = valid.map((s) => sequenceStableId(s));
       const threatsById = mapHitsBySequenceId(ids, data.hits_by_record);
@@ -291,7 +265,7 @@ export class MPIService {
       });
 
       const created = await this.screeningBatchModel.create({
-        mpiBatchId: `passthrough-${randomUUID()}`,
+        mpiBatchId: `synthclient-${randomUUID()}`,
         mpiCreatedAt: new Date(),
         synthesisPermission: data.synthesis_permission,
         region: input.region as Region,
@@ -314,7 +288,7 @@ export class MPIService {
         throw error;
       }
       this.logger.error('Error in screenSequencesBatch', error);
-      throw httpExceptionFromMpiAxiosError(error, 'Failed to screen sequences in MPI passthrough');
+      throw httpExceptionFromMpiAxiosError(error, 'Failed to screen sequences via SecureDNA synthclient');
     }
   }
 }

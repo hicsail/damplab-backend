@@ -15,3 +15,6 @@
 .env.dev
 
 notes.md
+
+# SecureDNA synthclient credentials (copy from MPI secure_dna/certs for local testing)
+/secure_dna/certs/
