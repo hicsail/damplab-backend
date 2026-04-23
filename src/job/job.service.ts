@@ -103,9 +103,7 @@ export class JobService {
   }
 
   async appendScreeningBatchId(jobId: string, screeningBatchId: mongoose.Types.ObjectId): Promise<Job | null> {
-    return this.jobModel
-      .findOneAndUpdate({ _id: jobId }, { $push: { screeningBatchIds: screeningBatchId } }, { new: true })
-      .exec();
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $push: { screeningBatchIds: screeningBatchId } }, { new: true }).exec();
   }
 
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {

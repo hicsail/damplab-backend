@@ -22,7 +22,7 @@ import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
 import { ActivityModule } from './activity/activity.module';
 import { InvoiceModule } from './invoice/invoice.module';
-import { MPIModule } from './mpi/mpi.module';
+import { SecureDnaModule } from './securedna/securedna.module';
 
 @Module({
   imports: [
@@ -61,7 +61,7 @@ import { MPIModule } from './mpi/mpi.module';
     CustomerManagementModule,
     ActivityModule,
     InvoiceModule,
-    MPIModule
+    SecureDnaModule
   ],
   controllers: [AppController],
   providers: [AppService]

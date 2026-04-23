@@ -52,7 +52,7 @@ export class JobScreeningStatus {
 
 @ObjectType({ description: 'One sequence slice from the latest SecureDNA batch (for job tracking UI)' })
 export class JobScreeningSliceResult {
-  @Field(() => String, { description: 'Full MPI slice name: <workflowId>_<nodeId>_<fieldId>' })
+  @Field(() => String, { description: 'Full screening slice name: <workflowId>_<nodeId>_<fieldId>' })
   sliceName: string;
 
   @Field(() => String)
@@ -82,11 +82,11 @@ export class JobScreeningBatchDisplay {
   @Field(() => ID)
   batchId: string;
 
-  @Field(() => String, { description: 'MPI batch synthesis permission: granted | denied' })
+  @Field(() => String, { description: 'Synthesis permission from SecureDNA: granted | denied' })
   synthesisPermission: string;
 
-  @Field(() => Date)
-  mpiCreatedAt: Date;
+  @Field(() => Date, { description: 'When the screening request completed (from DAMPLab response handling)' })
+  screeningCompletedAt: Date;
 
   @Field(() => Date, { description: 'When this batch was stored in DAMPLab' })
   screenedAt: Date;
@@ -213,7 +213,7 @@ export class Job {
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ScreeningBatch' }], default: [] })
   @Field(() => [ID], {
     nullable: 'itemsAndList',
-    description: 'MPI SecureDNA screening batches run for this job (append-only; multiple runs over time)'
+    description: 'SecureDNA screening batch ids run for this job (append-only; multiple runs over time)'
   })
   screeningBatchIds?: string[];
 }

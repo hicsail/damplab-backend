@@ -1,5 +1,5 @@
 import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
-import { Region } from '../types';
+import { Region } from '../region';
 
 registerEnumType(Region, {
   name: 'Region',
@@ -52,9 +52,6 @@ export class Sequence {
   userId: string;
 
   @Field()
-  mpiId: string;
-
-  @Field()
   created_at: Date;
 
   @Field()
@@ -88,7 +85,7 @@ export class HitRegion {
   seq_range_end: number;
 }
 
-/** SecureDNA / MPI hazard hit shape (full `hits_by_record` / per-sequence `threats` entry). */
+/** SecureDNA hazard hit shape (full `hits_by_record` / per-sequence `threats` entry). */
 @ObjectType()
 export class SecureDnaHazardHit {
   @Field(() => SecureDnaHitKind)
@@ -160,8 +157,9 @@ export class ScreeningBatchSequenceSlice {
   @Field(() => Sequence)
   sequence: Sequence;
 
+  /** Mongo sequence id used as the FASTA header (matches `>id` in the request). */
   @Field()
-  mpiSequenceId: string;
+  recordId: string;
 
   @Field()
   name: string;
@@ -185,15 +183,15 @@ export class ScreeningBatch {
   id: string;
 
   @Field()
-  mpiBatchId: string;
+  batchRunId: string;
 
   @Field()
-  mpiCreatedAt: Date;
+  screeningCompletedAt: Date;
 
   @Field()
   synthesisPermission: string;
 
-  @Field(() => String)
+  @Field(() => Region)
   region: Region;
 
   @Field(() => String, { nullable: true })

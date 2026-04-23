@@ -1,5 +1,6 @@
 import { Field, InputType } from '@nestjs/graphql';
-import { Region } from '../types';
+import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna.constants';
+import { Region } from '../region';
 
 @InputType()
 export class AnnotationInput {
@@ -36,15 +37,17 @@ export class BatchScreeningInput {
   @Field(() => [String])
   sequenceIds: string[];
 
-  @Field(() => String)
+  @Field(() => Region)
   region: Region;
 
-  @Field({ nullable: true, description: 'Optional batch label forwarded to MPI; auto-generated there if omitted' })
+  @Field({ nullable: true, description: 'Optional label forwarded to SecureDNA as provider_reference' })
   providerReference?: string;
 }
 
 @InputType()
 export class BatchCreateSequencesInput {
-  @Field(() => [CreateSequenceInput], { description: 'At most 1000 sequences per request (MPI SecureDNA batch limit).' })
+  @Field(() => [CreateSequenceInput], {
+    description: `At most ${MAX_SECUREDNA_SEQUENCE_BATCH} sequences per request (SecureDNA batch limit).`
+  })
   sequences: CreateSequenceInput[];
 }

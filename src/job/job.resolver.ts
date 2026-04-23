@@ -23,8 +23,8 @@ import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { JobScreeningService } from './job-screening.service';
-import { ScreeningBatch } from '../mpi/models/mpi.model';
-import { normalizeScreeningBatchForGraphql } from '../mpi/mpi-screening-batch.graphql.util';
+import { ScreeningBatch } from '../securedna/models/securedna-graphql.model';
+import { normalizeScreeningBatchForGraphql } from '../securedna/screening-batch-graphql.util';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -329,7 +329,7 @@ export class JobResolver {
   }
 
   @Mutation(() => ScreeningBatch, {
-    description: 'Staff: screen all gibson-assembly insert and m-cloning vector/insert sequences for this job in one MPI batch.'
+    description: 'Staff: screen all gibson-assembly insert and m-cloning vector/insert sequences for this job in one SecureDNA batch.'
   })
   @Roles(Role.DamplabStaff)
   async screenJobSequences(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<ScreeningBatch> {

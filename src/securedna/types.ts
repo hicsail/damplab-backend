@@ -1,6 +1,7 @@
-import type { Sequence, SecureDnaHazardHit, ScreeningBatch } from './models/mpi.model';
+import type { Sequence, SecureDnaHazardHit, ScreeningBatch } from './models/securedna-graphql.model';
 
 export type { Sequence, SecureDnaHazardHit, ScreeningBatch };
+export { Region } from './region';
 
 export type eLabsStatus = 'PENDING' | 'PROGRESS' | 'COMPLETED';
 
@@ -19,13 +20,6 @@ export interface BiosecurityResponse {
       seq: string;
     }[];
   }[];
-}
-
-export enum Region {
-  ALL = 'all',
-  US = 'us',
-  EU = 'eu',
-  PRC = 'prc'
 }
 
 export interface HitRegion {
@@ -52,12 +46,4 @@ export interface ScreeningResponse {
   synthesis_permission: 'granted' | 'denied';
   provider_reference?: string;
   hits_by_record?: RecordHit[];
-}
-
-// Extend the Sequence type from mpi.model.ts
-declare module './models/mpi.model' {
-  interface Sequence {
-    _id?: string;
-    mpiId: string;
-  }
 }

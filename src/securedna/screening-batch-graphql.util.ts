@@ -1,4 +1,4 @@
-import { Sequence, ScreeningBatch } from './models/mpi.model';
+import { Sequence, ScreeningBatch } from './models/securedna-graphql.model';
 
 export function normalizeSequenceForGraphql(seq: Record<string, unknown>): Sequence {
   return {
@@ -8,7 +8,6 @@ export function normalizeSequenceForGraphql(seq: Record<string, unknown>): Seque
     seq: (seq.seq as string) || '',
     annotations: (seq.annotations as Sequence['annotations']) || [],
     userId: (seq.userId as string) || '',
-    mpiId: (seq.mpiId as string) || '',
     created_at: seq.created_at as Date,
     updated_at: seq.updated_at as Date
   };

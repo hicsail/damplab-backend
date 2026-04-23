@@ -1,7 +1,7 @@
 import { FormDataEntry, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
 
 export interface ScreeningTarget {
-  /** MPI / batch slice name: `<workflowMongoId>_<nodeGraphId>_<fieldId>` */
+  /** Screening batch slice name: `<workflowMongoId>_<nodeGraphId>_<fieldId>` */
   name: string;
   seq: string;
 }

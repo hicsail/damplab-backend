@@ -1,4 +1,4 @@
-# SecureDNA synthclient — place token.st, token.priv, token.passphrase under ./certs (see MPI api/secure_dna).
+# SecureDNA synthclient — place token.st, token.priv, token.passphrase under ./certs.
 # From repo root: npm run securedna:up
 # Backend (host): SECUREDNA_API_URL=http://127.0.0.1:8787
 

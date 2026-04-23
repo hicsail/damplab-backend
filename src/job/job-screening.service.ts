@@ -6,10 +6,10 @@ import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { DampLabServices } from '../services/damplab-services.services';
-import { MPIService } from '../mpi/mpi.service';
-import { Region } from '../mpi/types';
-import { MAX_MPI_SEQUENCE_BATCH } from '../mpi/mpi.constants';
-import type { ScreeningBatch, Sequence } from '../mpi/models/mpi.model';
+import { SecureDnaService } from '../securedna/securedna.service';
+import { Region } from '../securedna/region';
+import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
+import type { ScreeningBatch, Sequence } from '../securedna/models/securedna-graphql.model';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { GIBSON_ASSEMBLY_SERVICE_NAME, M_CLONING_SERVICE_NAME } from './job-screening.constants';
 import { getFormStringFromEntries, normalizeFormDataToArray, normalizeSequenceString, ScreeningTarget } from './job-screening.util';
@@ -22,7 +22,7 @@ export class JobScreeningService {
     private readonly workflowService: WorkflowService,
     private readonly workflowNodeService: WorkflowNodeService,
     private readonly dampLabServices: DampLabServices,
-    private readonly mpiService: MPIService,
+    private readonly secureDnaService: SecureDnaService,
     @InjectModel('ScreeningBatch') private readonly screeningBatchModel: Model<Document>
   ) {}
 
@@ -95,9 +95,7 @@ export class JobScreeningService {
 
     const sequencesCurrent = this.batchMatchesExpected(latest, expected);
     const errors = (latest as { errors?: { length?: number } }).errors ?? [];
-    const screeningPassed =
-      String((latest as { synthesisPermission?: string }).synthesisPermission) === 'granted' &&
-      (!Array.isArray(errors) || errors.length === 0);
+    const screeningPassed = String((latest as { synthesisPermission?: string }).synthesisPermission) === 'granted' && (!Array.isArray(errors) || errors.length === 0);
 
     let blockingMessage: string | null = null;
     if (!sequencesCurrent) {
@@ -129,17 +127,17 @@ export class JobScreeningService {
     if (targets.length === 0) {
       throw new BadRequestException('No gibson-assembly or m-cloning sequences to screen on this job');
     }
-    if (targets.length > MAX_MPI_SEQUENCE_BATCH) {
-      throw new BadRequestException(`Too many sequences for one screening batch (max ${MAX_MPI_SEQUENCE_BATCH})`);
+    if (targets.length > MAX_SECUREDNA_SEQUENCE_BATCH) {
+      throw new BadRequestException(`Too many sequences for one screening batch (max ${MAX_SECUREDNA_SEQUENCE_BATCH})`);
     }
 
     const upserted: Sequence[] = [];
     for (const t of targets) {
-      upserted.push(await this.mpiService.upsertSequenceForScreening(t.name, t.seq, userSub));
+      upserted.push(await this.secureDnaService.upsertSequenceForScreening(t.name, t.seq, userSub));
     }
 
     const providerReference = `${job._id}_${Date.now()}`;
-    const batch = await this.mpiService.screenSequencesBatch(
+    const batch = await this.secureDnaService.screenSequencesBatch(
       {
         sequenceIds: upserted.map((s) => String(s.id)),
         region: Region.ALL,
@@ -190,7 +188,7 @@ export class JobScreeningService {
     return {
       batchId: String(latest._id ?? ''),
       synthesisPermission: String((latest as { synthesisPermission?: string }).synthesisPermission ?? ''),
-      mpiCreatedAt: new Date((latest as { mpiCreatedAt?: Date | string }).mpiCreatedAt ?? 0),
+      screeningCompletedAt: new Date((latest as { screeningCompletedAt?: Date | string }).screeningCompletedAt ?? 0),
       screenedAt: new Date((latest as { createdAt?: Date | string }).createdAt ?? 0),
       sequencesCurrent,
       batchErrorCount: Array.isArray(errors) ? errors.length : 0,
@@ -202,7 +200,11 @@ export class JobScreeningService {
   private async getLatestBatchForJob(screeningBatchIds: string[]): Promise<Record<string, unknown> | null> {
     if (!screeningBatchIds.length) return null;
     const oids = screeningBatchIds.map((id) => new mongoose.Types.ObjectId(id));
-    const doc = await this.screeningBatchModel.findOne({ _id: { $in: oids } }).sort({ createdAt: -1 }).lean().exec();
+    const doc = await this.screeningBatchModel
+      .findOne({ _id: { $in: oids } })
+      .sort({ createdAt: -1 })
+      .lean()
+      .exec();
     return doc as Record<string, unknown> | null;
   }
 

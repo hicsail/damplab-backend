@@ -1,5 +1,5 @@
 import { Schema } from 'mongoose';
-import { Region } from '../types';
+import { Region } from '../region';
 
 const ScreeningDiagnosticSchema = new Schema(
   {
@@ -13,7 +13,7 @@ const ScreeningDiagnosticSchema = new Schema(
 const ScreeningBatchSequenceSliceSchema = new Schema(
   {
     sequence: { type: Schema.Types.ObjectId, ref: 'Sequence', required: true },
-    mpiSequenceId: { type: String, required: true },
+    recordId: { type: String, required: true },
     name: { type: String, required: true },
     order: { type: Number, required: true },
     originalSeq: { type: String, required: true },
@@ -25,8 +25,8 @@ const ScreeningBatchSequenceSliceSchema = new Schema(
 
 export const ScreeningBatchSchema = new Schema(
   {
-    mpiBatchId: { type: String, required: true },
-    mpiCreatedAt: { type: Date, required: true },
+    batchRunId: { type: String, required: true },
+    screeningCompletedAt: { type: Date, required: true },
     synthesisPermission: { type: String, required: true, enum: ['granted', 'denied'] },
     region: { type: String, required: true, enum: Object.values(Region) },
     providerReference: { type: String, default: null },

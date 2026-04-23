@@ -12,8 +12,8 @@ import { SOWModule } from '../sow/sow.module';
 import { JobAttachmentsService } from './job-attachments.service';
 import { JobFeedStatusEntity, JobFeedStatusEntitySchema } from './job-feed-status.model';
 import { ActivityModule } from '../activity/activity.module';
-import { ScreeningBatchSchema } from '../mpi/models/screening-batch.schema';
-import { MPIModule } from '../mpi/mpi.module';
+import { ScreeningBatchSchema } from '../securedna/models/screening-batch.schema';
+import { SecureDnaModule } from '../securedna/securedna.module';
 import { DampLabServicesModule } from '../services/damplab-services.module';
 import { JobScreeningService } from './job-screening.service';
 
@@ -29,7 +29,7 @@ import { JobScreeningService } from './job-screening.service';
     forwardRef(() => CommentModule),
     forwardRef(() => SOWModule),
     ActivityModule,
-    MPIModule,
+    SecureDnaModule,
     DampLabServicesModule
   ],
   providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService, JobScreeningService],

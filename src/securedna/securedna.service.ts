@@ -1,41 +1,41 @@
 import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Document, Model } from 'mongoose';
+import { Document, Model, Types } from 'mongoose';
 import axios from 'axios';
 import { randomUUID } from 'crypto';
-import { Sequence } from './types';
-import { Region } from './types';
-import { ScreeningBatch } from './models/mpi.model';
-import { BatchScreeningInput, CreateSequenceInput } from './dtos/mpi.dto';
-import { httpExceptionFromMpiAxiosError } from './mpi-http.util';
-import { MAX_MPI_SEQUENCE_BATCH } from './mpi.constants';
+import type { Sequence } from './types';
+import { ScreeningBatch } from './types';
+import { Region } from './region';
+import { BatchScreeningInput, CreateSequenceInput } from './dtos/securedna.dto';
+import { httpExceptionFromAxiosError } from './axios-error.util';
+import { MAX_SECUREDNA_SEQUENCE_BATCH } from './securedna.constants';
 
 /** No timeout — SecureDNA screening can run for a long time. */
 const SECUREDNA_AXIOS_REQUEST_CONFIG = { timeout: 0 as const };
 
-interface MpiDiagnostic {
+interface SynthclientDiagnostic {
   diagnostic: string;
   additional_info: string;
   line_number_range?: [number, number] | number[] | null;
 }
 
-interface MpiPassthroughRecordHit {
+interface SynthclientRecordHit {
   fasta_header: string;
   line_number_range: number[];
   sequence_length: number;
   hits_by_hazard: unknown[];
 }
 
-interface MpiPassthroughResponse {
+interface SynthclientScreenResponse {
   synthesis_permission: 'granted' | 'denied';
   provider_reference?: string | null;
-  hits_by_record?: MpiPassthroughRecordHit[];
-  warnings?: MpiDiagnostic[];
-  errors?: MpiDiagnostic[];
+  hits_by_record?: SynthclientRecordHit[];
+  warnings?: SynthclientDiagnostic[];
+  errors?: SynthclientDiagnostic[];
   verifiable?: Record<string, unknown>;
 }
 
-function normalizeDiagnostic(d: MpiDiagnostic): {
+function normalizeDiagnostic(d: SynthclientDiagnostic): {
   diagnostic: string;
   additional_info: string;
   line_number_range?: number[];
@@ -51,7 +51,7 @@ function normalizeDiagnostic(d: MpiDiagnostic): {
   return out;
 }
 
-function assertSynthclientScreenResponse(raw: unknown): asserts raw is MpiPassthroughResponse {
+function assertSynthclientScreenResponse(raw: unknown): asserts raw is SynthclientScreenResponse {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new HttpException('SecureDNA synthclient returned an invalid response body', HttpStatus.BAD_GATEWAY);
   }
@@ -61,17 +61,15 @@ function assertSynthclientScreenResponse(raw: unknown): asserts raw is MpiPassth
   }
 }
 
-/** M2M auth maps to one MPI org user; only list sequences registered with MPI (mpiId). */
-function orgSequenceFilter(): Record<string, unknown> {
-  return { mpiId: { $exists: true, $nin: [null, ''] } };
-}
-
 function normalizeSequenceValue(value: string): string {
   return value.trim().toUpperCase().replace(/\s+/g, '');
 }
 
 function normalizeFastaHeader(header: string): string {
-  return header.trim().replace(/^>+\s*/, '').trim();
+  return header
+    .trim()
+    .replace(/^>+\s*/, '')
+    .trim();
 }
 
 function sequenceStableId(seq: Sequence): string {
@@ -79,7 +77,7 @@ function sequenceStableId(seq: Sequence): string {
   return String(s.id ?? s._id ?? '');
 }
 
-function mapHitsBySequenceId(sequenceIds: string[], hitsByRecord?: MpiPassthroughRecordHit[]): Map<string, unknown[]> {
+function mapHitsBySequenceId(sequenceIds: string[], hitsByRecord?: SynthclientRecordHit[]): Map<string, unknown[]> {
   const threatsById = new Map<string, unknown[]>(sequenceIds.map((id) => [id, []]));
   if (!hitsByRecord?.length) return threatsById;
 
@@ -98,43 +96,19 @@ function mapHitsBySequenceId(sequenceIds: string[], hitsByRecord?: MpiPassthroug
   return threatsById;
 }
 
-/**
- * MPI Prisma `Annotation` uses `name`, not `description`. DAMPLab GraphQL uses `description`
- * for feature labels; map so MPI create succeeds while we still persist the original shape locally.
- */
-function bodyForMpiCreateSequence(input: CreateSequenceInput): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    name: input.name,
-    type: input.type,
-    seq: input.seq
-  };
-  if (input.annotations?.length) {
-    body.annotations = input.annotations.map((a) => ({
-      start: a.start,
-      end: a.end,
-      type: a.type,
-      name: (a.description?.trim() || a.type || 'feature').slice(0, 500)
-    }));
-  }
-  return body;
-}
-
 function secureDnaBaseUrl(): string {
   const raw = process.env.SECUREDNA_API_URL?.trim();
   if (!raw) {
-    throw new HttpException(
-      'SecureDNA is not configured: set SECUREDNA_API_URL (e.g. http://127.0.0.1:8787 for local synthclient)',
-      HttpStatus.SERVICE_UNAVAILABLE
-    );
+    throw new HttpException('SecureDNA is not configured: set SECUREDNA_API_URL (e.g. http://127.0.0.1:8787 for local synthclient)', HttpStatus.SERVICE_UNAVAILABLE);
   }
   return raw.replace(/\/+$/, '');
 }
 
 @Injectable()
-export class MPIService {
-  private readonly logger = new Logger(MPIService.name);
+export class SecureDnaService {
+  private readonly logger = new Logger(SecureDnaService.name);
 
-  constructor(@InjectModel('Sequence') private sequenceModel: Model<Sequence>, @InjectModel('ScreeningBatch') private screeningBatchModel: Model<Document>) {}
+  constructor(@InjectModel('Sequence') private sequenceModel: Model<Sequence & Document>, @InjectModel('ScreeningBatch') private screeningBatchModel: Model<Document>) {}
 
   async createSequence(input: CreateSequenceInput, userId?: string): Promise<Sequence> {
     const trimmedSeq = input.seq?.trim();
@@ -148,8 +122,6 @@ export class MPIService {
       seq: trimmedSeq,
       annotations: input.annotations || [],
       userId: userId || 'system',
-      // Kept for backward compatibility with existing schema/queries.
-      mpiId: `local-${randomUUID()}`,
       created_at: now,
       updated_at: now
     });
@@ -161,27 +133,25 @@ export class MPIService {
     if (inputs.length === 0) {
       throw new HttpException('No sequences to create', HttpStatus.BAD_REQUEST);
     }
-    if (inputs.length > MAX_MPI_SEQUENCE_BATCH) {
-      throw new HttpException(`At most ${MAX_MPI_SEQUENCE_BATCH} sequences per batch`, HttpStatus.BAD_REQUEST);
+    if (inputs.length > MAX_SECUREDNA_SEQUENCE_BATCH) {
+      throw new HttpException(`At most ${MAX_SECUREDNA_SEQUENCE_BATCH} sequences per batch`, HttpStatus.BAD_REQUEST);
     }
     return Promise.all(inputs.map((input) => this.createSequence(input, userId)));
   }
 
-  /** Ensure a local sequence exists for job screening and update content when changed. */
+  /** Ensure a local sequence document exists for job screening; update when sequence content changes. */
   async upsertSequenceForScreening(name: string, seq: string, userId: string): Promise<Sequence> {
     const trimmed = seq.trim();
     if (!trimmed.length) {
       throw new HttpException('Empty sequence', HttpStatus.BAD_REQUEST);
     }
-    const existing = await this.sequenceModel.findOne({ name, ...orgSequenceFilter() }).exec();
+    const existing = await this.sequenceModel.findOne({ name, userId }).exec();
     if (existing) {
       const prev = String(existing.seq ?? '');
       if (normalizeSequenceValue(prev) === normalizeSequenceValue(trimmed)) {
         return existing.toJSON() as unknown as Sequence;
       }
-      const updated = await this.sequenceModel
-        .findByIdAndUpdate(existing._id, { seq: trimmed, userId: userId || existing.userId, updated_at: new Date() }, { new: true })
-        .exec();
+      const updated = await this.sequenceModel.findByIdAndUpdate(existing._id, { seq: trimmed, userId: userId || existing.userId, updated_at: new Date() }, { new: true }).exec();
       if (!updated) {
         throw new HttpException('Failed to update sequence', HttpStatus.INTERNAL_SERVER_ERROR);
       }
@@ -191,17 +161,18 @@ export class MPIService {
   }
 
   private async getSequence(id: string): Promise<Sequence | null> {
-    const sequence = await this.sequenceModel.findOne({ _id: id, ...orgSequenceFilter() }).exec();
+    const sequence = await this.sequenceModel.findById(id).exec();
     if (!sequence) return null;
-    return sequence;
+    return sequence.toJSON() as unknown as Sequence;
   }
 
   /**
-   * All screening batches that include at least one org MPI sequence (M2M identity), not filtered by DAMPLab user.
+   * All stored screening batches that reference at least one local sequence, newest first.
+   * Not filtered by the calling user.
    */
-  async getOrgScreenings(): Promise<ScreeningBatch[]> {
-    const orgSequences = await this.sequenceModel.find(orgSequenceFilter()).select('_id').lean().exec();
-    const ids = orgSequences.map((s) => s._id);
+  async listScreeningBatches(): Promise<ScreeningBatch[]> {
+    const sequenceDocs = await this.sequenceModel.find().select('_id').lean().exec();
+    const ids = sequenceDocs.map((s) => s._id);
     if (ids.length === 0) {
       return [];
     }
@@ -217,8 +188,8 @@ export class MPIService {
 
   async screenSequencesBatch(input: BatchScreeningInput, userId?: string): Promise<ScreeningBatch> {
     const uniqueIds = [...new Set(input.sequenceIds)];
-    if (uniqueIds.length > MAX_MPI_SEQUENCE_BATCH) {
-      throw new HttpException(`At most ${MAX_MPI_SEQUENCE_BATCH} sequences per screening request`, HttpStatus.BAD_REQUEST);
+    if (uniqueIds.length > MAX_SECUREDNA_SEQUENCE_BATCH) {
+      throw new HttpException(`At most ${MAX_SECUREDNA_SEQUENCE_BATCH} sequences per screening request`, HttpStatus.BAD_REQUEST);
     }
     const sequences = await Promise.all(uniqueIds.map((id) => this.getSequence(id)));
 
@@ -254,9 +225,10 @@ export class MPIService {
 
       const sequenceSlices = valid.map((seq, order) => {
         const stableId = sequenceStableId(seq);
+        // `getSequence` returns `toJSON()` which drops `_id` and sets `id` — use ObjectId from that id string.
         return {
-          sequence: (seq as unknown as { _id: unknown })._id,
-          mpiSequenceId: stableId,
+          sequence: new Types.ObjectId(stableId),
+          recordId: stableId,
           name: String((seq as unknown as { name?: string }).name ?? ''),
           order,
           originalSeq: String((seq as unknown as { seq?: string }).seq ?? ''),
@@ -265,8 +237,8 @@ export class MPIService {
       });
 
       const created = await this.screeningBatchModel.create({
-        mpiBatchId: `synthclient-${randomUUID()}`,
-        mpiCreatedAt: new Date(),
+        batchRunId: `synthclient-${randomUUID()}`,
+        screeningCompletedAt: new Date(),
         synthesisPermission: data.synthesis_permission,
         region: input.region as Region,
         providerReference: data.provider_reference ?? input.providerReference?.trim() ?? null,
@@ -275,7 +247,7 @@ export class MPIService {
         errors: (data.errors ?? []).map(normalizeDiagnostic),
         verifiable: data.verifiable,
         sequences: sequenceSlices,
-        userId: userId || valid[0].userId
+        userId: userId || String((valid[0] as unknown as { userId?: string }).userId)
       });
 
       const populated = await this.screeningBatchModel.findById(created._id).populate('sequences.sequence').exec();
@@ -287,8 +259,20 @@ export class MPIService {
       if (error instanceof HttpException) {
         throw error;
       }
+      if (
+        error !== null &&
+        typeof error === 'object' &&
+        'name' in error &&
+        (error as { name?: string }).name === 'ValidationError'
+      ) {
+        this.logger.error('ScreeningBatch validation failed', error);
+        throw new HttpException(
+          'Failed to save screening batch (invalid sequence data)',
+          HttpStatus.INTERNAL_SERVER_ERROR
+        );
+      }
       this.logger.error('Error in screenSequencesBatch', error);
-      throw httpExceptionFromMpiAxiosError(error, 'Failed to screen sequences via SecureDNA synthclient');
+      throw httpExceptionFromAxiosError(error, 'Failed to screen sequences via SecureDNA synthclient');
     }
   }
 }

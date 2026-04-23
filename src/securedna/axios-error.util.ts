@@ -21,9 +21,9 @@ function pickSafeMessage(data: unknown): string | undefined {
 }
 
 /**
- * Maps MPI / Auth0 HTTP errors to HttpException with a bounded, client-safe message.
+ * Maps upstream HTTP errors (e.g. SecureDNA synthclient) to HttpException with a bounded, client-safe message.
  */
-export function httpExceptionFromMpiAxiosError(error: unknown, fallbackMessage: string): HttpException {
+export function httpExceptionFromAxiosError(error: unknown, fallbackMessage: string): HttpException {
   if (error instanceof HttpException) {
     return error;
   }
