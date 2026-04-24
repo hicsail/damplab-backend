@@ -113,6 +113,18 @@ export class KeycloakService {
     return this.adminFetch(path, { method: 'GET' });
   }
 
+  private async getGroupMembers(groupId: string, first: number, max: number): Promise<KeycloakUser[]> {
+    const path = `/admin/realms/${this.realm}/groups/${groupId}/members?first=${encodeURIComponent(
+      Math.max(first ?? 0, 0)
+    )}&max=${encodeURIComponent(Math.max(max ?? 0, 0))}`;
+    const res = await this.fetchWithToken(path);
+    if (!res.ok) {
+      this.logger.warn(`Keycloak group members request failed: ${res.status} ${await res.text()}`);
+      return [];
+    }
+    return (await res.json()) as KeycloakUser[];
+  }
+
   private claimsFromGroupList(groups: { name?: string; path?: string }[]): string[] {
     const claims: string[] = [];
     for (const g of groups) {
@@ -266,6 +278,34 @@ export class KeycloakService {
     }
     const groups = (await res.json()) as KeycloakGroup[];
     return this.findGroupInList(groups, groupName);
+  }
+
+  async listUsersInGroupWithCustomerCategory(
+    groupName: string,
+    first: number,
+    max: number
+  ): Promise<KeycloakUserCustomerManagementRow[]> {
+    if (!this.isConfigured()) return [];
+    const group = await this.findGroupByName(groupName);
+    if (!group) return [];
+    const users = await this.getGroupMembers(group.id, first, max);
+    const rows: KeycloakUserCustomerManagementRow[] = [];
+    for (const u of users) {
+      const groups = await this.getUserGroups(u.id);
+      rows.push({
+        id: u.id,
+        username: u.username,
+        email: u.email,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        customerCategory: this.deriveCustomerCategoryFromGroups(groups)
+      });
+    }
+    return rows;
+  }
+
+  async listLabStaffWithCustomerCategory(first: number, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
+    return this.listUsersInGroupWithCustomerCategory(this.labStaffGroupName, first, max);
   }
 
   /**
