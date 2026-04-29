@@ -9,8 +9,10 @@ import { KeycloakUserCustomerManagement } from '../dtos/keycloak-customer-user.d
 import { KeycloakUserCustomerManagementPage } from '../dtos/keycloak-customer-user-page.dto';
 
 export enum CustomerManagementUserListCategory {
+  ALL = 'ALL',
   STAFF = 'STAFF',
   INTERNAL_CUSTOMERS = 'INTERNAL_CUSTOMERS',
+  EXTERNAL_CUSTOMER_DEFAULT = 'EXTERNAL_CUSTOMER_DEFAULT',
   EXTERNAL_CUSTOMER_ACADEMIC = 'EXTERNAL_CUSTOMER_ACADEMIC',
   EXTERNAL_CUSTOMER_MARKET = 'EXTERNAL_CUSTOMER_MARKET',
   EXTERNAL_CUSTOMER_NO_SALARY = 'EXTERNAL_CUSTOMER_NO_SALARY'
@@ -45,21 +47,25 @@ export class CustomerManagementResolver {
     const first = safeOffset;
     const max = safeLimit + 1;
 
-    const groupName =
-      category === CustomerManagementUserListCategory.STAFF
-        ? 'damplab-staff'
-        : category === CustomerManagementUserListCategory.INTERNAL_CUSTOMERS
+    let rows;
+    if (category === CustomerManagementUserListCategory.ALL) {
+      rows = await this.keycloakService.listAllUsersWithCustomerCategory(first, max);
+    } else if (category === CustomerManagementUserListCategory.STAFF) {
+      rows = await this.keycloakService.listLabStaffWithCustomerCategory(first, max);
+    } else if (category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT) {
+      const raw = await this.keycloakService.listUsersInGroupWithCustomerCategory(Role.ExternalCustomer, first, max);
+      rows = raw.filter((r) => r.isDefaultExternalCustomer === true);
+    } else {
+      const groupName =
+        category === CustomerManagementUserListCategory.INTERNAL_CUSTOMERS
           ? Role.InternalCustomers
           : category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_ACADEMIC
             ? Role.ExternalCustomerAcademic
             : category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_MARKET
               ? Role.ExternalCustomerMarket
               : Role.ExternalCustomerNoSalary;
-
-    const rows =
-      category === CustomerManagementUserListCategory.STAFF
-        ? await this.keycloakService.listLabStaffWithCustomerCategory(first, max)
-        : await this.keycloakService.listUsersInGroupWithCustomerCategory(groupName, first, max);
+      rows = await this.keycloakService.listUsersInGroupWithCustomerCategory(groupName, first, max);
+    }
 
     const items = rows.slice(0, safeLimit) as unknown as KeycloakUserCustomerManagement[];
     return {

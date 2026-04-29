@@ -15,6 +15,7 @@ export interface KeycloakUserCustomerManagementRow {
   firstName?: string;
   lastName?: string;
   customerCategory?: CustomerCategory;
+  isDefaultExternalCustomer?: boolean;
 }
 
 interface KeycloakGroup {
@@ -151,6 +152,36 @@ export class KeycloakService {
     return Boolean(g.name && CUSTOMER_PRICING_GROUP_NAMES.includes(g.name));
   }
 
+  /**
+   * True when the user's pricing-group membership consists solely of the legacy
+   * `external-customer` group (the default new sign-ups land in) and no more
+   * specific pricing group like external-customer-market or internal-customers.
+   */
+  private isDefaultExternalCustomer(groups: { name?: string }[]): boolean {
+    const claims = this.claimsFromGroupList(groups);
+    const has = (n: string) => claims.some((e) => e === n || e.endsWith(`/${n}`));
+    if (!has(Role.ExternalCustomer)) return false;
+    return !(
+      has(Role.InternalCustomer) ||
+      has(Role.InternalCustomers) ||
+      has(Role.ExternalCustomerAcademic) ||
+      has(Role.ExternalCustomerMarket) ||
+      has(Role.ExternalCustomerNoSalary)
+    );
+  }
+
+  private rowFromUserAndGroups(user: KeycloakUser, groups: KeycloakGroup[]): KeycloakUserCustomerManagementRow {
+    return {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      customerCategory: this.deriveCustomerCategoryFromGroups(groups),
+      isDefaultExternalCustomer: this.isDefaultExternalCustomer(groups)
+    };
+  }
+
   async searchUsers(search: string, max: number): Promise<KeycloakUser[]> {
     const path = `/admin/realms/${this.realm}/users?search=${encodeURIComponent(search)}&max=${max}`;
     const res = await this.fetchWithToken(path);
@@ -226,14 +257,7 @@ export class KeycloakService {
     const user = await this.getUserById(userId);
     if (!user) return null;
     const groups = await this.getUserGroups(userId);
-    return {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      customerCategory: this.deriveCustomerCategoryFromGroups(groups)
-    };
+    return this.rowFromUserAndGroups(user, groups);
   }
 
   async searchUsersWithCustomerCategory(search: string, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
@@ -241,14 +265,7 @@ export class KeycloakService {
     const rows: KeycloakUserCustomerManagementRow[] = [];
     for (const u of users) {
       const groups = await this.getUserGroups(u.id);
-      rows.push({
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        customerCategory: this.deriveCustomerCategoryFromGroups(groups)
-      });
+      rows.push(this.rowFromUserAndGroups(u, groups));
     }
     return rows;
   }
@@ -292,20 +309,36 @@ export class KeycloakService {
     const rows: KeycloakUserCustomerManagementRow[] = [];
     for (const u of users) {
       const groups = await this.getUserGroups(u.id);
-      rows.push({
-        id: u.id,
-        username: u.username,
-        email: u.email,
-        firstName: u.firstName,
-        lastName: u.lastName,
-        customerCategory: this.deriveCustomerCategoryFromGroups(groups)
-      });
+      rows.push(this.rowFromUserAndGroups(u, groups));
     }
     return rows;
   }
 
   async listLabStaffWithCustomerCategory(first: number, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
     return this.listUsersInGroupWithCustomerCategory(this.labStaffGroupName, first, max);
+  }
+
+  /**
+   * List every user in the realm, paginated, with their derived pricing category.
+   * Used by the customer management UI for the "All users" filter.
+   */
+  async listAllUsersWithCustomerCategory(first: number, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
+    if (!this.isConfigured()) return [];
+    const path = `/admin/realms/${this.realm}/users?first=${encodeURIComponent(
+      Math.max(first ?? 0, 0)
+    )}&max=${encodeURIComponent(Math.max(max ?? 0, 0))}`;
+    const res = await this.fetchWithToken(path);
+    if (!res.ok) {
+      this.logger.warn(`Keycloak list users request failed: ${res.status} ${await res.text()}`);
+      return [];
+    }
+    const users = (await res.json()) as KeycloakUser[];
+    const rows: KeycloakUserCustomerManagementRow[] = [];
+    for (const u of users) {
+      const groups = await this.getUserGroups(u.id);
+      rows.push(this.rowFromUserAndGroups(u, groups));
+    }
+    return rows;
   }
 
   /**
