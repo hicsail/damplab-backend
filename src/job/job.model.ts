@@ -13,7 +13,13 @@ export enum JobState {
   QUEUED,
   IN_PROGRESS,
   COMPLETE,
-  REJECTED
+  REJECTED,
+  /**
+   * Terminal "closed-out" state set by staff when work and billing are
+   * fully wrapped up. Closed jobs are explicitly excluded from the lab
+   * monitor and similar live boards (see getWorkflowIdsForApprovedJobs).
+   */
+  CLOSED
 }
 registerEnumType(JobState, { name: 'JobState' });
 
