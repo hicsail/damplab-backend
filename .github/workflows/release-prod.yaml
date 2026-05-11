@@ -1,0 +1,71 @@
+name: Release to prod
+
+# See hicsail/damplab-ui release-prod.yml for the full rationale. This is the
+# matching workflow for the backend: promotes :main (or another source ref) to
+# the floating :prod tag via a no-rebuild manifest copy.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Source tag/branch to promote (default: main)'
+        required: false
+        default: 'main'
+      version_tag:
+        description: 'Optional immutable version label (e.g. v1.4.0)'
+        required: false
+        default: ''
+  push:
+    tags: ['v*.*.*']
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Resolve refs
+        id: refs
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VER="${GITHUB_REF#refs/tags/}"
+            SRC="$VER"
+          else
+            VER="${{ github.event.inputs.version_tag }}"
+            SRC="${{ github.event.inputs.source_ref }}"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "source=$SRC" >> "$GITHUB_OUTPUT"
+          echo "Source: hicsail/damplab-backend:$SRC"
+          echo "Version: ${VER:-<none>}"
+
+      - name: Promote → :prod
+        run: |
+          docker buildx imagetools create \
+            --tag hicsail/damplab-backend:prod \
+            hicsail/damplab-backend:${{ steps.refs.outputs.source }}
+
+      - name: Publish :${{ steps.refs.outputs.version }}
+        if: steps.refs.outputs.version != ''
+        run: |
+          docker buildx imagetools create \
+            --tag hicsail/damplab-backend:${{ steps.refs.outputs.version }} \
+            hicsail/damplab-backend:${{ steps.refs.outputs.source }}
+
+      - name: Summary
+        run: |
+          {
+            echo "### Promoted to prod 🚀"
+            echo ""
+            echo "- source: \`hicsail/damplab-backend:${{ steps.refs.outputs.source }}\`"
+            echo "- now tagged as: \`:prod\`${{ steps.refs.outputs.version && format(' and `:{0}`', steps.refs.outputs.version) || '' }}"
+            echo ""
+            echo "On the prod EC2:"
+            echo "\`\`\`"
+            echo "cd /home/ubuntu/damplab && docker compose pull damplab-backend && docker compose up -d damplab-backend"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
