@@ -72,6 +72,14 @@ export class WorkflowNode {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'When node entered IN_PROGRESS (for elapsed time)' })
   startedAt?: Date;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' }], required: false, default: [] })
+  @Field(() => [String], {
+    nullable: true,
+    description:
+      'Inventory items currently held by this node while it is IN_PROGRESS. Cleared automatically on transition out of IN_PROGRESS.'
+  })
+  usedInventory?: mongoose.Types.ObjectId[];
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;

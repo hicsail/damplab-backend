@@ -79,6 +79,40 @@ export class WorkflowNodeResolver {
     return updated;
   }
 
+  @Mutation(() => WorkflowNode, { description: 'Set which inventory items a node is holding while IN_PROGRESS. Rejects items already held by another in-progress node.' })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async setWorkflowNodeUsedInventory(
+    @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
+    @Args('inventoryIds', { type: () => [ID] }) inventoryIds: string[]
+  ): Promise<WorkflowNode> {
+    const updated = (await this.nodeService.setUsedInventory(workflowNode, inventoryIds))!;
+    const serviceName =
+      (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
+      (updated as any)?.service?.name ||
+      'Service';
+    await this.activityService.createEvent({
+      type: 'LAB_NODE_INVENTORY_SET',
+      message:
+        inventoryIds.length > 0
+          ? `Set inventory on "${serviceName}" (${inventoryIds.length} item${inventoryIds.length === 1 ? '' : 's'})`
+          : `Cleared inventory on "${serviceName}"`,
+      actorDisplayName: undefined,
+      workflowNodeId: String(updated._id),
+      serviceName
+    });
+    return updated;
+  }
+
+  @Query(() => [WorkflowNode], {
+    description: 'In-progress nodes currently holding any inventory (powers the availability board).'
+  })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async getInProgressNodesHoldingInventory(): Promise<WorkflowNode[]> {
+    return this.nodeService.getInProgressNodesHoldingInventory();
+  }
+
   @Mutation(() => WorkflowNode)
   @UseGuards(AuthRolesGuard)
   @Roles(Role.DamplabStaff)
