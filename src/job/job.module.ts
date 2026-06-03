@@ -26,6 +26,6 @@ import { ActivityModule } from '../activity/activity.module';
     ActivityModule
   ],
   providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService],
-  exports: [JobService]
+  exports: [JobService, JobAttachmentsService]
 })
 export class JobModule {}

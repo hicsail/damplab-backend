@@ -49,13 +49,23 @@ export class CommentService {
     // Validate input
     this.validateCommentInput(input);
 
+    const now = new Date();
+    const attachments = (input.attachments ?? []).map((a) => ({
+      filename: a.filename,
+      key: a.key,
+      contentType: a.contentType,
+      size: a.size,
+      uploadedAt: now
+    }));
+
     const commentData = {
       jobId: input.jobId,
       content: input.content.trim(),
       author: input.author.trim(),
       authorType: input.authorType,
       isInternal: input.isInternal ?? false,
-      createdAt: new Date()
+      createdAt: now,
+      attachments
     };
 
     const comment = await this.commentModel.create(commentData);

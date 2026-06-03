@@ -1,5 +1,5 @@
-import { Resolver, Mutation, Args, Query, ID } from '@nestjs/graphql';
-import { Comment } from './comment.model';
+import { Resolver, Mutation, Args, Query, ID, ResolveField, Parent } from '@nestjs/graphql';
+import { Comment, CommentAttachment } from './comment.model';
 import { CommentService } from './comment.service';
 import { CreateCommentInput, UpdateCommentInput } from './comment.dto';
 import { UseGuards } from '@nestjs/common';
@@ -7,14 +7,37 @@ import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 import { ActivityService } from '../activity/activity.service';
+import { JobAttachmentsService } from '../job/job-attachments.service';
 
 @Resolver(() => Comment)
 @UseGuards(AuthRolesGuard)
 export class CommentResolver {
   constructor(
     private readonly commentService: CommentService,
-    private readonly activityService: ActivityService
+    private readonly activityService: ActivityService,
+    // Reuse the existing presign service — files for comment attachments live
+    // in the same S3 bucket and were uploaded via createJobAttachmentUploadUrls.
+    private readonly jobAttachmentsService: JobAttachmentsService
   ) {}
+
+  /** Resolve each attachment with a fresh presigned download URL. */
+  @ResolveField(() => [CommentAttachment], { name: 'attachments', nullable: true })
+  async resolveAttachments(@Parent() comment: Comment): Promise<CommentAttachment[]> {
+    const raw = comment.attachments ?? [];
+    if (!raw.length) return [];
+    return Promise.all(
+      raw
+        .filter((a) => a && typeof a.key === 'string' && a.key.length > 0)
+        .map(async (a) => ({
+          filename: a.filename,
+          key: a.key,
+          contentType: a.contentType,
+          size: a.size,
+          uploadedAt: a.uploadedAt,
+          url: (await this.jobAttachmentsService.createPresignedDownload(a.key, a.contentType)) ?? undefined
+        }))
+    );
+  }
 
   @Query(() => Comment, { nullable: true, description: 'Get comment by ID' })
   async commentById(@Args('id', { type: () => ID }) id: string): Promise<Comment | null> {
