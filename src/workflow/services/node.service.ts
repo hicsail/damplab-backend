@@ -1,6 +1,7 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
+import mongoose from 'mongoose';
 import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../models/node.model';
 import { AddNodeInputFull } from '../dtos/add-node.input';
 import { Workflow, WorkflowDocument } from '../models/workflow.model';
@@ -43,7 +44,55 @@ export class WorkflowNodeService {
     if (newState === WorkflowNodeState.IN_PROGRESS && !node.startedAt) {
       update.startedAt = new Date();
     }
+    // Auto-release inventory when leaving IN_PROGRESS. Going back to QUEUED
+    // also releases (staff might undo a mistaken start). Going to COMPLETE
+    // releases as well — the work is done.
+    if (newState !== WorkflowNodeState.IN_PROGRESS) {
+      update.usedInventory = [];
+    }
     return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: update }, { new: true });
+  }
+
+  /**
+   * Set the inventory items a node is holding. Enforces exclusivity: rejects
+   * if any of the requested items is already held by a different IN_PROGRESS
+   * node. Caller is expected to have already verified the node itself is in
+   * IN_PROGRESS (UI hides the picker otherwise).
+   */
+  async setUsedInventory(node: WorkflowNode, inventoryIds: string[]): Promise<WorkflowNode | null> {
+    const oids = (inventoryIds || []).map((id) => new mongoose.Types.ObjectId(id));
+    if (oids.length > 0) {
+      const conflicts = await this.workflowNodeModel
+        .find({
+          _id: { $ne: node._id },
+          state: WorkflowNodeState.IN_PROGRESS,
+          usedInventory: { $in: oids }
+        })
+        .select('_id label usedInventory')
+        .lean()
+        .exec();
+      if (conflicts.length > 0) {
+        const heldIds = new Set<string>();
+        for (const c of conflicts) {
+          for (const i of (c.usedInventory ?? []) as mongoose.Types.ObjectId[]) {
+            if (oids.some((o) => o.equals(i))) heldIds.add(String(i));
+          }
+        }
+        throw new BadRequestException(
+          `Inventory item(s) already in use by another in-progress node: ${[...heldIds].join(', ')}`
+        );
+      }
+    }
+    return this.workflowNodeModel
+      .findOneAndUpdate({ _id: node._id }, { $set: { usedInventory: oids } }, { new: true })
+      .exec();
+  }
+
+  /** All in-progress nodes that currently hold any inventory (for the availability board). */
+  async getInProgressNodesHoldingInventory(): Promise<WorkflowNode[]> {
+    return this.workflowNodeModel
+      .find({ state: WorkflowNodeState.IN_PROGRESS, usedInventory: { $exists: true, $ne: [] } })
+      .exec();
   }
 
   async updateAssignee(node: WorkflowNode, assigneeId: string | null, assigneeDisplayName: string | null): Promise<WorkflowNode | null> {

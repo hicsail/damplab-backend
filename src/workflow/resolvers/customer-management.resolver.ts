@@ -1,15 +1,78 @@
 import { BadRequestException, NotFoundException, UseGuards } from '@nestjs/common';
-import { Args, ID, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Int, Mutation, Query, Resolver, registerEnumType } from '@nestjs/graphql';
 import { AuthRolesGuard } from '../../auth/auth.guard';
 import { Roles } from '../../auth/roles/roles.decorator';
 import { Role } from '../../auth/roles/roles.enum';
 import { KeycloakService } from '../../keycloak/keycloak.service';
 import { CustomerCategory } from '../../job/job.model';
 import { KeycloakUserCustomerManagement } from '../dtos/keycloak-customer-user.dto';
+import { KeycloakUserCustomerManagementPage } from '../dtos/keycloak-customer-user-page.dto';
+
+export enum CustomerManagementUserListCategory {
+  ALL = 'ALL',
+  STAFF = 'STAFF',
+  INTERNAL_CUSTOMERS = 'INTERNAL_CUSTOMERS',
+  EXTERNAL_CUSTOMER_DEFAULT = 'EXTERNAL_CUSTOMER_DEFAULT',
+  EXTERNAL_CUSTOMER_ACADEMIC = 'EXTERNAL_CUSTOMER_ACADEMIC',
+  EXTERNAL_CUSTOMER_MARKET = 'EXTERNAL_CUSTOMER_MARKET',
+  EXTERNAL_CUSTOMER_NO_SALARY = 'EXTERNAL_CUSTOMER_NO_SALARY'
+}
+
+registerEnumType(CustomerManagementUserListCategory, { name: 'CustomerManagementUserListCategory' });
 
 @Resolver()
 export class CustomerManagementResolver {
   constructor(private readonly keycloakService: KeycloakService) {}
+
+  @Query(() => KeycloakUserCustomerManagementPage, {
+    description:
+      'Staff: list Keycloak users by staff/customer category group membership, paginated. Intended for customer management UI browsing (default STAFF).'
+  })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async listKeycloakUsersForCustomerManagement(
+    @Args('category', { type: () => CustomerManagementUserListCategory }) category: CustomerManagementUserListCategory,
+    @Args('offset', { type: () => Int, nullable: true, defaultValue: 0 }) offset: number,
+    @Args('limit', { type: () => Int, nullable: true, defaultValue: 25 }) limit: number
+  ): Promise<KeycloakUserCustomerManagementPage> {
+    if (!this.keycloakService.isConfigured()) {
+      throw new BadRequestException(
+        'Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).'
+      );
+    }
+    const safeOffset = Math.max(offset ?? 0, 0);
+    const safeLimit = Math.min(Math.max(limit ?? 25, 1), 100);
+
+    // Fetch one extra row to determine hasNextPage.
+    const first = safeOffset;
+    const max = safeLimit + 1;
+
+    let rows;
+    if (category === CustomerManagementUserListCategory.ALL) {
+      rows = await this.keycloakService.listAllUsersWithCustomerCategory(first, max);
+    } else if (category === CustomerManagementUserListCategory.STAFF) {
+      rows = await this.keycloakService.listLabStaffWithCustomerCategory(first, max);
+    } else if (category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT) {
+      const raw = await this.keycloakService.listUsersInGroupWithCustomerCategory(Role.ExternalCustomer, first, max);
+      rows = raw.filter((r) => r.isDefaultExternalCustomer === true);
+    } else {
+      const groupName =
+        category === CustomerManagementUserListCategory.INTERNAL_CUSTOMERS
+          ? Role.InternalCustomers
+          : category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_ACADEMIC
+            ? Role.ExternalCustomerAcademic
+            : category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_MARKET
+              ? Role.ExternalCustomerMarket
+              : Role.ExternalCustomerNoSalary;
+      rows = await this.keycloakService.listUsersInGroupWithCustomerCategory(groupName, first, max);
+    }
+
+    const items = rows.slice(0, safeLimit) as unknown as KeycloakUserCustomerManagement[];
+    return {
+      items,
+      hasNextPage: rows.length > safeLimit
+    };
+  }
 
   @Query(() => [KeycloakUserCustomerManagement], {
     description: 'Staff: search Keycloak users by name/email/username and return inferred customer pricing category from group membership.'

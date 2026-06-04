@@ -60,6 +60,14 @@ export class DampLabService {
   @Field(() => [DampLabService], { description: 'List of services this service can connect to' })
   allowedConnections: mongoose.Types.ObjectId[];
 
+  @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' }], required: false, default: [] })
+  @Field(() => [String], {
+    nullable: true,
+    description:
+      'Inventory items this service typically needs. Informational (soft requirement): the lab monitor surfaces these in the picker but does not block the IN_PROGRESS transition if none are selected.'
+  })
+  inventoryRequirements?: mongoose.Types.ObjectId[];
+
   @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
   @Field(() => JSON, { description: 'The by-product of the service', nullable: true })
   result?: any;

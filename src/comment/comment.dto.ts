@@ -1,5 +1,26 @@
-import { InputType, Field, ID } from '@nestjs/graphql';
+import { InputType, Field, ID, Int } from '@nestjs/graphql';
 import { CommentAuthorType } from './comment.model';
+
+/**
+ * One attachment input on a CreateComment call. The frontend uploads each
+ * file to S3 via a presigned URL (the existing createJobAttachmentUploadUrls
+ * mutation, which is fine to reuse — the S3 path is the same) and then
+ * passes the resulting key/filename/contentType/size here.
+ */
+@InputType()
+export class CommentAttachmentInput {
+  @Field({ description: 'Original filename', nullable: true })
+  filename?: string;
+
+  @Field({ description: 'S3 object key returned by the upload URL request' })
+  key: string;
+
+  @Field({ description: 'MIME type' })
+  contentType: string;
+
+  @Field(() => Int, { description: 'Size in bytes' })
+  size: number;
+}
 
 @InputType()
 export class CreateCommentInput {
@@ -17,6 +38,9 @@ export class CreateCommentInput {
 
   @Field({ description: 'If true, only visible to staff; if false, visible to both staff and client', defaultValue: false, nullable: true })
   isInternal?: boolean;
+
+  @Field(() => [CommentAttachmentInput], { description: 'Files already uploaded to S3 to attach to this comment.', nullable: true })
+  attachments?: CommentAttachmentInput[];
 }
 
 @InputType()

@@ -33,6 +33,6 @@ import { JobScreeningService } from './job-screening.service';
     DampLabServicesModule
   ],
   providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService, JobScreeningService],
-  exports: [JobService]
+  exports: [JobService, JobAttachmentsService]
 })
 export class JobModule {}

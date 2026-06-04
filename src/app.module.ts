@@ -22,6 +22,7 @@ import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
 import { ActivityModule } from './activity/activity.module';
 import { InvoiceModule } from './invoice/invoice.module';
+import { InventoryModule } from './inventory/inventory.module';
 import { SecureDnaModule } from './securedna/securedna.module';
 
 @Module({
@@ -61,6 +62,7 @@ import { SecureDnaModule } from './securedna/securedna.module';
     CustomerManagementModule,
     ActivityModule,
     InvoiceModule,
+    InventoryModule,
     SecureDnaModule
   ],
   controllers: [AppController],
