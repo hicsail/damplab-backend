@@ -78,7 +78,12 @@ export class AgentService {
    *  - 'canvas'      → workflow builder, catalog injected
    *  - 'lab-status'  → reads Mongo directly via n8n, no catalog
    */
-  async runAgent(agentKey: 'canvas' | 'lab-status', message: string, history: ChatHistoryEntry[]): Promise<AgentResult> {
+  async runAgent(
+    agentKey: 'canvas' | 'lab-status',
+    message: string,
+    history: ChatHistoryEntry[],
+    csv?: { filename?: string; content: string } | null
+  ): Promise<AgentResult> {
     const webhookUrl =
       agentKey === 'lab-status'
         ? this.configService.get<string>('agent.labStatusWebhookUrl')
@@ -92,6 +97,10 @@ export class AgentService {
     // longer inject the service catalog. (buildCatalog is kept for reference /
     // possible reuse but intentionally unused.)
     const payload: Record<string, unknown> = { message, history: history ?? [] };
+    // Forward an attached CSV (lab-ops agent uses it to propose service creation).
+    if (csv && typeof csv.content === 'string' && csv.content.trim()) {
+      payload.csv = { filename: csv.filename || 'upload.csv', content: csv.content.slice(0, 200000) };
+    }
 
     let res: Response;
     try {

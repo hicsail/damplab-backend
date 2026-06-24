@@ -6,6 +6,7 @@ import { AgentService, ChatHistoryEntry } from './agent.service';
 interface ChatRequestBody {
   message?: string;
   history?: ChatHistoryEntry[];
+  csv?: { filename?: string; content: string } | null;
 }
 
 @Controller('api/agent')
@@ -59,7 +60,7 @@ export class AgentController {
         return;
       }
 
-      const result = await this.agentService.runAgent(agentKey, message, body?.history ?? []);
+      const result = await this.agentService.runAgent(agentKey, message, body?.history ?? [], body?.csv ?? null);
 
       // Stream the message text in small word-group chunks for a live feel.
       const words = result.message.split(/(\s+)/);
