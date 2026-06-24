@@ -23,6 +23,7 @@ import { CustomerManagementModule } from './customer-management/customer-managem
 import { ActivityModule } from './activity/activity.module';
 import { InvoiceModule } from './invoice/invoice.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { AgentModule } from './agent/agent.module';
 
 @Module({
   imports: [
@@ -61,7 +62,8 @@ import { InventoryModule } from './inventory/inventory.module';
     CustomerManagementModule,
     ActivityModule,
     InvoiceModule,
-    InventoryModule
+    InventoryModule,
+    AgentModule
   ],
   controllers: [AppController],
   providers: [AppService]

@@ -27,5 +27,12 @@ export default (): any => ({
   attachments: {
     bucket: process.env.JOB_ATTACHMENTS_BUCKET,
     uploadUrlTtlSeconds: process.env.JOB_ATTACHMENTS_UPLOAD_URL_TTL || 900
+  },
+  /** Canvas Agent: backend proxies chat to an n8n webhook that builds workflows. */
+  agent: {
+    /** Full n8n webhook URL, e.g. https://n8n-preaa-staging.sail.codes/webhook/damplab-canvas-agent */
+    webhookUrl: process.env.N8N_AGENT_WEBHOOK_URL,
+    /** Shared secret sent as the x-agent-secret header to the n8n webhook. */
+    webhookSecret: process.env.N8N_AGENT_WEBHOOK_SECRET
   }
 });
