@@ -149,6 +149,13 @@ export class DampLabService {
   })
   deliverables!: string[];
 
+  @Prop({ required: false })
+  @Field({
+    nullable: true,
+    description: 'Free-text internal notes for DAMPLab staff. Not shown to customers.'
+  })
+  notes?: string;
+
   @Prop({ default: false })
   @Field(() => Boolean, {
     nullable: true,
