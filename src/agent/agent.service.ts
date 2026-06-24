@@ -70,17 +70,27 @@ export class AgentService {
   }
 
   /**
-   * Forward the conversation + catalog to the n8n agent webhook and return the
-   * normalized result. n8n returns a single JSON response; the controller is
-   * responsible for streaming it to the client.
+   * Forward the conversation to an n8n agent webhook and return the normalized
+   * result. n8n returns a single JSON response; the controller streams it.
+   *
+   * agentKey selects the webhook + whether to inject the service catalog:
+   *  - 'canvas'      → workflow builder, catalog injected
+   *  - 'lab-status'  → reads Mongo directly via n8n, no catalog
    */
-  async runAgent(message: string, history: ChatHistoryEntry[]): Promise<AgentResult> {
-    const webhookUrl = this.configService.get<string>('agent.webhookUrl');
+  async runAgent(agentKey: 'canvas' | 'lab-status', message: string, history: ChatHistoryEntry[]): Promise<AgentResult> {
+    const webhookUrl =
+      agentKey === 'lab-status'
+        ? this.configService.get<string>('agent.labStatusWebhookUrl')
+        : this.configService.get<string>('agent.webhookUrl');
     if (!webhookUrl) {
-      throw new ServiceUnavailableException('Canvas agent is not configured (N8N_AGENT_WEBHOOK_URL missing).');
+      throw new ServiceUnavailableException(`Agent "${agentKey}" is not configured (missing webhook URL).`);
     }
     const secret = this.configService.get<string>('agent.webhookSecret');
-    const catalog = await this.buildCatalog();
+
+    const payload: Record<string, unknown> = { message, history: history ?? [] };
+    if (agentKey === 'canvas') {
+      payload.catalog = await this.buildCatalog();
+    }
 
     let res: Response;
     try {
@@ -90,17 +100,17 @@ export class AgentService {
           'Content-Type': 'application/json',
           ...(secret ? { 'x-agent-secret': secret } : {})
         },
-        body: JSON.stringify({ message, history: history ?? [], catalog })
+        body: JSON.stringify(payload)
       });
     } catch (err: any) {
-      this.logger.error(`Agent webhook call failed: ${err?.message}`);
-      throw new ServiceUnavailableException('Could not reach the canvas agent.');
+      this.logger.error(`Agent "${agentKey}" webhook call failed: ${err?.message}`);
+      throw new ServiceUnavailableException(`Could not reach the ${agentKey} agent.`);
     }
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      this.logger.error(`Agent webhook returned ${res.status}: ${text.slice(0, 300)}`);
-      throw new ServiceUnavailableException(`Canvas agent error (${res.status}).`);
+      this.logger.error(`Agent "${agentKey}" webhook returned ${res.status}: ${text.slice(0, 300)}`);
+      throw new ServiceUnavailableException(`${agentKey} agent error (${res.status}).`);
     }
 
     const data = (await res.json().catch(() => null)) as Partial<AgentResult> | null;

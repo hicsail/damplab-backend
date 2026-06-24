@@ -28,11 +28,13 @@ export default (): any => ({
     bucket: process.env.JOB_ATTACHMENTS_BUCKET,
     uploadUrlTtlSeconds: process.env.JOB_ATTACHMENTS_UPLOAD_URL_TTL || 900
   },
-  /** Canvas Agent: backend proxies chat to an n8n webhook that builds workflows. */
+  /** Agents: backend proxies chat to n8n webhooks. One entry per agent. */
   agent: {
-    /** Full n8n webhook URL, e.g. https://n8n-preaa-staging.sail.codes/webhook/damplab-canvas-agent */
+    /** Canvas workflow-builder agent (catalog injected). */
     webhookUrl: process.env.N8N_AGENT_WEBHOOK_URL,
-    /** Shared secret sent as the x-agent-secret header to the n8n webhook. */
+    /** Lab-status agent (queries Mongo directly via n8n; no catalog injection). */
+    labStatusWebhookUrl: process.env.N8N_LAB_STATUS_WEBHOOK_URL,
+    /** Shared secret sent as the x-agent-secret header to the n8n webhooks. */
     webhookSecret: process.env.N8N_AGENT_WEBHOOK_SECRET
   }
 });

@@ -25,8 +25,21 @@ export class AgentController {
    * for a streaming feel and emit the structured workflow in the final event.
    * (Token-level streaming would require n8n response streaming — a later step.)
    */
+  /** Canvas workflow-builder agent (catalog injected). */
   @Post('chat')
   async chat(@Body() body: ChatRequestBody, @Res() res: Response): Promise<void> {
+    return this.streamAgent('canvas', body, res);
+  }
+
+  /** Lab-status agent (queries Mongo via n8n; staff-facing). */
+  @Post('lab-status/chat')
+  async labStatusChat(@Body() body: ChatRequestBody, @Res() res: Response): Promise<void> {
+    return this.streamAgent('lab-status', body, res);
+  }
+
+  /** Shared SSE pipe: run the agent, stream the message text, end with the
+   *  structured done event (carries workflow for the canvas agent; empty for others). */
+  private async streamAgent(agentKey: 'canvas' | 'lab-status', body: ChatRequestBody, res: Response): Promise<void> {
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -40,13 +53,13 @@ export class AgentController {
     try {
       const message = String(body?.message ?? '').trim();
       if (!message) {
-        send({ done: true, type: 'question', message: 'Please type what you would like to do.', workflow: { nodes: [], edges: [] } });
+        send({ done: true, type: 'question', message: 'Please type your message.', workflow: { nodes: [], edges: [] } });
         send('[DONE]');
         res.end();
         return;
       }
 
-      const result = await this.agentService.runAgent(message, body?.history ?? []);
+      const result = await this.agentService.runAgent(agentKey, message, body?.history ?? []);
 
       // Stream the message text in small word-group chunks for a live feel.
       const words = result.message.split(/(\s+)/);
