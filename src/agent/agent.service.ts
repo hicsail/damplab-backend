@@ -40,6 +40,7 @@ export class AgentService {
    * parameter shapes, and connection rules. The client re-hydrates full node
    * data from its own catalog, so the agent can't inject anything else.
    */
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async buildCatalog(): Promise<CatalogEntry[]> {
     const services = await this.dampLabServices.findAll();
     return services.map((s: any) => {
@@ -87,10 +88,10 @@ export class AgentService {
     }
     const secret = this.configService.get<string>('agent.webhookSecret');
 
+    // Both agents now read what they need from Mongo via n8n tools, so we no
+    // longer inject the service catalog. (buildCatalog is kept for reference /
+    // possible reuse but intentionally unused.)
     const payload: Record<string, unknown> = { message, history: history ?? [] };
-    if (agentKey === 'canvas') {
-      payload.catalog = await this.buildCatalog();
-    }
 
     let res: Response;
     try {
