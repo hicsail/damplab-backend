@@ -89,6 +89,14 @@ export class WorkflowNode {
       'protocols.io step identifiers the assigned technician has checked off in the bench view. Persisted so step progress survives refresh. Cleared/ignored when there is no linked protocol.'
   })
   completedSteps?: string[];
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Planned start of this operation’s inventory hold (for the shared scheduling/availability pool). Optional; defaults to startedAt/now.' })
+  inventoryReservationStart?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Planned end of this operation’s inventory hold. Optional; defaults to start + estimatedMinutes (or a few hours).' })
+  inventoryReservationEnd?: Date;
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;

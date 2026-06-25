@@ -17,6 +17,7 @@ import { JobModule } from '../job/job.module';
 import { KeycloakModule } from '../keycloak/keycloak.module';
 import { WorkflowParameterFilesService } from './services/workflow-parameter-files.service';
 import { ActivityModule } from '../activity/activity.module';
+import { AvailabilityModule } from '../availability/availability.module';
 
 @Module({
   imports: [
@@ -28,7 +29,8 @@ import { ActivityModule } from '../activity/activity.module';
       { name: WorkflowEdge.name, schema: WorkflowEdgeSchema }
     ]),
     DampLabServicesModule,
-    ActivityModule
+    ActivityModule,
+    AvailabilityModule
   ],
   providers: [
     WorkflowResolver,

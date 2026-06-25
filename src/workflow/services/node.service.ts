@@ -7,13 +7,15 @@ import { AddNodeInputFull } from '../dtos/add-node.input';
 import { Workflow, WorkflowDocument } from '../models/workflow.model';
 import { JobService } from '../../job/job.service';
 import { Job } from '../../job/job.model';
+import { AvailabilityService } from '../../availability/availability.service';
 
 @Injectable()
 export class WorkflowNodeService {
   constructor(
     @InjectModel(WorkflowNode.name) private readonly workflowNodeModel: Model<WorkflowNodeDocument>,
     @InjectModel(Workflow.name) private readonly workflowModel: Model<WorkflowDocument>,
-    @Inject(forwardRef(() => JobService)) private readonly jobService: JobService
+    @Inject(forwardRef(() => JobService)) private readonly jobService: JobService,
+    private readonly availability: AvailabilityService
   ) {}
 
   async create(newNode: AddNodeInputFull): Promise<WorkflowNode> {
@@ -50,6 +52,8 @@ export class WorkflowNodeService {
     // releases as well — the work is done.
     if (newState !== WorkflowNodeState.IN_PROGRESS) {
       update.usedInventory = [];
+      update.inventoryReservationStart = undefined;
+      update.inventoryReservationEnd = undefined;
     }
     return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: update }, { new: true });
   }
@@ -60,32 +64,35 @@ export class WorkflowNodeService {
    * node. Caller is expected to have already verified the node itself is in
    * IN_PROGRESS (UI hides the picker otherwise).
    */
-  async setUsedInventory(node: WorkflowNode, inventoryIds: string[]): Promise<WorkflowNode | null> {
+  async setUsedInventory(
+    node: WorkflowNode,
+    inventoryIds: string[],
+    reservationStart?: Date | null,
+    reservationEnd?: Date | null
+  ): Promise<WorkflowNode | null> {
     const oids = (inventoryIds || []).map((id) => new mongoose.Types.ObjectId(id));
+    if (reservationStart && reservationEnd && new Date(reservationEnd).getTime() <= new Date(reservationStart).getTime()) {
+      throw new BadRequestException('Reservation end must be after the start.');
+    }
     if (oids.length > 0) {
-      const conflicts = await this.workflowNodeModel
-        .find({
-          _id: { $ne: node._id },
-          state: WorkflowNodeState.IN_PROGRESS,
-          usedInventory: { $in: oids }
-        })
-        .select('_id label usedInventory')
-        .lean()
-        .exec();
+      // Shared availability pool: conflicts with other operations AND with timed calendar bookings.
+      const conflicts = await this.availability.findItemConflicts({
+        itemIds: inventoryIds,
+        start: reservationStart,
+        end: reservationEnd,
+        excludeNodeId: String(node._id)
+      });
       if (conflicts.length > 0) {
-        const heldIds = new Set<string>();
-        for (const c of conflicts) {
-          for (const i of (c.usedInventory ?? []) as mongoose.Types.ObjectId[]) {
-            if (oids.some((o) => o.equals(i))) heldIds.add(String(i));
-          }
-        }
-        throw new BadRequestException(
-          `Inventory item(s) already in use by another in-progress node: ${[...heldIds].join(', ')}`
-        );
+        const detail = conflicts.map((c) => `${c.itemId} — ${c.label}`).join('; ');
+        throw new BadRequestException(`Inventory unavailable for the selected time: ${detail}`);
       }
     }
     return this.workflowNodeModel
-      .findOneAndUpdate({ _id: node._id }, { $set: { usedInventory: oids } }, { new: true })
+      .findOneAndUpdate(
+        { _id: node._id },
+        { $set: { usedInventory: oids, inventoryReservationStart: reservationStart ?? undefined, inventoryReservationEnd: reservationEnd ?? undefined } },
+        { new: true }
+      )
       .exec();
   }
 

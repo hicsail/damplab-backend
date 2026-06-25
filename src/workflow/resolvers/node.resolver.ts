@@ -21,6 +21,7 @@ import { WorkflowParameterFileUpload, WorkflowParameterFileUploadRequest } from 
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { ActivityService } from '../../activity/activity.service';
 import { WorkflowNodeJob } from '../dtos/workflow-node-job.dto';
+import { AvailabilityService, InventoryConflict } from '../../availability/availability.service';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
@@ -32,7 +33,8 @@ export class WorkflowNodeResolver {
     private readonly workflowService: WorkflowService,
     private readonly keycloakService: KeycloakService,
     private readonly workflowParameterFilesService: WorkflowParameterFilesService,
-    private readonly activityService: ActivityService
+    private readonly activityService: ActivityService,
+    private readonly availability: AvailabilityService
   ) {}
 
   @Mutation(() => WorkflowNode)
@@ -85,9 +87,11 @@ export class WorkflowNodeResolver {
   @Roles(Role.DamplabStaff)
   async setWorkflowNodeUsedInventory(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
-    @Args('inventoryIds', { type: () => [ID] }) inventoryIds: string[]
+    @Args('inventoryIds', { type: () => [ID] }) inventoryIds: string[],
+    @Args('reservationStart', { nullable: true }) reservationStart?: Date,
+    @Args('reservationEnd', { nullable: true }) reservationEnd?: Date
   ): Promise<WorkflowNode> {
-    const updated = (await this.nodeService.setUsedInventory(workflowNode, inventoryIds))!;
+    const updated = (await this.nodeService.setUsedInventory(workflowNode, inventoryIds, reservationStart ?? null, reservationEnd ?? null))!;
     const serviceName =
       (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
       (updated as any)?.service?.name ||
@@ -112,6 +116,19 @@ export class WorkflowNodeResolver {
   @Roles(Role.DamplabStaff)
   async getInProgressNodesHoldingInventory(): Promise<WorkflowNode[]> {
     return this.nodeService.getInProgressNodesHoldingInventory();
+  }
+
+  @Query(() => [InventoryConflict], {
+    description: 'Inventory items unavailable in a time window — shared pool across operations + calendar bookings. Pass excludeNodeId to ignore the operation being edited.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async inventoryAvailability(
+    @Args('from', { nullable: true }) from?: Date,
+    @Args('to', { nullable: true }) to?: Date,
+    @Args('excludeNodeId', { type: () => ID, nullable: true }) excludeNodeId?: string
+  ): Promise<InventoryConflict[]> {
+    return this.availability.findItemConflicts({ start: from, end: to, excludeNodeId });
   }
 
   @Mutation(() => WorkflowNode)

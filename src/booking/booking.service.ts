@@ -5,6 +5,7 @@ import { Booking, BookingBillingStatus, BookingDocument, BookingKind, BookingSta
 import { CreateBookingInput } from './dtos/create-booking.input';
 import { InventoryService } from '../inventory/inventory.service';
 import { InventoryItemType } from '../inventory/inventory.model';
+import { AvailabilityService } from '../availability/availability.service';
 
 interface ActorIdentity {
   sub?: string;
@@ -26,7 +27,8 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 export class BookingService {
   constructor(
     @InjectModel(Booking.name) private readonly model: Model<BookingDocument>,
-    private readonly inventoryService: InventoryService
+    private readonly inventoryService: InventoryService,
+    private readonly availability: AvailabilityService
   ) {}
 
   /** Resolve the $/hour or $/unit rate for a customer category from a Pricing object. */
@@ -96,18 +98,12 @@ export class BookingService {
       }
       if (end.getTime() <= start.getTime()) throw new BadRequestException('End time must be after start time.');
 
-      // Overlap guard: a machine can only be reserved by one booking at a time.
-      const conflict = await this.model
-        .findOne({
-          inventoryItem: item.id,
-          kind: BookingKind.TIMED,
-          status: { $in: [BookingStatus.RESERVED, BookingStatus.IN_USE] },
-          startTime: { $lt: end },
-          endTime: { $gt: start }
-        })
-        .lean()
-        .exec();
-      if (conflict) throw new BadRequestException('That time slot is already booked for this item.');
+      // Shared availability pool: conflicts with other bookings AND with operation holds.
+      const conflicts = await this.availability.findItemConflicts({ itemIds: [item.id], start, end });
+      if (conflicts.length > 0) {
+        const detail = conflicts.map((c) => c.label).join('; ');
+        throw new BadRequestException(`That item is unavailable for the selected time (${detail}).`);
+      }
 
       base.startTime = start;
       base.endTime = end;
