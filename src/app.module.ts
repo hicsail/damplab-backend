@@ -24,6 +24,9 @@ import { ActivityModule } from './activity/activity.module';
 import { InvoiceModule } from './invoice/invoice.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { AgentModule } from './agent/agent.module';
+import { ProtocolsModule } from './protocols/protocols.module';
+import { BookingModule } from './booking/booking.module';
+import { UsageBillingModule } from './usage-billing/usage-billing.module';
 
 @Module({
   imports: [
@@ -63,7 +66,10 @@ import { AgentModule } from './agent/agent.module';
     ActivityModule,
     InvoiceModule,
     InventoryModule,
-    AgentModule
+    AgentModule,
+    ProtocolsModule,
+    BookingModule,
+    UsageBillingModule
   ],
   controllers: [AppController],
   providers: [AppService]

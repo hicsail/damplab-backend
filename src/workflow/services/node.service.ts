@@ -6,6 +6,7 @@ import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../models
 import { AddNodeInputFull } from '../dtos/add-node.input';
 import { Workflow, WorkflowDocument } from '../models/workflow.model';
 import { JobService } from '../../job/job.service';
+import { Job } from '../../job/job.model';
 
 @Injectable()
 export class WorkflowNodeService {
@@ -101,6 +102,25 @@ export class WorkflowNodeService {
 
   async updateEstimatedMinutes(node: WorkflowNode, estimatedMinutes: number | null): Promise<WorkflowNode | null> {
     return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { estimatedMinutes: estimatedMinutes ?? undefined } }, { new: true });
+  }
+
+  /** All operations (nodes) assigned to a given user, for the technician bench view. */
+  async getNodesByAssignee(assigneeId: string): Promise<WorkflowNode[]> {
+    if (!assigneeId) return [];
+    return this.workflowNodeModel.find({ assigneeId }).exec();
+  }
+
+  /** Persist the protocols.io step ids a technician has checked off for an operation. */
+  async setCompletedSteps(node: WorkflowNode, completedSteps: string[]): Promise<WorkflowNode | null> {
+    const unique = Array.from(new Set((completedSteps ?? []).map((s) => String(s))));
+    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { completedSteps: unique } }, { new: true }).exec();
+  }
+
+  /** Find the job a node belongs to (node -> workflow -> job), for bench-view context + note scoping. */
+  async getJobForNode(nodeId: string): Promise<Job | null> {
+    const workflow = await this.workflowModel.findOne({ nodes: nodeId }).exec();
+    if (!workflow) return null;
+    return this.jobService.findByWorkflow(workflow as unknown as Workflow);
   }
 
   /** Nodes in this state that belong to workflows on approved jobs (for lab monitor by node state). */

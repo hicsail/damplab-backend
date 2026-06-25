@@ -1,6 +1,7 @@
 import { ObjectType, Field, ID, Int, registerEnumType } from '@nestjs/graphql';
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import mongoose from 'mongoose';
+import { Pricing } from '../pricing/pricing.model';
 
 /**
  * Coarse category for filtering and grouping on the availability board.
@@ -14,6 +15,15 @@ export enum InventoryItemType {
   OTHER = 'OTHER'
 }
 registerEnumType(InventoryItemType, { name: 'InventoryItemType' });
+
+/** How a bookable item is billed. */
+export enum InventoryRateType {
+  /** Machines/equipment billed per hour of usage ($/hour). */
+  HOURLY = 'HOURLY',
+  /** Consumables billed per unit consumed ($/unit). */
+  PER_UNIT = 'PER_UNIT'
+}
+registerEnumType(InventoryRateType, { name: 'InventoryRateType' });
 
 /**
  * A single piece of lab equipment that a service can be linked to and that a
@@ -56,6 +66,28 @@ export class InventoryItem {
     description: 'Reserved for future multi-unit support. Currently always 1.'
   })
   quantity?: number;
+
+  @Prop({ required: false, default: false })
+  @Field(() => Boolean, {
+    nullable: true,
+    defaultValue: false,
+    description: 'Whether users can book/reserve this item. Machines book a time slot (HOURLY); consumables book a quantity (PER_UNIT).'
+  })
+  bookable?: boolean;
+
+  @Prop({ required: false, type: String, enum: Object.values(InventoryRateType) })
+  @Field(() => InventoryRateType, {
+    nullable: true,
+    description: 'How booked usage is billed: HOURLY ($/hour, time-slot) or PER_UNIT ($/unit, quantity). Defaults inferred from type when unset (CONSUMABLE → PER_UNIT, else HOURLY).'
+  })
+  rateType?: InventoryRateType;
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
+  @Field(() => Pricing, {
+    nullable: true,
+    description: 'Booking rate by customer category, interpreted per rateType: $/hour (HOURLY) or $/unit (PER_UNIT).'
+  })
+  pricing?: Pricing;
 
   @Prop({ required: false, default: false })
   @Field(() => Boolean, {

@@ -80,6 +80,15 @@ export class WorkflowNode {
       'Inventory items currently held by this node while it is IN_PROGRESS. Cleared automatically on transition out of IN_PROGRESS.'
   })
   usedInventory?: mongoose.Types.ObjectId[];
+
+  @Prop({ type: [String], required: false, default: [] })
+  @Field(() => [String], {
+    nullable: true,
+    defaultValue: [],
+    description:
+      'protocols.io step identifiers the assigned technician has checked off in the bench view. Persisted so step progress survives refresh. Cleared/ignored when there is no linked protocol.'
+  })
+  completedSteps?: string[];
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;

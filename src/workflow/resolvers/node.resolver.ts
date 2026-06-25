@@ -20,6 +20,7 @@ import { User } from '../../auth/user.interface';
 import { WorkflowParameterFileUpload, WorkflowParameterFileUploadRequest } from '../dtos/workflow-parameter-file.dto';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { ActivityService } from '../../activity/activity.service';
+import { WorkflowNodeJob } from '../dtos/workflow-node-job.dto';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
@@ -144,6 +145,28 @@ export class WorkflowNodeResolver {
     return this.nodeService.getNodesByStateForApprovedJobs(nodeState);
   }
 
+  @Query(() => [WorkflowNode], {
+    description: 'Operations (workflow nodes) assigned to the current staff member — powers the technician bench view.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async assignedOperations(@CurrentUser() user: User): Promise<WorkflowNode[]> {
+    if (!user?.sub) return [];
+    return this.nodeService.getNodesByAssignee(user.sub);
+  }
+
+  @Mutation(() => WorkflowNode, {
+    description: 'Set the protocols.io step ids a technician has checked off for an operation (bench view). Replaces the full set.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async setWorkflowNodeCompletedSteps(
+    @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
+    @Args('completedSteps', { type: () => [String] }) completedSteps: string[]
+  ): Promise<WorkflowNode> {
+    return (await this.nodeService.setCompletedSteps(workflowNode, completedSteps))!;
+  }
+
   @Query(() => [LabMonitorStaffMember], {
     description: 'Staff members available for assignment on lab monitor cards. Sourced from Keycloak group (damplab-staff) when configured, else LAB_MONITOR_STAFF env.'
   })
@@ -188,6 +211,13 @@ export class WorkflowNodeResolver {
   @ResolveField(() => Workflow, { nullable: true, description: 'Parent workflow containing this node' })
   async workflow(@Parent() node: WorkflowNode): Promise<Workflow | null> {
     return this.workflowService.findWhereNodeId(node._id);
+  }
+
+  @ResolveField(() => WorkflowNodeJob, { nullable: true, description: 'Parent job (for bench-view context + per-operation note scoping)' })
+  async job(@Parent() node: WorkflowNode): Promise<WorkflowNodeJob | null> {
+    const job = await this.nodeService.getJobForNode(node._id);
+    if (!job) return null;
+    return { id: String((job as any)._id), name: (job as any).name, jobId: (job as any).jobId };
   }
 
   @ResolveField()
