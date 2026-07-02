@@ -60,6 +60,7 @@ export class CommentService {
 
     const commentData = {
       jobId: input.jobId,
+      nodeId: input.nodeId,
       content: input.content.trim(),
       author: input.author.trim(),
       authorType: input.authorType,
@@ -128,6 +129,13 @@ export class CommentService {
    */
   async findByJob(jobId: string): Promise<Comment[]> {
     return this.commentModel.find({ jobId }).sort({ createdAt: -1 }).exec();
+  }
+
+  /**
+   * Find all comments scoped to a single workflow node (technician bench notes)
+   */
+  async findByNode(nodeId: string): Promise<Comment[]> {
+    return this.commentModel.find({ nodeId }).sort({ createdAt: -1 }).exec();
   }
 
   /**

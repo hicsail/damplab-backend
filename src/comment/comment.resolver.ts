@@ -51,6 +51,11 @@ export class CommentResolver {
     return this.commentService.findByJob(jobId);
   }
 
+  @Query(() => [Comment], { description: 'Get comments scoped to a single workflow node (technician bench-view notes)' })
+  async commentsByNodeId(@Args('nodeId', { type: () => ID }) nodeId: string): Promise<Comment[]> {
+    return this.commentService.findByNode(nodeId);
+  }
+
   @Mutation(() => Comment, { description: 'Create a new comment' })
   @UseGuards(AuthRolesGuard)
   async createComment(@Args('input', { type: () => CreateCommentInput }) input: CreateCommentInput, @CurrentUser() user: User): Promise<Comment> {

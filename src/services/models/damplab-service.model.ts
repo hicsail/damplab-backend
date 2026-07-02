@@ -149,6 +149,21 @@ export class DampLabService {
   })
   deliverables!: string[];
 
+  @Prop({ required: false })
+  @Field({
+    nullable: true,
+    description: 'Free-text internal notes for DAMPLab staff. Not shown to customers.'
+  })
+  notes?: string;
+
+  @Prop({ required: false })
+  @Field({
+    nullable: true,
+    description:
+      'protocols.io protocol identifier — the short id from the protocol URL (e.g. "n92ld46yxl5b" from protocols.io/view/...-n92ld46yxl5b/v1). Links this service to its protocols.io protocol for the technician bench view. Stored as a reference only; protocol content is fetched on demand, never synced/pulled into our DB.'
+  })
+  protocolId?: string;
+
   @Prop({ default: false })
   @Field(() => Boolean, {
     nullable: true,

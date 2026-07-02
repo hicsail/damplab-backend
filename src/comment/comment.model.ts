@@ -48,6 +48,14 @@ export class Comment {
   @Field(() => ID, { description: 'ID of the job this comment belongs to' })
   jobId: string;
 
+  @Prop({ required: false })
+  @Field(() => ID, {
+    nullable: true,
+    description:
+      'Optional WorkflowNode _id this comment is scoped to. Set for technician bench-view notes (per-operation); null for job-level comments. Lets the bench view show notes/files per operation while reusing the job-scoped attachment storage.'
+  })
+  nodeId?: string;
+
   @Prop({ required: true })
   @Field({ description: 'Content of the comment' })
   content: string;
@@ -93,5 +101,6 @@ export const CommentSchema = SchemaFactory.createForClass(Comment);
 
 // Create indexes
 CommentSchema.index({ jobId: 1 });
+CommentSchema.index({ nodeId: 1 });
 CommentSchema.index({ createdAt: -1 });
 CommentSchema.index({ authorType: 1 });

@@ -20,6 +20,8 @@ import { User } from '../../auth/user.interface';
 import { WorkflowParameterFileUpload, WorkflowParameterFileUploadRequest } from '../dtos/workflow-parameter-file.dto';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { ActivityService } from '../../activity/activity.service';
+import { WorkflowNodeJob } from '../dtos/workflow-node-job.dto';
+import { AvailabilityService, InventoryConflict } from '../../availability/availability.service';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
@@ -31,7 +33,8 @@ export class WorkflowNodeResolver {
     private readonly workflowService: WorkflowService,
     private readonly keycloakService: KeycloakService,
     private readonly workflowParameterFilesService: WorkflowParameterFilesService,
-    private readonly activityService: ActivityService
+    private readonly activityService: ActivityService,
+    private readonly availability: AvailabilityService
   ) {}
 
   @Mutation(() => WorkflowNode)
@@ -78,9 +81,11 @@ export class WorkflowNodeResolver {
   @Roles(Role.DamplabStaff)
   async setWorkflowNodeUsedInventory(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
-    @Args('inventoryIds', { type: () => [ID] }) inventoryIds: string[]
+    @Args('inventoryIds', { type: () => [ID] }) inventoryIds: string[],
+    @Args('reservationStart', { nullable: true }) reservationStart?: Date,
+    @Args('reservationEnd', { nullable: true }) reservationEnd?: Date
   ): Promise<WorkflowNode> {
-    const updated = (await this.nodeService.setUsedInventory(workflowNode, inventoryIds))!;
+    const updated = (await this.nodeService.setUsedInventory(workflowNode, inventoryIds, reservationStart ?? null, reservationEnd ?? null))!;
     const serviceName =
       (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
       (updated as any)?.service?.name ||
@@ -105,6 +110,19 @@ export class WorkflowNodeResolver {
   @Roles(Role.DamplabStaff)
   async getInProgressNodesHoldingInventory(): Promise<WorkflowNode[]> {
     return this.nodeService.getInProgressNodesHoldingInventory();
+  }
+
+  @Query(() => [InventoryConflict], {
+    description: 'Inventory items unavailable in a time window — shared pool across operations + calendar bookings. Pass excludeNodeId to ignore the operation being edited.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async inventoryAvailability(
+    @Args('from', { nullable: true }) from?: Date,
+    @Args('to', { nullable: true }) to?: Date,
+    @Args('excludeNodeId', { type: () => ID, nullable: true }) excludeNodeId?: string
+  ): Promise<InventoryConflict[]> {
+    return this.availability.findItemConflicts({ start: from, end: to, excludeNodeId });
   }
 
   @Mutation(() => WorkflowNode)
@@ -133,6 +151,28 @@ export class WorkflowNodeResolver {
   @Roles(Role.DamplabStaff)
   async getLabMonitorNodes(@Args('nodeState', { type: () => WorkflowNodeState }) nodeState: WorkflowNodeState): Promise<WorkflowNode[]> {
     return this.nodeService.getNodesByStateForApprovedJobs(nodeState);
+  }
+
+  @Query(() => [WorkflowNode], {
+    description: 'Operations (workflow nodes) assigned to the current staff member — powers the technician bench view.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async assignedOperations(@CurrentUser() user: User): Promise<WorkflowNode[]> {
+    if (!user?.sub) return [];
+    return this.nodeService.getNodesByAssignee(user.sub);
+  }
+
+  @Mutation(() => WorkflowNode, {
+    description: 'Set the protocols.io step ids a technician has checked off for an operation (bench view). Replaces the full set.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @Roles(Role.DamplabStaff)
+  async setWorkflowNodeCompletedSteps(
+    @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
+    @Args('completedSteps', { type: () => [String] }) completedSteps: string[]
+  ): Promise<WorkflowNode> {
+    return (await this.nodeService.setCompletedSteps(workflowNode, completedSteps))!;
   }
 
   @Query(() => [LabMonitorStaffMember], {
@@ -179,6 +219,13 @@ export class WorkflowNodeResolver {
   @ResolveField(() => Workflow, { nullable: true, description: 'Parent workflow containing this node' })
   async workflow(@Parent() node: WorkflowNode): Promise<Workflow | null> {
     return this.workflowService.findWhereNodeId(node._id);
+  }
+
+  @ResolveField(() => WorkflowNodeJob, { nullable: true, description: 'Parent job (for bench-view context + per-operation note scoping)' })
+  async job(@Parent() node: WorkflowNode): Promise<WorkflowNodeJob | null> {
+    const job = await this.nodeService.getJobForNode(node._id);
+    if (!job) return null;
+    return { id: String((job as any)._id), name: (job as any).name, jobId: (job as any).jobId };
   }
 
   @ResolveField()

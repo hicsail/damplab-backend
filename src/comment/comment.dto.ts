@@ -27,6 +27,12 @@ export class CreateCommentInput {
   @Field(() => ID, { description: 'ID of the job this comment belongs to' })
   jobId: string;
 
+  @Field(() => ID, {
+    description: 'Optional WorkflowNode _id to scope this comment to (technician bench-view note for one operation).',
+    nullable: true
+  })
+  nodeId?: string;
+
   @Field({ description: 'Content of the comment' })
   content: string;
 
