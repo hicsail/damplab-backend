@@ -88,12 +88,8 @@ export class DampLabServices {
    */
   async findByIds(ids: mongoose.Types.ObjectId[]): Promise<DampLabService[]> {
     const services = await this.dampLabServiceModel.find({ _id: { $in: ids }, isDeleted: { $ne: true } }).exec();
-    const serviceById = new Map(
-      services.map((service) => [String(service._id), this.normalizeService(service)] as const)
-    );
-    return ids
-      .map((id) => serviceById.get(String(id)))
-      .filter((service): service is DampLabService => Boolean(service));
+    const serviceById = new Map(services.map((service) => [String(service._id), this.normalizeService(service)] as const));
+    return ids.map((id) => serviceById.get(String(id))).filter((service): service is DampLabService => Boolean(service));
   }
 
   /**

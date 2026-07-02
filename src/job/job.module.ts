@@ -12,20 +12,27 @@ import { SOWModule } from '../sow/sow.module';
 import { JobAttachmentsService } from './job-attachments.service';
 import { JobFeedStatusEntity, JobFeedStatusEntitySchema } from './job-feed-status.model';
 import { ActivityModule } from '../activity/activity.module';
+import { ScreeningBatchSchema } from '../securedna/models/screening-batch.schema';
+import { SecureDnaModule } from '../securedna/securedna.module';
+import { DampLabServicesModule } from '../services/damplab-services.module';
+import { JobScreeningService } from './job-screening.service';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Job.name, schema: JobSchema },
       { name: Comment.name, schema: CommentSchema },
-      { name: JobFeedStatusEntity.name, schema: JobFeedStatusEntitySchema }
+      { name: JobFeedStatusEntity.name, schema: JobFeedStatusEntitySchema },
+      { name: 'ScreeningBatch', schema: ScreeningBatchSchema }
     ]),
     forwardRef(() => WorkflowModule),
     forwardRef(() => CommentModule),
     forwardRef(() => SOWModule),
-    ActivityModule
+    ActivityModule,
+    SecureDnaModule,
+    DampLabServicesModule
   ],
-  providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService],
+  providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService, JobScreeningService],
   exports: [JobService, JobAttachmentsService]
 })
 export class JobModule {}

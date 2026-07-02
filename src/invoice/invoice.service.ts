@@ -14,11 +14,7 @@ function pad3(n: number): string {
 
 @Injectable()
 export class InvoiceService {
-  constructor(
-    @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
-    private readonly jobService: JobService,
-    private readonly sowService: SOWService
-  ) {}
+  constructor(@InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>, private readonly jobService: JobService, private readonly sowService: SOWService) {}
 
   async findByJobId(jobId: string): Promise<Invoice[]> {
     return this.invoiceModel.find({ jobId }).sort({ createdAt: -1 }).exec();
@@ -91,4 +87,3 @@ export class InvoiceService {
     return invoice;
   }
 }
-

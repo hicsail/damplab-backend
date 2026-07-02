@@ -1,0 +1,18 @@
+# SecureDNA synthclient — place token.st, token.priv, token.passphrase under ./certs.
+# From repo root: npm run securedna:up
+# Backend (host): SECUREDNA_API_URL=http://127.0.0.1:8787
+
+services:
+  synthclient:
+    image: ghcr.io/securedna/synthclient
+    platform: linux/amd64
+    container_name: damplab-securedna
+    ports:
+      - "${SECUREDNA_HOST_PORT:-8787}:8080"
+    environment:
+      SECUREDNA_PORT: "8080"
+      SECUREDNA_SYNTHCLIENT_TOKEN_FILE: /certs/token.st
+      SECUREDNA_SYNTHCLIENT_KEYPAIR_FILE: /certs/token.priv
+      SECUREDNA_SYNTHCLIENT_KEYPAIR_PASSPHRASE_FILE: /certs/token.passphrase
+    volumes:
+      - ./certs:/certs:ro

@@ -27,6 +27,7 @@ import { AgentModule } from './agent/agent.module';
 import { ProtocolsModule } from './protocols/protocols.module';
 import { BookingModule } from './booking/booking.module';
 import { UsageBillingModule } from './usage-billing/usage-billing.module';
+import { SecureDnaModule } from './securedna/securedna.module';
 
 @Module({
   imports: [
@@ -69,7 +70,8 @@ import { UsageBillingModule } from './usage-billing/usage-billing.module';
     AgentModule,
     ProtocolsModule,
     BookingModule,
-    UsageBillingModule
+    UsageBillingModule,
+    SecureDnaModule
   ],
   controllers: [AppController],
   providers: [AppService]

@@ -9,3 +9,12 @@
 
 # Local
 .env
+
+/.vscode/
+.codebuddy/*
+.env.dev
+
+notes.md
+
+# SecureDNA synthclient credentials
+/secure_dna/certs/

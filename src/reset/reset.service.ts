@@ -1,10 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection } from 'mongoose';
+import { Connection, Types, Model } from 'mongoose';
 import { ServiceInput } from './dtos/service.dto';
 import { CategoryInput } from './dtos/category.dto';
 import { BundleInput } from './dtos/bundle.dto';
-import { Model, Types } from 'mongoose';
 import { DampLabService, DampLabServiceDocument } from '../services/models/damplab-service.model';
 import { Category, CategoryDocument } from '../categories/category.model';
 import { Bundle, BundleDocument } from '../bundles/bundles.model';
@@ -66,8 +65,8 @@ export class ResetService {
         paramGroups: service.paramGroups
       });
 
-      // Update the map
-      serviceMap.set(service.id, result._id);
+      // Update the map with proper ObjectId
+      serviceMap.set(service.id, new Types.ObjectId(result._id));
     }
 
     return serviceMap;
@@ -107,8 +106,8 @@ export class ResetService {
         services: []
       });
 
-      // Update the map
-      categoryMap.set(category.id, result._id);
+      // Update the map with proper ObjectId
+      categoryMap.set(category.id, new Types.ObjectId(result._id));
     }
 
     return categoryMap;
