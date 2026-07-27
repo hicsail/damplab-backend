@@ -1,10 +1,28 @@
 import { Field, ID, InputType, ObjectType } from '@nestjs/graphql';
-import { BugAttachment, BugReport } from './bug-report.model';
+import { BugAttachment, BugReport, BugSeverity } from './bug-report.model';
 
 @InputType({ description: 'Input for creating a new bug report' })
 export class CreateBugReportInput {
   @Field({ description: 'Free-form description of the bug as reported by the user' })
   description: string;
+
+  @Field(() => BugSeverity, { description: 'Reported severity', nullable: true })
+  severity?: BugSeverity;
+
+  @Field({ description: 'Page or feature the bug is on', nullable: true })
+  area?: string;
+
+  @Field({ description: 'Numbered steps to reproduce', nullable: true })
+  stepsToReproduce?: string;
+
+  @Field({ description: 'What the reporter expected', nullable: true })
+  expected?: string;
+
+  @Field({ description: 'What actually happened', nullable: true })
+  actual?: string;
+
+  @Field({ description: 'Optional session/campaign tag (e.g. "testathon")', nullable: true })
+  tag?: string;
 }
 
 @InputType({ description: 'Filter options when querying bug reports' })
@@ -14,6 +32,12 @@ export class BugReportsFilterInput {
 
   @Field({ description: 'Filter by reporter email or name (partial, case-insensitive match)', nullable: true })
   reporter?: string;
+
+  @Field(() => BugSeverity, { description: 'Filter by severity', nullable: true })
+  severity?: BugSeverity;
+
+  @Field({ description: 'Filter by session/campaign tag (exact match)', nullable: true })
+  tag?: string;
 }
 
 @ObjectType({ description: 'Lightweight view of a bug report for list screens' })
@@ -23,6 +47,24 @@ export class BugReportSummary {
 
   @Field()
   description: string;
+
+  @Field(() => BugSeverity, { nullable: true })
+  severity?: BugSeverity;
+
+  @Field({ nullable: true })
+  area?: string;
+
+  @Field({ nullable: true })
+  stepsToReproduce?: string;
+
+  @Field({ nullable: true })
+  expected?: string;
+
+  @Field({ nullable: true })
+  actual?: string;
+
+  @Field({ nullable: true })
+  tag?: string;
 
   @Field({ nullable: true })
   reporterName?: string;

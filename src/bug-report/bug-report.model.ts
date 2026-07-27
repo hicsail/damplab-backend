@@ -1,6 +1,14 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-import { Field, ObjectType, ID } from '@nestjs/graphql';
+import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
+
+export enum BugSeverity {
+  BLOCKER = 'BLOCKER',
+  MAJOR = 'MAJOR',
+  MINOR = 'MINOR',
+  COSMETIC = 'COSMETIC'
+}
+registerEnumType(BugSeverity, { name: 'BugSeverity' });
 
 @ObjectType({ description: 'File attached to a bug report (e.g. screenshot)' })
 export class BugAttachment {
@@ -32,6 +40,30 @@ export class BugReport {
   @Prop({ required: true })
   @Field({ description: 'Free-form description of the bug as reported by the user' })
   description: string;
+
+  @Prop({ required: false, type: String, enum: Object.values(BugSeverity) })
+  @Field(() => BugSeverity, { description: 'Reported severity of the bug', nullable: true })
+  severity?: BugSeverity;
+
+  @Prop({ required: false })
+  @Field({ description: 'Page or feature the bug is on (e.g. "SOW generator")', nullable: true })
+  area?: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'Numbered steps to reproduce', nullable: true })
+  stepsToReproduce?: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'What the reporter expected to happen', nullable: true })
+  expected?: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'What actually happened', nullable: true })
+  actual?: string;
+
+  @Prop({ required: false, index: true })
+  @Field({ description: 'Optional session/campaign tag (e.g. "testathon") for filtering', nullable: true })
+  tag?: string;
 
   @Prop({ required: false })
   @Field({ description: 'Name of the user who reported the bug (if available)', nullable: true })

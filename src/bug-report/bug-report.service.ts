@@ -11,6 +11,12 @@ export class BugReportService {
   async create(input: CreateBugReportInput, reporterName?: string | null, reporterEmail?: string | null): Promise<BugReport> {
     const created = new this.bugReportModel({
       description: input.description,
+      severity: input.severity ?? undefined,
+      area: input.area?.trim() || undefined,
+      stepsToReproduce: input.stepsToReproduce?.trim() || undefined,
+      expected: input.expected?.trim() || undefined,
+      actual: input.actual?.trim() || undefined,
+      tag: input.tag?.trim() || undefined,
       reporterName: reporterName ?? undefined,
       reporterEmail: reporterEmail ?? undefined,
       createdAt: new Date()
@@ -32,6 +38,14 @@ export class BugReportService {
     if (filter?.reporter) {
       const reporterRegex = { $regex: filter.reporter, $options: 'i' };
       query.$or = [{ reporterEmail: reporterRegex }, { reporterName: reporterRegex }];
+    }
+
+    if (filter?.severity) {
+      query.severity = filter.severity;
+    }
+
+    if (filter?.tag) {
+      query.tag = filter.tag;
     }
 
     return this.bugReportModel.find(query).sort({ createdAt: -1 }).exec();

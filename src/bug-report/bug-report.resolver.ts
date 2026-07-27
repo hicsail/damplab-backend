@@ -42,6 +42,12 @@ export class BugReportResolver {
         return {
           id: (b as any)._id?.toString?.() ?? (b as any).id,
           description: b.description,
+          severity: b.severity,
+          area: b.area,
+          stepsToReproduce: b.stepsToReproduce,
+          expected: b.expected,
+          actual: b.actual,
+          tag: b.tag,
           reporterName: b.reporterName,
           reporterEmail: b.reporterEmail,
           createdAt: b.createdAt,
