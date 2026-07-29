@@ -89,6 +89,10 @@ export class InventoryItem {
   })
   pricing?: Pricing;
 
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Station', required: false })
+  @Field(() => ID, { nullable: true, description: 'Station where this equipment is located (equipment→station map). Structured source of truth for execution location.' })
+  stationId?: string;
+
   @Prop({ required: false, default: false })
   @Field(() => Boolean, {
     nullable: true,

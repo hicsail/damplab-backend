@@ -20,6 +20,10 @@ export class InventoryService {
   }
 
   /** Active-only — for catalog pickers (service editor, lab monitor). */
+  async findByStationId(stationId: string): Promise<InventoryItem[]> {
+    return this.inventoryModel.find({ stationId, isDeleted: { $ne: true } }).exec();
+  }
+
   async findAllActive(): Promise<InventoryItem[]> {
     return this.inventoryModel.find({ $or: [{ isDeleted: false }, { isDeleted: { $exists: false } }] }).sort({ name: 1 }).exec();
   }

@@ -28,6 +28,8 @@ import { ProtocolsModule } from './protocols/protocols.module';
 import { BookingModule } from './booking/booking.module';
 import { UsageBillingModule } from './usage-billing/usage-billing.module';
 import { ApiKeyModule } from './api-key/api-key.module';
+import { StationModule } from './station/station.module';
+import { ProtocolMapModule } from './protocol-map/protocol-map.module';
 
 @Module({
   imports: [
@@ -71,7 +73,9 @@ import { ApiKeyModule } from './api-key/api-key.module';
     ProtocolsModule,
     BookingModule,
     UsageBillingModule,
-    ApiKeyModule
+    ApiKeyModule,
+    StationModule,
+    ProtocolMapModule
   ],
   controllers: [AppController],
   providers: [AppService]
