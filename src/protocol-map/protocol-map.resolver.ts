@@ -4,14 +4,13 @@ import { ProtocolStepMapping } from './protocol-step-mapping.model';
 import { ProtocolMapService } from './protocol-map.service';
 import {
   ResolvedEquipment,
+  ResolvedPlacement,
   ResolvedProtocol,
-  ResolvedStation,
   ResolvedStep,
   StepMappingStatus,
   UpsertProtocolStepMappingInput
 } from './protocol-map.dto';
 import { ProtocolsService } from '../protocols/protocols.service';
-import { DampLabServices } from '../services/damplab-services.services';
 import { InventoryService } from '../inventory/inventory.service';
 import { StationService } from '../station/station.service';
 import { AuthRolesGuard } from '../auth/auth.guard';
@@ -33,7 +32,6 @@ export class ProtocolMapResolver {
   constructor(
     private readonly mapService: ProtocolMapService,
     private readonly protocolsService: ProtocolsService,
-    private readonly damplabServices: DampLabServices,
     private readonly inventoryService: InventoryService,
     private readonly stationService: StationService
   ) {}
@@ -60,23 +58,25 @@ export class ProtocolMapResolver {
   }
 
   /**
-   * Combined resolver: joins the live protocol (fetched from protocols.io) with the
-   * stored step→service→equipment→station references, validating every reference and
-   * classifying each step UNMAPPED / MAPPED / BROKEN. This is the query that feeds the
+   * Combined resolver: joins the live protocol (fetched from protocols.io, already
+   * sorted into execution order) with the stored step→equipment references,
+   * resolving each item to every station it is placed at, validating every
+   * reference and classifying each step UNMAPPED / MAPPED / BROKEN. Feeds the
    * technician guidance view and (later) the layout optimizer.
+   *
+   * There is no per-step service: the operation↔protocol link lives on
+   * DampLabService.protocolIds, so a step is "mapped" purely on equipment.
    */
-  @Query(() => ResolvedProtocol, { description: 'Resolve a protocol into its full step → service → equipment → station chain with validation.' })
+  @Query(() => ResolvedProtocol, { description: 'Resolve a protocol into its full step → equipment → station chain with validation. Steps come back in execution order.' })
   async resolveProtocol(@Args('protocolId') protocolId: string): Promise<ResolvedProtocol> {
-    const [protocol, mappings, services, inventory, stations] = await Promise.all([
+    const [protocol, mappings, inventory, stations] = await Promise.all([
       this.protocolsService.getProtocol(protocolId),
       this.mapService.findByProtocol(protocolId),
-      this.damplabServices.findAll(),
       this.inventoryService.findAllActive(),
       this.stationService.findAll(false)
     ]);
 
     const mapByStep = new Map(mappings.map((m) => [m.stepId, m]));
-    const svcById = new Map(services.map((s) => [String((s as any)._id ?? (s as any).id), s]));
     const invById = new Map(inventory.map((i) => [String((i as any)._id ?? (i as any).id), i]));
     const stById = new Map(stations.map((s) => [String((s as any)._id), s]));
 
@@ -86,62 +86,54 @@ export class ProtocolMapResolver {
       const m = mapByStep.get(step.id);
       const issues: string[] = [];
 
-      // Step → Service
-      let service = undefined as ResolvedStep['service'];
-      if (m?.serviceId) {
-        const svc = svcById.get(String(m.serviceId));
-        if (!svc) {
-          service = { id: String(m.serviceId), name: undefined, missing: true };
-          issues.push('Mapped service no longer exists.');
-        } else {
-          service = { id: String((svc as any)._id ?? (svc as any).id), name: (svc as any).name, missing: false };
-        }
-      }
-
-      // Step → Equipment → Station
+      // Step → Equipment → Station(s)
       const equipment: ResolvedEquipment[] = (m?.equipmentIds ?? []).map((eid) => {
         const item = invById.get(String(eid));
         if (!item) {
           issues.push('A required piece of equipment no longer exists.');
-          return { id: String(eid), name: undefined, missing: true, station: undefined };
+          return { id: String(eid), name: undefined, missing: true, placements: [] };
         }
-        let station = undefined as ResolvedStation | undefined;
-        const stationId = (item as any).stationId;
-        if (stationId) {
-          const st = stById.get(String(stationId));
+        const name = (item as any).name;
+        const raw = Array.isArray((item as any).placements) ? (item as any).placements : [];
+        const placements: ResolvedPlacement[] = [];
+        for (const p of raw) {
+          const st = stById.get(String(p?.stationId));
           if (!st) {
-            issues.push(`Equipment "${(item as any).name}" is assigned to a station that no longer exists.`);
-          } else {
-            station = {
+            // A dangling placement is worth surfacing, but the remaining valid
+            // placements still stand — don't discard the whole item.
+            issues.push(`Equipment "${name}" is placed at a station that no longer exists.`);
+            continue;
+          }
+          placements.push({
+            station: {
               id: String((st as any)._id),
               name: (st as any).name,
               type: (st as any).type,
               zone: (st as any).zone,
               x: (st as any).x,
               y: (st as any).y
-            };
-          }
-        } else {
-          issues.push(`Equipment "${(item as any).name}" is not assigned to a station.`);
+            },
+            quantity: Math.max(1, Math.trunc(Number(p?.quantity) || 1))
+          });
         }
-        return { id: String((item as any)._id ?? (item as any).id), name: (item as any).name, missing: false, station };
+        if (placements.length === 0 && raw.length === 0) {
+          issues.push(`Equipment "${name}" is not placed at any station.`);
+        }
+        return { id: String((item as any)._id ?? (item as any).id), name, missing: false, placements };
       });
 
       const requiresNoEquipment = !!m?.requiresNoEquipment;
       const hasEquipment = equipment.length > 0;
 
-      // Classify the step.
-      const touched = !!m && (!!m.serviceId || hasEquipment || requiresNoEquipment || m.reviewed);
+      // Classify the step. Equipment is the only criterion now.
+      const touched = !!m && (hasEquipment || requiresNoEquipment || m.reviewed);
       let status: StepMappingStatus;
       if (!touched) {
         status = StepMappingStatus.UNMAPPED;
       } else if (issues.length > 0) {
         status = StepMappingStatus.BROKEN;
-      } else if (!m!.serviceId) {
-        // Reviewed but no service chosen yet — still incomplete.
-        status = StepMappingStatus.UNMAPPED;
       } else if (!hasEquipment && !requiresNoEquipment) {
-        // A service is chosen but equipment hasn't been decided (neither assigned nor explicitly "none").
+        // Reviewed, but equipment hasn't been decided (neither assigned nor explicitly "none").
         status = StepMappingStatus.UNMAPPED;
       } else {
         status = StepMappingStatus.MAPPED;
@@ -154,7 +146,6 @@ export class ProtocolMapResolver {
         number: step.number || undefined,
         title: m?.stepTitle || toLabel(step.html),
         status,
-        service,
         equipment,
         requiresNoEquipment,
         issues

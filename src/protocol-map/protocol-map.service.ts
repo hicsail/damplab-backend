@@ -11,7 +11,10 @@ export class ProtocolMapService {
   /** Upsert the mapping for one (protocolId, stepId). The author UI sends the full desired state. */
   async upsert(input: UpsertProtocolStepMappingInput, updatedBy?: string): Promise<ProtocolStepMapping> {
     const set: Record<string, unknown> = { protocolId: input.protocolId, stepId: input.stepId, updatedBy };
-    for (const k of ['stepNumber', 'stepTitle', 'serviceId', 'equipmentIds', 'requiresNoEquipment', 'paramTags', 'reviewed'] as const) {
+    // NOTE: `serviceId` is intentionally absent — per-step service mapping was
+    // removed (the operation↔protocol link lives on DampLabService.protocolIds).
+    // Legacy values already in Mongo are simply left untouched, not deleted.
+    for (const k of ['stepNumber', 'stepTitle', 'equipmentIds', 'requiresNoEquipment', 'paramTags', 'reviewed'] as const) {
       if (input[k] !== undefined) set[k] = input[k] as unknown;
     }
     return (await this.model

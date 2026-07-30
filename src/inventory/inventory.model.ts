@@ -1,7 +1,46 @@
-import { ObjectType, Field, ID, Int, registerEnumType } from '@nestjs/graphql';
+import { ObjectType, Field, ID, InputType, Int, registerEnumType } from '@nestjs/graphql';
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import mongoose from 'mongoose';
 import { Pricing } from '../pricing/pricing.model';
+
+/**
+ * Where a piece of equipment physically lives, and how many are at that spot.
+ * An item may be placed at several stations at once (e.g. 2 pipette sets at
+ * Bench 3, 1 at PCR Corner).
+ *
+ * LOCATIONAL ONLY — quantity records what is where, for technician guidance and
+ * the future layout view. It deliberately does NOT feed booking capacity:
+ * AvailabilityService still treats one InventoryItem record as one exclusive
+ * holder at a time. If concurrent holders are ever wanted, that is a change to
+ * AvailabilityService, not to this field.
+ */
+@ObjectType({ description: 'A station this equipment is placed at, with the quantity held there.' })
+export class StationPlacement {
+  @Field(() => ID, { description: 'Station where these units live.' })
+  stationId: string;
+
+  @Field(() => Int, { description: 'How many units of this item are at this station.' })
+  quantity: number;
+}
+
+/** Input twin of {@link StationPlacement} — GraphQL requires a distinct input type. */
+@InputType()
+export class StationPlacementInput {
+  @Field(() => ID)
+  stationId: string;
+
+  @Field(() => Int)
+  quantity: number;
+}
+
+/** Mongoose sub-schema for placements (no separate _id per entry). */
+export const StationPlacementSchema = new mongoose.Schema(
+  {
+    stationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Station', required: true },
+    quantity: { type: Number, required: true, default: 1, min: 1 }
+  },
+  { _id: false }
+);
 
 /**
  * Coarse category for filtering and grouping on the availability board.
@@ -89,9 +128,23 @@ export class InventoryItem {
   })
   pricing?: Pricing;
 
+  /**
+   * @deprecated Superseded by {@link placements}. Kept so pre-existing documents
+   * keep resolving; the service folds it into `placements` on read. Do not write.
+   */
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'Station', required: false })
-  @Field(() => ID, { nullable: true, description: 'Station where this equipment is located (equipment→station map). Structured source of truth for execution location.' })
+  @Field(() => ID, {
+    nullable: true,
+    deprecationReason: 'Use placements — equipment can be at several stations with a quantity at each.',
+    description: 'Legacy single station assignment. Read via placements instead.'
+  })
   stationId?: string;
+
+  @Prop({ type: [StationPlacementSchema], default: [] })
+  @Field(() => [StationPlacement], {
+    description: 'Stations this equipment is placed at, with the quantity at each (equipment→station map). Locational only — does not affect booking capacity.'
+  })
+  placements: StationPlacement[];
 
   @Prop({ required: false, default: false })
   @Field(() => Boolean, {

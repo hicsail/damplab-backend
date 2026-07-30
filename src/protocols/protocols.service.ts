@@ -1,6 +1,45 @@
 import { Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+/**
+ * Compare two protocols.io step numbers ("3", "4.1", "5.10") by numeric segment.
+ *
+ * protocols.io returns steps ordered by internal `id` — i.e. database insertion
+ * order, NOT presentation order. Observed on protocol 313875: step "1" arrives
+ * 24th of 30. So we have to sort ourselves.
+ *
+ * Two wrinkles rule out the obvious approaches:
+ *  - A plain string sort puts "5.10" before "5.2".
+ *  - `number` is NOT unique. Protocols with branches (`cases`) repeat numbering,
+ *    e.g. 313875 has two each of 5.1 / 7 / 7.1 / 7.2 / 8 / 8.1 / 8.2. So the
+ *    caller must keep a stable tiebreaker rather than assume a total order.
+ *  - `previous_id` looks like a linked list but branches (two steps can share a
+ *    predecessor), so it can't be walked to a single linear sequence either.
+ */
+function compareStepNumbers(a: string, b: string): number {
+  const segsA = String(a ?? '').split('.');
+  const segsB = String(b ?? '').split('.');
+  const len = Math.max(segsA.length, segsB.length);
+  for (let i = 0; i < len; i++) {
+    // Three cases per segment, and they must stay distinct:
+    //   absent      → -Infinity, so a parent precedes its substeps ("5" < "5.1")
+    //   numeric     → its value, compared numerically ("5.2" < "5.10")
+    //   non-numeric → +Infinity, so oddities sort to the end
+    const va = segValue(segsA, i);
+    const vb = segValue(segsB, i);
+    // Compare rather than subtract: -Infinity - -Infinity is NaN.
+    if (va < vb) return -1;
+    if (va > vb) return 1;
+  }
+  return 0;
+}
+
+function segValue(segs: string[], i: number): number {
+  if (i >= segs.length) return Number.NEGATIVE_INFINITY;
+  const n = Number.parseFloat(segs[i]);
+  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
+}
+
 /** One renderable protocol step, normalized for the technician bench view. */
 export interface ProtocolStep {
   /** Stable per-step identifier (protocols.io step guid) — used as the checklist key. */
@@ -88,12 +127,19 @@ export class ProtocolsService {
         const stepsRes = await this.call(`/protocols/${numericId}/steps?content_format=html`);
         const list = Array.isArray(stepsRes?.payload) ? stepsRes.payload : [];
         steps = list
-          .map((st: any) => ({
+          .map((st: any, idx: number) => ({
             id: String(st?.guid ?? st?.id ?? ''),
             number: String(st?.number ?? ''),
-            html: typeof st?.step === 'string' ? st.step : ''
+            html: typeof st?.step === 'string' ? st.step : '',
+            // Preserve API position as a stable tiebreaker for duplicate numbers.
+            _idx: idx
           }))
-          .filter((s: ProtocolStep) => s.id && s.html);
+          // Require an id only. Previously we also required non-empty html, which
+          // silently DROPPED steps that carry no body (e.g. section headers), so
+          // the checklist skipped numbers.
+          .filter((s: ProtocolStep & { _idx: number }) => s.id)
+          .sort((a: any, b: any) => compareStepNumbers(a.number, b.number) || a._idx - b._idx)
+          .map(({ _idx, ...s }: any) => s as ProtocolStep);
       } catch (err: any) {
         // Steps are best-effort: still return metadata + the deep link if steps fail.
         this.logger.warn(`protocols.io steps fetch failed for ${numericId}: ${err?.message}`);

@@ -10,22 +10,58 @@ import { InventoryItemChange } from './dtos/update.dto';
 export class InventoryService {
   constructor(@InjectModel(InventoryItem.name) private readonly inventoryModel: Model<InventoryItem>) {}
 
+  /**
+   * Guarantees `placements` is an array, folding in the deprecated single
+   * `stationId` for documents written before placements existed. Callers never
+   * have to handle both shapes, so the backfill is an optimization rather than a
+   * correctness requirement.
+   */
+  private normalize<T extends InventoryItem | null>(item: T): T {
+    if (!item) return item;
+    const doc = item as any;
+    if (!Array.isArray(doc.placements) || doc.placements.length === 0) {
+      doc.placements = doc.stationId ? [{ stationId: String(doc.stationId), quantity: 1 }] : [];
+    } else {
+      doc.placements = doc.placements
+        .filter((p: any) => p?.stationId)
+        .map((p: any) => ({ stationId: String(p.stationId), quantity: Math.max(1, Math.trunc(Number(p.quantity) || 1)) }));
+    }
+    return item;
+  }
+
+  private normalizeAll(items: InventoryItem[]): InventoryItem[] {
+    return items.map((i) => this.normalize(i));
+  }
+
   async find(id: string): Promise<InventoryItem | null> {
-    return this.inventoryModel.findById(id);
+    return this.normalize(await this.inventoryModel.findById(id));
   }
 
   /** Returns active (non-deleted) items, then deleted items at the end. */
   async findAll(): Promise<InventoryItem[]> {
-    return this.inventoryModel.find().sort({ isDeleted: 1, name: 1 }).exec();
+    return this.normalizeAll(await this.inventoryModel.find().sort({ isDeleted: 1, name: 1 }).exec());
+  }
+
+  /**
+   * Active items placed at a station. Matches the placements array and also the
+   * legacy single `stationId`, so un-backfilled documents still show up.
+   */
+  async findByStationId(stationId: string): Promise<InventoryItem[]> {
+    return this.normalizeAll(
+      await this.inventoryModel
+        .find({
+          isDeleted: { $ne: true },
+          $or: [{ 'placements.stationId': stationId }, { stationId }]
+        })
+        .exec()
+    );
   }
 
   /** Active-only — for catalog pickers (service editor, lab monitor). */
-  async findByStationId(stationId: string): Promise<InventoryItem[]> {
-    return this.inventoryModel.find({ stationId, isDeleted: { $ne: true } }).exec();
-  }
-
   async findAllActive(): Promise<InventoryItem[]> {
-    return this.inventoryModel.find({ $or: [{ isDeleted: false }, { isDeleted: { $exists: false } }] }).sort({ name: 1 }).exec();
+    return this.normalizeAll(
+      await this.inventoryModel.find({ $or: [{ isDeleted: false }, { isDeleted: { $exists: false } }] }).sort({ name: 1 }).exec()
+    );
   }
 
   /** Bulk lookup, preserves the requested order. */
@@ -36,7 +72,7 @@ export class InventoryService {
     const out: InventoryItem[] = [];
     for (const id of ids) {
       const hit = byId.get(String(id));
-      if (hit) out.push(hit);
+      if (hit) out.push(this.normalize(hit));
     }
     return out;
   }

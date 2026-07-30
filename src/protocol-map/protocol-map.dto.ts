@@ -1,13 +1,19 @@
 import { Field, ID, InputType, Int, ObjectType, Float, registerEnumType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 
+/**
+ * A step maps to EQUIPMENT only. There is deliberately no per-step service:
+ * the operation↔protocol association lives on the operation (DampLabService
+ * .protocolIds), so asking again per step was redundant and let the two
+ * disagree. Mappings stay keyed on (protocolId, stepId), which means a protocol
+ * shared by several operations shares one equipment map — intended.
+ */
 @InputType()
 export class UpsertProtocolStepMappingInput {
   @Field() protocolId: string;
   @Field() stepId: string;
   @Field({ nullable: true }) stepNumber?: string;
   @Field({ nullable: true }) stepTitle?: string;
-  @Field(() => ID, { nullable: true }) serviceId?: string;
   @Field(() => [ID], { nullable: true }) equipmentIds?: string[];
   @Field({ nullable: true }) requiresNoEquipment?: boolean;
   @Field(() => JSON, { nullable: true }) paramTags?: any;
@@ -32,29 +38,27 @@ export class ResolvedStation {
   @Field(() => Float, { nullable: true }) y?: number;
 }
 
-@ObjectType({ description: 'A mapped Canvas service reference (with validity).' })
-export class ResolvedService {
-  @Field(() => ID) id: string;
-  @Field({ nullable: true }) name?: string;
-  @Field(() => Boolean, { description: 'True if the referenced service no longer exists / is deleted.' })
-  missing: boolean;
+@ObjectType({ description: 'One station a piece of equipment is placed at, and how many are there.' })
+export class ResolvedPlacement {
+  @Field(() => ResolvedStation) station: ResolvedStation;
+  @Field(() => Int) quantity: number;
 }
 
-@ObjectType({ description: 'A required equipment resolved to its station.' })
+@ObjectType({ description: 'Equipment required by a step, resolved to every station it is placed at.' })
 export class ResolvedEquipment {
   @Field(() => ID) id: string;
   @Field({ nullable: true }) name?: string;
   @Field(() => Boolean) missing: boolean;
-  @Field(() => ResolvedStation, { nullable: true }) station?: ResolvedStation;
+  @Field(() => [ResolvedPlacement], { description: 'Stations holding this equipment. Empty means it has no station assigned.' })
+  placements: ResolvedPlacement[];
 }
 
-@ObjectType({ description: 'A protocol step with its fully resolved service → equipment → station chain.' })
+@ObjectType({ description: 'A protocol step with its fully resolved equipment → station chain. Steps are returned in execution order.' })
 export class ResolvedStep {
   @Field() stepId: string;
   @Field({ nullable: true }) number?: string;
   @Field({ nullable: true }) title?: string;
   @Field(() => StepMappingStatus) status: StepMappingStatus;
-  @Field(() => ResolvedService, { nullable: true }) service?: ResolvedService;
   @Field(() => [ResolvedEquipment]) equipment: ResolvedEquipment[];
   @Field(() => Boolean) requiresNoEquipment: boolean;
   @Field(() => [String], { description: 'Validation problems for this step (empty if clean).' }) issues: string[];

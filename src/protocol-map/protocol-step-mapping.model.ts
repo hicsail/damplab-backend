@@ -33,8 +33,18 @@ export class ProtocolStepMapping {
   @Field({ nullable: true, description: 'Snapshot of a short step title/label (NOT the protocol content).' })
   stepTitle?: string;
 
+  /**
+   * @deprecated Per-step service mapping was removed — the operation↔protocol
+   * association lives on DampLabService.protocolIds, so choosing a service per
+   * step was redundant and could contradict it. Existing values are left in
+   * place rather than deleted, but nothing reads or writes this any more.
+   */
   @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'DampLabService', required: false })
-  @Field(() => ID, { nullable: true, description: 'Mapped Canvas service (Step→Service).' })
+  @Field(() => ID, {
+    nullable: true,
+    deprecationReason: 'Per-step service mapping removed; operations own their protocols via protocolIds.',
+    description: 'Legacy per-step service reference. No longer read or written.'
+  })
   serviceId?: string;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' }], default: [] })

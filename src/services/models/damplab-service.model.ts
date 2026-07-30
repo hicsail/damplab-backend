@@ -156,13 +156,25 @@ export class DampLabService {
   })
   notes?: string;
 
+  /**
+   * @deprecated Superseded by {@link protocolIds}. Retained so historical
+   * documents keep resolving; `normalizeService` folds it into `protocolIds`
+   * when the array is absent. Do not write to it.
+   */
   @Prop({ required: false })
   @Field({
     nullable: true,
-    description:
-      'protocols.io protocol identifier — the short id from the protocol URL (e.g. "n92ld46yxl5b" from protocols.io/view/...-n92ld46yxl5b/v1). Links this service to its protocols.io protocol for the technician bench view. Stored as a reference only; protocol content is fetched on demand, never synced/pulled into our DB.'
+    deprecationReason: 'Use protocolIds — an operation can have several protocols in sequence.',
+    description: 'Legacy single protocols.io identifier. Read via protocolIds instead.'
   })
   protocolId?: string;
+
+  @Prop({ type: [String], default: [] })
+  @Field(() => [String], {
+    description:
+      'protocols.io protocol identifiers for this operation, IN EXECUTION ORDER — array position is the sequence the admin specified. Each entry is the short id from the protocol URL (e.g. "n92ld46yxl5b" from protocols.io/view/...-n92ld46yxl5b/v1). References only; protocol content is fetched on demand and never synced into our DB. Note a protocol may be shared by several operations, in which case they share its step→equipment map.'
+  })
+  protocolIds: string[];
 
   @Prop({ default: false })
   @Field(() => Boolean, {

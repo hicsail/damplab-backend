@@ -4,7 +4,6 @@ import { ProtocolStepMapping, ProtocolStepMappingSchema } from './protocol-step-
 import { ProtocolMapService } from './protocol-map.service';
 import { ProtocolMapResolver } from './protocol-map.resolver';
 import { ProtocolsModule } from '../protocols/protocols.module';
-import { DampLabServicesModule } from '../services/damplab-services.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { StationModule } from '../station/station.module';
 
@@ -12,7 +11,6 @@ import { StationModule } from '../station/station.module';
   imports: [
     MongooseModule.forFeature([{ name: ProtocolStepMapping.name, schema: ProtocolStepMappingSchema }]),
     ProtocolsModule,
-    DampLabServicesModule,
     InventoryModule,
     StationModule
   ],

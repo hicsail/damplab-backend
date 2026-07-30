@@ -74,7 +74,26 @@ export class DampLabServices {
     this.normalizeParameters(service);
     this.normalizePricingMode(service);
     this.normalizePricing(service);
+    this.normalizeProtocolIds(service);
     return service;
+  }
+
+  /**
+   * Guarantees `protocolIds` is always an array, folding in the deprecated
+   * single `protocolId` for documents written before the field existed. Means
+   * clients never have to handle both shapes, and a backfill is an optimization
+   * rather than a correctness requirement.
+   */
+  private normalizeProtocolIds(service: DampLabService): void {
+    if (!Array.isArray(service.protocolIds) || service.protocolIds.length === 0) {
+      const legacy = typeof service.protocolId === 'string' ? service.protocolId.trim() : '';
+      service.protocolIds = legacy ? [legacy] : [];
+      return;
+    }
+    // Drop blanks/dupes while preserving admin-specified order.
+    service.protocolIds = service.protocolIds
+      .map((p) => (typeof p === 'string' ? p.trim() : ''))
+      .filter((p, i, arr) => p && arr.indexOf(p) === i);
   }
 
   /** Active services only (for admin catalog, canvas palette, bundles, categories, allowedConnections). */
@@ -156,7 +175,8 @@ export class DampLabServices {
       paramGroups: [] as any[],
       allowedConnections: [] as mongoose.Types.ObjectId[],
       description: 'This service is no longer in the catalog; the node still references its former id.',
-      deliverables: []
+      deliverables: [],
+      protocolIds: []
     } as DampLabService;
     return this.normalizeService(stub);
   }
