@@ -27,6 +27,15 @@ import { AvailabilityService, InventoryConflict } from '../../availability/avail
 export class WorkflowNodeResolver {
   private readonly logger = new Logger(WorkflowNodeResolver.name);
 
+  /**
+   * Missing-service ids already reported. Orphaned service references are a
+   * persistent data condition, not a per-request event: without this, every
+   * resolution of every affected node re-logged the same warning (observed at
+   * ~10 lines/sec — 99.4% of all backend log output, enough to peg a small
+   * host). Warn once per id per process; the placeholder is still returned.
+   */
+  private readonly warnedMissingServiceIds = new Set<string>();
+
   constructor(
     private readonly damplabServices: DampLabServices,
     private readonly nodeService: WorkflowNodeService,
@@ -245,7 +254,10 @@ export class WorkflowNodeResolver {
       if (service !== null) {
         return service;
       }
-      this.logger.warn(`Missing DampLabService ${id} on workflow node ${node._id}; returning placeholder`);
+      if (!this.warnedMissingServiceIds.has(id)) {
+        this.warnedMissingServiceIds.add(id);
+        this.logger.warn(`Missing DampLabService ${id} (first seen on workflow node ${node._id}); returning placeholder. Further occurrences of this id are suppressed.`);
+      }
       return this.damplabServices.placeholderForMissingService(id);
     }
     return node.service as DampLabService;
