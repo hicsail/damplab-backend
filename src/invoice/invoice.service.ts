@@ -12,6 +12,11 @@ function pad3(n: number): string {
   return String(n).padStart(3, '0');
 }
 
+/** Money rounding — keeps prorated adjustments from carrying float noise onto an invoice. */
+function round2(n: number): number {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+
 @Injectable()
 export class InvoiceService {
   constructor(
@@ -54,7 +59,45 @@ export class InvoiceService {
       throw new BadRequestException('No matching services found in SOW for provided serviceIds');
     }
 
-    const totalCost = selected.reduce((sum, s) => sum + (Number(s.cost) || 0), 0);
+    const subtotal = round2(selected.reduce((sum, s) => sum + (Number(s.cost) || 0), 0));
+
+    // Carry the SOW's pricing adjustments onto the invoice.
+    //
+    // Adjustments are fixed dollar amounts against the WHOLE job, but this
+    // invoice may cover only some of its services, and a job can legitimately be
+    // billed across several invoices. Applying the full amount to each would
+    // credit a discount more than once, so prorate by this invoice's share of the
+    // SOW base cost. Every invoice for a job then sums to the SOW total,
+    // independent of how the services were split up or the order of generation.
+    //
+    // Base cost is recomputed from the SOW's own line items rather than trusting
+    // the stored pricing.baseCost, so the ratio can't be skewed by a stale value.
+    const sowBaseCost = round2(sowServices.reduce((sum: number, s: any) => sum + (Number(s.cost) || 0), 0));
+    const prorationFactor = sowBaseCost > 0 ? Math.min(1, subtotal / sowBaseCost) : 0;
+
+    const rawAdjustments = Array.isArray((sow as any).pricing?.adjustments) ? (sow as any).pricing.adjustments : [];
+    const adjustments = rawAdjustments.map((adj: any) => {
+      const type = String(adj?.type ?? '');
+      const amount = Number(adj?.amount) || 0;
+      // Sign matches SOWService.calculateAdjustmentsTotal: DISCOUNT subtracts,
+      // ADDITIONAL_COST adds, SPECIAL_TERM is a note with no monetary effect.
+      const signed = type === 'DISCOUNT' ? -amount : type === 'ADDITIONAL_COST' ? amount : 0;
+      return {
+        type,
+        description: String(adj?.description ?? ''),
+        reason: adj?.reason ? String(adj.reason) : undefined,
+        amount,
+        appliedAmount: round2(signed * prorationFactor),
+        // 4dp, not 2: rounding the factor to cents would show two different
+        // partials as an identical "0.5", and a genuine 0.997 would round to 1
+        // and read as a full-job invoice.
+        prorationFactor: Math.round(prorationFactor * 10000) / 10000
+      };
+    });
+
+    const adjustmentsTotal = round2(adjustments.reduce((sum: number, a: any) => sum + a.appliedAmount, 0));
+    // Never invoice a negative amount — an over-large discount floors at zero.
+    const totalCost = round2(Math.max(0, subtotal + adjustmentsTotal));
 
     // Generate next invoice number per job: "<jobDisplayId>-<seq>"
     const existingCount = await this.invoiceModel.countDocuments({ jobId: input.jobId }).exec();
@@ -80,6 +123,8 @@ export class InvoiceService {
         cost: Number(s.cost) || 0,
         category: String(s.category ?? '')
       })),
+      subtotal,
+      adjustments,
       totalCost,
       billedToName: String((sow as any).clientName ?? 'Client'),
       billedToEmail: String((sow as any).clientEmail ?? ''),

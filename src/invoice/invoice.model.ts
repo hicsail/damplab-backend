@@ -3,6 +3,50 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, Float } from '@nestjs/graphql';
 import { Job } from '../job/job.model';
+import { SOWAdjustmentType } from '../sow/sow.model';
+
+/**
+ * A SOW pricing adjustment as applied to THIS invoice (snapshot at generation).
+ *
+ * SOW adjustments are fixed dollar amounts against the whole job, but an invoice
+ * may cover only some of the job's services. So each adjustment is prorated by
+ * this invoice's share of the SOW base cost, and both figures are kept: `amount`
+ * is the original whole-job figure (for transparency on the document) and
+ * `appliedAmount` is what actually moved this invoice's total. Prorating means
+ * every invoice for a job sums to the SOW total with no double-crediting.
+ *
+ * SPECIAL_TERM carries no monetary effect, matching SOWService.calculateAdjustmentsTotal —
+ * it rides along as a note with appliedAmount 0.
+ */
+@Schema()
+@ObjectType({ description: 'A SOW pricing adjustment as applied to this invoice (prorated for partial invoices).' })
+export class InvoiceAdjustment {
+  @Prop({ required: true })
+  @Field(() => SOWAdjustmentType, { description: 'DISCOUNT reduces, ADDITIONAL_COST increases, SPECIAL_TERM is a note only.' })
+  type: SOWAdjustmentType;
+
+  @Prop({ required: true })
+  @Field({ description: 'Description carried over from the SOW.' })
+  description: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'Reason carried over from the SOW.', nullable: true })
+  reason?: string;
+
+  @Prop({ required: true })
+  @Field(() => Float, { description: 'The original whole-job adjustment amount from the SOW.' })
+  amount: number;
+
+  @Prop({ required: true })
+  @Field(() => Float, {
+    description: 'The portion actually applied to this invoice (signed: negative for DISCOUNT, positive for ADDITIONAL_COST, 0 for SPECIAL_TERM).'
+  })
+  appliedAmount: number;
+
+  @Prop({ required: true, default: 1 })
+  @Field(() => Float, { description: "This invoice's share of the SOW base cost (1 = the invoice covers the whole job)." })
+  prorationFactor: number;
+}
 
 @Schema()
 @ObjectType({ description: 'Service line item captured on an invoice (snapshot at time of generation)' })
@@ -69,8 +113,18 @@ export class Invoice {
   @Field(() => [InvoiceServiceLineItem], { description: 'Service line items included on this invoice' })
   services: InvoiceServiceLineItem[];
 
+  @Prop({ required: false, default: 0 })
+  @Field(() => Float, { description: 'Sum of the service line items, BEFORE adjustments.' })
+  subtotal: number;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
+  @Field(() => [InvoiceAdjustment], {
+    description: 'SOW pricing adjustments carried onto this invoice, prorated to the services it covers.'
+  })
+  adjustments: InvoiceAdjustment[];
+
   @Prop({ required: true })
-  @Field(() => Float, { description: 'Total cost of the invoice (sum of services)' })
+  @Field(() => Float, { description: 'Amount payable: subtotal plus the applied adjustments.' })
   totalCost: number;
 
   // Billing snapshot (copied from SOW at creation time)
