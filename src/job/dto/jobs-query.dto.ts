@@ -13,6 +13,17 @@ export enum SortOrder {
 }
 registerEnumType(SortOrder, { name: 'SortOrder' });
 
+/** Which archive bucket a jobs listing should return. Defaults to ACTIVE. */
+export enum JobArchiveFilter {
+  /** Only jobs that are not archived (the default view). */
+  ACTIVE = 'ACTIVE',
+  /** Only archived jobs. */
+  ARCHIVED = 'ARCHIVED',
+  /** Both, ignoring archive status. */
+  ALL = 'ALL'
+}
+registerEnumType(JobArchiveFilter, { name: 'JobArchiveFilter' });
+
 @InputType()
 export class OwnJobsInput {
   @Field(() => Int, { description: 'Page (1-based)', nullable: true })
@@ -59,6 +70,9 @@ export class AllJobsInput {
 
   @Field(() => SortOrder, { description: 'Sort order (default DESC = latest first)', nullable: true })
   sortOrder?: SortOrder;
+
+  @Field(() => JobArchiveFilter, { description: 'Archive bucket to return (default ACTIVE — archived jobs hidden)', nullable: true })
+  archiveFilter?: JobArchiveFilter;
 }
 
 @ObjectType()

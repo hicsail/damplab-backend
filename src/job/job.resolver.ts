@@ -192,6 +192,45 @@ export class JobResolver {
   }
 
   @Mutation(() => Job, {
+    description:
+      'Staff-only. Archive a job: hides it from the default jobs dashboard and the live lab boards while retaining everything. Permitted even when the job is IN_PROGRESS — the caller is expected to have confirmed — and the state at archive time is recorded.'
+  })
+  @Roles(Role.DamplabStaff)
+  async archiveJob(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
+    const actor = user?.email || user?.preferred_username || 'unknown';
+    const updated = await this.jobService.setArchived(jobId, true, actor);
+    if (!updated) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    await this.activityService.createEvent({
+      type: 'JOB_ARCHIVED',
+      jobId,
+      actorDisplayName: actor,
+      message: `Job "${updated.name}" archived (state at archive: ${JobState[updated.archivedFromState ?? updated.state]})`
+    });
+    return updated;
+  }
+
+  @Mutation(() => Job, {
+    description: 'Staff-only. Restore an archived job, putting it back in the dashboard and on the live boards. Its lifecycle state was never changed, so it returns exactly where it left off.'
+  })
+  @Roles(Role.DamplabStaff)
+  async unarchiveJob(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
+    const actor = user?.email || user?.preferred_username || 'unknown';
+    const updated = await this.jobService.setArchived(jobId, false, actor);
+    if (!updated) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    await this.activityService.createEvent({
+      type: 'JOB_UNARCHIVED',
+      jobId,
+      actorDisplayName: actor,
+      message: `Job "${updated.name}" restored from archive`
+    });
+    return updated;
+  }
+
+  @Mutation(() => Job, {
     description: 'Staff-only. Add a new workflow (service(s) + parameters) to an existing job.'
   })
   @Roles(Role.DamplabStaff)

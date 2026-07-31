@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
-import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder } from './dto/jobs-query.dto';
+import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder, JobArchiveFilter } from './dto/jobs-query.dto';
 import { JobFeedStatus, JobFeedStatusEntity, JobFeedStatusEntityDocument } from './job-feed-status.model';
 import { AddWorkflowInputFull } from '../workflow/dtos/add-workflow.input';
 
@@ -85,13 +85,48 @@ export class JobService {
   /** Workflow IDs that belong to jobs accepted by technicians (ACCEPTED or later in pipeline). */
   async getWorkflowIdsForApprovedJobs(): Promise<mongoose.Types.ObjectId[]> {
     const approvedStates = [JobState.ACCEPTED, JobState.WAITING_FOR_SOW, JobState.QUEUED, JobState.IN_PROGRESS, JobState.COMPLETE];
+    // Archived jobs drop off the live boards the same way CLOSED ones do —
+    // otherwise archiving an IN_PROGRESS job would leave it on the lab monitor.
     const jobs = await this.jobModel
-      .find({ state: { $in: approvedStates } })
+      .find({ state: { $in: approvedStates }, isArchived: { $ne: true } })
       .select('workflows')
       .lean()
       .exec();
     const ids = jobs.flatMap((j) => (j.workflows ?? []) as mongoose.Types.ObjectId[]);
     return [...new Set(ids)];
+  }
+
+  /**
+   * Archive or restore a job. Archiving is always allowed, including for work
+   * that is still IN_PROGRESS — that is the admin's call, and the UI warns before
+   * asking. The state at time of archiving is recorded so it stays visible that
+   * in-flight work was shelved. Nothing is deleted and the job's own state is
+   * left untouched, so restoring puts it back exactly where it was.
+   */
+  async setArchived(jobId: string, archived: boolean, actor?: string): Promise<Job | null> {
+    const job = await this.jobModel.findById(jobId).exec();
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    if (archived) {
+      return this.jobModel
+        .findOneAndUpdate(
+          { _id: jobId },
+          { $set: { isArchived: true, archivedAt: new Date(), archivedBy: actor ?? 'unknown', archivedFromState: job.state } },
+          { new: true }
+        )
+        .exec();
+    }
+    // $unset, not $set-to-undefined: Mongoose strips undefined values from $set,
+    // which would leave the audit fields behind and make a restored job still
+    // look archived-by-someone.
+    return this.jobModel
+      .findOneAndUpdate(
+        { _id: jobId },
+        { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } },
+        { new: true }
+      )
+      .exec();
   }
 
   async updateState(job: Job, newState: JobState): Promise<Job | null> {
@@ -170,6 +205,15 @@ export class JobService {
     }
     if (input.state != null) {
       match.push({ state: input.state });
+    }
+    // Archived jobs are hidden unless explicitly asked for. Applies to the
+    // customer listing too (which has no archiveFilter field), so archiving a job
+    // removes it from the customer's own view as well.
+    const archiveFilter = (input as AllJobsInput).archiveFilter ?? JobArchiveFilter.ACTIVE;
+    if (archiveFilter === JobArchiveFilter.ACTIVE) {
+      match.push({ isArchived: { $ne: true } });
+    } else if (archiveFilter === JobArchiveFilter.ARCHIVED) {
+      match.push({ isArchived: true });
     }
 
     const lookup = {

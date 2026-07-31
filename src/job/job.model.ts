@@ -136,6 +136,34 @@ export class Job {
     nullable: 'itemsAndList'
   })
   attachments?: JobAttachment[];
+
+  /**
+   * Archived jobs are hidden from the default jobs dashboard and from the live
+   * lab boards, but are never deleted and stay fully resolvable.
+   *
+   * Deliberately a flag rather than a JobState value: archiving is orthogonal to
+   * lifecycle position (staff may archive a job that is IN_PROGRESS), and the
+   * original state must survive so it is clear what was shelved. Adding an enum
+   * member would also have meant auditing every state-machine branch.
+   */
+  @Prop({ required: false, default: false, index: true })
+  @Field(() => Boolean, { nullable: true, defaultValue: false, description: 'Archived: hidden from the default dashboard and live boards, but retained.' })
+  isArchived?: boolean;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When the job was archived.' })
+  archivedAt?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Who archived it (username/email).' })
+  archivedBy?: string;
+
+  @Prop({ required: false })
+  @Field(() => JobState, {
+    nullable: true,
+    description: 'The state the job was in when archived — kept as an audit trail, since staff may archive work that was still in progress.'
+  })
+  archivedFromState?: JobState;
 }
 
 export type JobDocument = Job & Document;
