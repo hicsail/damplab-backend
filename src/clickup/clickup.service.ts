@@ -11,16 +11,28 @@ const APP_ATTRIBUTION = /^\*\*(.+?) \(via Canvas\)\*\*\s*\n+/;
 
 /**
  * Machine-readable block the n8n triage workflow appends to each card
- * description. An HTML comment keeps it out of ClickUp's rendered markdown while
- * staying trivially parseable here.
+ * description, carrying a JSON payload.
  *
  *   <!-- canvas-meta
- *   sourceBugId: 68f0...
- *   reporterName: Zoe Chitty
- *   ...
+ *   {"sourceBugId":"68f0…","area":"Invoicing","summary":"…"}
  *   -->
+ *
+ * JSON rather than `key: value` lines, and JSON rather than reading the markdown
+ * body, because **ClickUp STRIPS MARKDOWN from `description` on read**: a card
+ * written with `### Summary` comes back as a bare `Summary` line, list markers
+ * vanish, and there is no `markdown_description` field to read instead. HTML
+ * comments do survive verbatim, so this block is the only reliable channel for
+ * structured data — and JSON handles multi-line values that a flat key/value
+ * block could not.
  */
 const META_BLOCK = /<!--\s*canvas-meta\s*([\s\S]*?)-->/i;
+
+/**
+ * Headings the triage workflow writes. Used only for cards WITHOUT a meta block
+ * (e.g. hand-written in ClickUp) — matched as bare lines, since the leading
+ * `###` is stripped by the time we read it back.
+ */
+const SECTION_HEADINGS = ['Summary', 'Steps to reproduce', 'Expected', 'Actual', 'Proposed fix'];
 
 /** ClickUp priority id → our severity. 1=urgent … 4=low. */
 const PRIORITY_TO_SEVERITY: Record<string, BacklogSeverity> = {
@@ -89,12 +101,28 @@ export class ClickUpService {
     return res.json().catch(() => ({}));
   }
 
-  /** Parse the canvas-meta block into a flat key→value map. */
+  /**
+   * Parse the canvas-meta block. Accepts a JSON payload (what the triage workflow
+   * writes) and falls back to `key: value` lines so hand-edited cards still work.
+   */
   private parseMeta(description: string): Record<string, string> {
     const m = META_BLOCK.exec(description || '');
     if (!m) return {};
+    const raw = m[1].trim();
+    if (raw.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw);
+        const out: Record<string, string> = {};
+        for (const [k, v] of Object.entries(parsed)) {
+          if (v !== null && v !== undefined && v !== '') out[k] = String(v);
+        }
+        return out;
+      } catch {
+        this.logger.warn('canvas-meta block is not valid JSON; falling back to line parsing');
+      }
+    }
     const out: Record<string, string> = {};
-    for (const line of m[1].split('\n')) {
+    for (const line of raw.split('\n')) {
       const idx = line.indexOf(':');
       if (idx <= 0) continue;
       const key = line.slice(0, idx).trim();
@@ -104,11 +132,18 @@ export class ClickUpService {
     return out;
   }
 
-  /** Pull a `### Heading` section out of the card description. */
+  /**
+   * Pull a section out of the plain-text description, for cards with no meta
+   * block. Headings are matched as BARE lines (no `###`) because ClickUp strips
+   * markdown before we ever see it.
+   */
   private section(description: string, heading: string): string | undefined {
-    const re = new RegExp(`###\\s*${heading}\\s*\\n([\\s\\S]*?)(?=\\n###\\s|<!--\\s*canvas-meta|$)`, 'i');
+    const others = SECTION_HEADINGS.filter((h) => h.toLowerCase() !== heading.toLowerCase())
+      .map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
+    const re = new RegExp(`^\\s*#{0,3}\\s*${heading}\\s*$\\n([\\s\\S]*?)(?=^\\s*#{0,3}\\s*(?:${others})\\s*$|<!--\\s*canvas-meta|$)`, 'im');
     const m = re.exec(description || '');
-    const body = m?.[1]?.trim();
+    const body = m?.[1]?.replace(/^\s*---\s*$[\s\S]*$/m, '').trim();
     return body ? body : undefined;
   }
 
@@ -126,11 +161,13 @@ export class ClickUpService {
       severity: PRIORITY_TO_SEVERITY[priorityId] ?? BacklogSeverity.UNKNOWN,
       area: meta.area || undefined,
       category: meta.category || undefined,
-      summary: this.section(description, 'Summary') || meta.summary || undefined,
-      stepsToReproduce: this.section(description, 'Steps to reproduce'),
-      expected: this.section(description, 'Expected'),
-      actual: this.section(description, 'Actual'),
-      proposedFix: this.section(description, 'Proposed fix'),
+      // Meta block wins: it is the only channel markdown-stripping can't damage.
+      // Section parsing is the fallback for cards written by hand in ClickUp.
+      summary: meta.summary || this.section(description, 'Summary'),
+      stepsToReproduce: meta.stepsToReproduce || this.section(description, 'Steps to reproduce'),
+      expected: meta.expected || this.section(description, 'Expected'),
+      actual: meta.actual || this.section(description, 'Actual'),
+      proposedFix: meta.proposedFix || this.section(description, 'Proposed fix'),
       suggestedOwner: meta.suggestedOwner || undefined,
       assignees: Array.isArray(task?.assignees) ? task.assignees.map((a: any) => String(a?.username ?? a?.email ?? '')).filter(Boolean) : [],
       reporterName: meta.reporterName || undefined,
