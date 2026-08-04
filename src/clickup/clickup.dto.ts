@@ -64,10 +64,7 @@ export class BacklogCard {
   @Field({ nullable: true, description: 'Proposed fix or action item from triage.' })
   proposedFix?: string;
 
-  @Field({ nullable: true, description: 'Owner suggested by triage. Advisory only — cards are left unassigned for a human to pick up.' })
-  suggestedOwner?: string;
-
-  @Field(() => [String], { description: 'Names of anyone actually assigned in ClickUp.' })
+  @Field(() => [String], { description: 'Names of anyone assigned in ClickUp. Assignment is done by hand during triage — the pipeline never guesses an owner.' })
   assignees: string[];
 
   @Field({ nullable: true, description: 'Reporter display name. Null for non-staff viewers.' })

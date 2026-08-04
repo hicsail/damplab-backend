@@ -168,7 +168,6 @@ export class ClickUpService {
       expected: meta.expected || this.section(description, 'Expected'),
       actual: meta.actual || this.section(description, 'Actual'),
       proposedFix: meta.proposedFix || this.section(description, 'Proposed fix'),
-      suggestedOwner: meta.suggestedOwner || undefined,
       assignees: Array.isArray(task?.assignees) ? task.assignees.map((a: any) => String(a?.username ?? a?.email ?? '')).filter(Boolean) : [],
       reporterName: meta.reporterName || undefined,
       reporterEmail: meta.reporterEmail || undefined,
