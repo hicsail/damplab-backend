@@ -30,6 +30,7 @@ import { UsageBillingModule } from './usage-billing/usage-billing.module';
 import { ApiKeyModule } from './api-key/api-key.module';
 import { StationModule } from './station/station.module';
 import { ProtocolMapModule } from './protocol-map/protocol-map.module';
+import { ClickUpModule } from './clickup/clickup.module';
 
 @Module({
   imports: [
@@ -75,7 +76,8 @@ import { ProtocolMapModule } from './protocol-map/protocol-map.module';
     UsageBillingModule,
     ApiKeyModule,
     StationModule,
-    ProtocolMapModule
+    ProtocolMapModule,
+    ClickUpModule
   ],
   controllers: [AppController],
   providers: [AppService]

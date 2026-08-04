@@ -7,13 +7,18 @@ import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 import { BugReportAttachmentsService } from './bug-report-attachments.service';
+import { BugTriageNotifier } from './bug-triage-notifier.service';
 
 @Resolver(() => BugReport)
 @UseGuards(AuthRolesGuard)
 export class BugReportResolver {
   private readonly logger = new Logger(BugReportResolver.name);
 
-  constructor(private readonly bugReportService: BugReportService, private readonly bugReportAttachmentsService: BugReportAttachmentsService) {}
+  constructor(
+    private readonly bugReportService: BugReportService,
+    private readonly bugReportAttachmentsService: BugReportAttachmentsService,
+    private readonly triageNotifier: BugTriageNotifier
+  ) {}
 
   @Query(() => BugReportsResult, {
     description: 'List all bug reports, optionally filtered by search text and reporter.'
@@ -74,7 +79,11 @@ export class BugReportResolver {
     const reporterName = (user as any)?.name || user.preferred_username || null;
     const reporterEmail = user.email || null;
     this.logger.log(`Creating bug report from ${reporterEmail ?? reporterName ?? 'unknown user'}`);
-    return this.bugReportService.create(input, reporterName, reporterEmail);
+    const created = await this.bugReportService.create(input, reporterName, reporterEmail);
+    // Hand off to n8n triage. Fire-and-forget by design — a slow or failing
+    // automation must never surface as an error to someone reporting a bug.
+    this.triageNotifier.notify(created);
+    return created;
   }
 
   @Mutation(() => [BugAttachmentUpload], {
