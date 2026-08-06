@@ -67,10 +67,10 @@ export class BacklogCard {
   @Field(() => [String], { description: 'Names of anyone assigned in ClickUp. Assignment is done by hand during triage — the pipeline never guesses an owner.' })
   assignees: string[];
 
-  @Field({ nullable: true, description: 'Reporter display name. Null for non-staff viewers.' })
+  @Field({ nullable: true, description: 'Who reported the bug. Visible to all authenticated viewers so the team can follow up for detail.' })
   reporterName?: string;
 
-  @Field({ nullable: true, description: 'Reporter email. STAFF ONLY — always null for non-staff viewers.' })
+  @Field({ nullable: true, description: 'Reporter email, for following up on a report. Visible to all authenticated viewers.' })
   reporterEmail?: string;
 
   @Field({ nullable: true, description: 'Session/campaign tag, e.g. "testathon".' })

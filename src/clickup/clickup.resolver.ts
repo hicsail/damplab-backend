@@ -12,8 +12,11 @@ import { Role } from '../auth/roles/roles.enum';
  * and customers follow up on bugs they filed, so this deliberately carries no
  * @Roles restriction (the guard still requires a valid token).
  *
- * Non-staff viewers get a redacted card: reporter email is stripped, as is the
- * ClickUp deep link (they have no ClickUp account, so it would only 404 for them).
+ * Reporter identity (name AND email) is shown to every authenticated viewer by
+ * design: the team needs to be able to go back to whoever filed a bug for more
+ * detail, and hiding it made that impossible. The only thing withheld from
+ * non-staff is the ClickUp deep link, which would just 404 for someone with no
+ * ClickUp account — that is a dead-link concern, not an information one.
  */
 @Resolver(() => BacklogCard)
 @UseGuards(AuthRolesGuard)
@@ -24,13 +27,17 @@ export class ClickUpResolver {
     return (user?.realm_access?.roles ?? []).includes(Role.DamplabStaff);
   }
 
-  /** Strip anything a non-staff viewer shouldn't see. */
+  /**
+   * Hide only the ClickUp link from non-staff. Reporter name and email stay
+   * visible to everyone so anyone picking up a bug can follow up with the person
+   * who filed it.
+   */
   private redact(card: BacklogCard, staff: boolean): BacklogCard {
     if (staff) return card;
-    return { ...card, reporterEmail: undefined, clickupUrl: undefined };
+    return { ...card, clickupUrl: undefined };
   }
 
-  @Query(() => [BacklogCard], { description: 'The bug backlog. Any authenticated user; non-staff see a redacted view.' })
+  @Query(() => [BacklogCard], { description: 'The bug backlog. Any authenticated user. Reporter identity is visible to all; only the ClickUp link is staff-only.' })
   async backlogCards(@CurrentUser() user: User): Promise<BacklogCard[]> {
     const staff = this.isStaff(user);
     const cards = await this.clickup.listBacklog();
