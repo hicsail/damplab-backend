@@ -16,6 +16,7 @@ import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
+import { SowVersionService } from '../sow/sow-version.service';
 import { JobAttachmentsService } from './job-attachments.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { UpdateSOWInput } from '../sow/dto/update-sow.input';
@@ -32,15 +33,19 @@ export class JobResolver {
    * Rebuild SOW line items from all workflows on the job (ordered nodes).
    * Keeps invoice / SOW in sync when workflows are added (e.g. addWorkflowToJob) or repriced.
    */
-  private async syncSowServicesFromJobWorkflows(jobId: string): Promise<void> {
-    const job = await this.jobService.findById(jobId);
-    if (!job) return;
-
-    const existingSow = await this.sowService.findByJobId(jobId);
-    if (!existingSow) return;
-
-    const existingServices = existingSow.services ?? [];
-
+  /**
+   * SOW line items for every node on the job's workflows, in workflow order.
+   *
+   * `existingServices` lets the sync path keep whatever staff have edited on a line
+   * that is still there. Creation passes nothing, because there is no prior
+   * document to preserve — and the positional match below is fragile enough that
+   * it should never be handed an array it was not built from.
+   *
+   * `formData` always travels with the line: service cost is recomputed downstream
+   * from the service record plus this data, and the run-count multiplier lives
+   * inside it.
+   */
+  private async collectSowServiceInputs(job: Job, existingServices: any[] = []): Promise<any[]> {
     const orderedNodes: any[] = [];
     for (const workflowId of job.workflows ?? []) {
       const workflow = await this.workflowService.findById(String(workflowId));
@@ -58,9 +63,7 @@ export class JobResolver {
       }
     }
 
-    if (orderedNodes.length === 0) return;
-
-    const servicesInput = orderedNodes.map((node: any, idx: number) => {
+    return orderedNodes.map((node: any, idx: number) => {
       const existing = existingServices[idx];
       const serviceId = String(node.service?._id ?? node.service);
 
@@ -73,9 +76,25 @@ export class JobResolver {
         formData: node.formData ?? []
       };
     });
+  }
+
+  private async syncSowServicesFromJobWorkflows(jobId: string): Promise<void> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) return;
+
+    const existingSow = await this.sowService.findByJobId(jobId);
+    if (!existingSow) return;
+
+    const servicesInput = await this.collectSowServiceInputs(job, existingSow.services ?? []);
+    if (servicesInput.length === 0) return;
 
     const updateInput: UpdateSOWInput = { services: servicesInput } as any;
     await this.sowService.update(String(existingSow._id), updateInput);
+
+    // The billing core has moved; the SOW *document* has not. Flag it so staff
+    // see a banner and choose whether to revise, rather than silently rewriting a
+    // document that may already be sent, signed or finalized.
+    await this.sowVersionService.refreshDocumentStale(String(existingSow._id));
   }
 
   constructor(
@@ -87,6 +106,8 @@ export class JobResolver {
     private readonly commentService: CommentService,
     @Inject(forwardRef(() => SOWService))
     private readonly sowService: SOWService,
+    @Inject(forwardRef(() => SowVersionService))
+    private readonly sowVersionService: SowVersionService,
     private readonly jobAttachmentsService: JobAttachmentsService
   ) {}
 
@@ -286,6 +307,22 @@ export class JobResolver {
     await this.syncSowServicesFromJobWorkflows(jobId);
 
     return updatedJob ?? job;
+  }
+
+  @Mutation(() => SOW, {
+    description: "Staff-only. Create the first Statement of Work for a job, built from the job's workflows. Returns the existing SOW if the job already has one."
+  })
+  @Roles(Role.DamplabStaff)
+  async createSowForJob(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<SOW> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+
+    const services = await this.collectSowServiceInputs(job);
+    const createdBy = user.email || user.preferred_username || 'unknown';
+
+    return this.sowService.createForJob(jobId, services, createdBy);
   }
 
   @Mutation(() => [JobAttachmentUpload], {

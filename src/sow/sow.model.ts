@@ -1,7 +1,7 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
-import { Field, ObjectType, ID, registerEnumType, Float } from '@nestjs/graphql';
+import { Field, ObjectType, ID, registerEnumType, Float, Int } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 import { Job } from '../job/job.model';
 
@@ -159,6 +159,34 @@ export class SOWService {
   category: string;
 }
 
+@Schema({ _id: false })
+@ObjectType({ description: 'A question a customer asked about a SOW, or a staff reply' })
+export class SowQuestion {
+  @Prop({ required: true })
+  @Field({ description: 'Keycloak sub of the author' })
+  authorSub: string;
+
+  @Prop({ required: true, default: '' })
+  @Field({ defaultValue: '' })
+  authorName: string;
+
+  @Prop({ required: true, default: false })
+  @Field({ description: 'True when written by DampLab staff rather than the customer' })
+  isStaff: boolean;
+
+  @Prop({ required: true })
+  @Field()
+  text: string;
+
+  @Prop({ required: false })
+  @Field(() => Int, { nullable: true, description: 'Version the question was asked against' })
+  versionNumber?: number;
+
+  @Prop({ required: true, default: () => new Date() })
+  @Field()
+  createdAt: Date;
+}
+
 @Schema()
 @ObjectType({ description: 'Statement of Work (SOW) for a job' })
 export class SOW {
@@ -234,9 +262,14 @@ export class SOW {
   @Field(() => SOWPricing, { description: 'Pricing information' })
   pricing: SOWPricing;
 
-  @Prop({ required: true })
-  @Field({ description: 'Terms and conditions' })
-  terms: string;
+  /**
+   * Legacy. The document's terms now live in its versions' fields, where staff can
+   * edit them; nothing reads this any more. Kept, and kept optional, so existing
+   * rows keep their stored copy while newly generated SOWs simply have none.
+   */
+  @Prop({ required: false })
+  @Field({ description: 'Terms and conditions. Legacy — the live document text lives on the SOW version.', nullable: true })
+  terms?: string;
 
   @Prop({ required: false })
   @Field({ description: 'Additional information', nullable: true })
@@ -266,6 +299,33 @@ export class SOW {
   @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
   @Field(() => SOWSignature, { description: 'Technician/BU signature (when present)', nullable: true })
   technicianSignature?: SOWSignature;
+
+  // ---------------------------------------------------------------------------
+  // Versioned document. The fields above remain the billing core (services,
+  // pricing) plus the legacy record that predates versioning; the document
+  // itself lives in the sow_versions collection.
+  // ---------------------------------------------------------------------------
+
+  @Prop({ required: true, default: 0 })
+  @Field(() => Int, { description: 'Highest version number; what staff edit. 0 before the first version exists.' })
+  currentVersionNumber: number;
+
+  @Prop({ required: true, default: 0 })
+  @Field(() => Int, {
+    description: 'Version in force with the customer. Lags currentVersionNumber while staff draft changes, which is why an unsent draft never invalidates a signature. 0 before anything is issued.'
+  })
+  activeVersionNumber: number;
+
+  @Prop({ required: true, default: false })
+  @Field({
+    description:
+      'The billing core moved (workflow added, category changed) since the current version was written, so its Fee Schedule is out of date. Surfaced to staff as a banner; never auto-applied to an issued document.'
+  })
+  documentStale: boolean;
+
+  @Prop({ type: [mongoose.Schema.Types.Mixed], default: [] })
+  @Field(() => [SowQuestion], { description: 'Append-only question thread between the customer and staff' })
+  questions: SowQuestion[];
 }
 
 export type SOWDocument = SOW & Document;

@@ -11,6 +11,7 @@ import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
+import { SowVersionService } from './sow-version.service';
 
 @Injectable()
 export class SOWService {
@@ -18,7 +19,11 @@ export class SOWService {
     @InjectModel(SOW.name) private readonly sowModel: Model<SOWDocument>,
     private readonly dampLabServices: DampLabServices,
     @Inject(forwardRef(() => JobService))
-    private readonly jobService: JobService
+    private readonly jobService: JobService,
+    // Circular by design: SOWService creates version 1, and SowVersionService
+    // writes billing changes back through SOWService. Both sides need forwardRef.
+    @Inject(forwardRef(() => SowVersionService))
+    private readonly sowVersionService: SowVersionService
   ) {}
 
   /**
@@ -39,29 +44,41 @@ export class SOWService {
     return this.generateSOWNumber();
   }
 
+  /** The numeric part of a SOW number, or null if it does not parse. */
+  static parseSowNumber(sowNumber: unknown): number | null {
+    if (typeof sowNumber !== 'string') return null;
+    const match = sowNumber.match(/SOW\s+(\d+)/i);
+    if (!match) return null;
+    const n = parseInt(match[1], 10);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  /** Every SOW number uses this width, so ordering and formatting stay consistent. */
+  static formatSowNumber(n: number): string {
+    return `SOW ${String(n).padStart(5, '0')}`;
+  }
+
   /**
-   * Generate the next SOW number in sequence (e.g., "SOW 001", "SOW 002")
+   * Next SOW number in sequence.
+   *
+   * The highest existing number is found numerically, not by sorting the strings.
+   * A string sort over mixed widths ranks "SOW 013" above "SOW 00099", so the old
+   * implementation could pick a lower number as the maximum and hand back one that
+   * was already taken — which the unique index then rejects, failing SOW creation
+   * outright. Numbers are also emitted at one consistent width now; the two
+   * formats that used to coexist were what made the sort ambiguous.
    */
   async generateSOWNumber(): Promise<string> {
-    // Find the highest SOW number
-    const lastSOW = await this.sowModel.findOne({}).sort({ sowNumber: -1 }).exec();
+    const existing = await this.sowModel.find({}, { sowNumber: 1 }).lean().exec();
+    const numbers = existing.map((s) => SOWService.parseSowNumber((s as { sowNumber?: string }).sowNumber)).filter((n): n is number => n !== null);
+    let next = (numbers.length ? Math.max(...numbers) : 0) + 1;
 
-    if (!lastSOW) {
-      return 'SOW 001';
-    }
+    // Defensive: legacy rows whose number does not parse are invisible above, so
+    // step past anything already taken rather than colliding on the unique index.
+    const taken = new Set(existing.map((s) => (s as { sowNumber?: string }).sowNumber));
+    while (taken.has(SOWService.formatSowNumber(next))) next += 1;
 
-    // Extract the number from the last SOW number (e.g., "SOW 059" -> 59)
-    const match = lastSOW.sowNumber.match(/SOW\s+(\d+)/i);
-    if (!match) {
-      // If format is unexpected, start from 001
-      return 'SOW 001';
-    }
-
-    const lastNumber = parseInt(match[1], 10);
-    const nextNumber = lastNumber + 1;
-
-    // Format with zero padding (e.g., 1 -> "001", 59 -> "059")
-    return `SOW ${nextNumber.toString().padStart(3, '0')}`;
+    return SOWService.formatSowNumber(next);
   }
 
   /**
@@ -189,6 +206,158 @@ export class SOWService {
   }
 
   /**
+   * The job a SOW belongs to, or null. Callers need it for the customer category
+   * (which drives pricing) and the display job id shown on the document.
+   */
+  async getJobForSow(sow: Pick<SOW, 'jobId'>): Promise<Job | null> {
+    if (!sow?.jobId) return null;
+    return this.jobService.findById(String(sow.jobId));
+  }
+
+  /**
+   * Writes the billing figures a staff member changed in the SOW editor back to
+   * the billing core, then recomputes the totals.
+   *
+   * Deliberately does not go through transformServices. That helper reprices each
+   * line from the service record plus the node's formData, and the document editor
+   * has no formData to give it — so routing a document save through it would drop
+   * the run-count multiplier and reprice a 70-run job as a 1-run job. Here the
+   * cost the staff member sees is the cost that is stored; only baseCost and
+   * totalCost are derived, and only from values already on the SOW.
+   *
+   * Costs are matched by serviceId and applied only to lines that already exist,
+   * so a document save can never add or remove a billable line — that remains the
+   * job of the workflow sync.
+   */
+  async applyDocumentBilling(sowId: string, changes: { serviceCosts?: Array<{ serviceId: string; cost: number }>; adjustments?: CreateSOWInput['pricing']['adjustments'] }): Promise<SOW> {
+    const sow = await this.sowModel.findById(sowId).exec();
+    if (!sow) throw new NotFoundException(`SOW with ID ${sowId} not found`);
+
+    const costByServiceId = new Map((changes.serviceCosts ?? []).map((s) => [String(s.serviceId), Number(s.cost)]));
+
+    const services = (sow.services ?? []).map((service) => {
+      const override = costByServiceId.get(String(service.serviceId ?? service._id));
+      if (override === undefined || !Number.isFinite(override) || override < 0) return service;
+      return { ...service, cost: override };
+    });
+
+    const adjustments = changes.adjustments ? this.transformPricingAdjustments(changes.adjustments) : sow.pricing?.adjustments ?? [];
+
+    const baseCost = this.calculateBaseCost(services);
+    const totalCost = this.calculateTotalCost(baseCost, adjustments);
+
+    const updated = await this.sowModel
+      .findByIdAndUpdate(sowId, { $set: { services, pricing: { ...(sow.pricing ?? {}), baseCost, adjustments, totalCost }, updatedAt: new Date() } }, { new: true })
+      .exec();
+
+    if (!updated) throw new NotFoundException(`SOW with ID ${sowId} not found`);
+    return updated;
+  }
+
+  /** Default project length when nothing better is known; staff edit it in the editor. */
+  private static readonly DEFAULT_DURATION_DAYS = 14;
+
+  /**
+   * Opening scope-of-work lines: one per distinct service on the job.
+   *
+   * These are a starting point, not a finished document — every line is editable
+   * in the SOW editor. What matters is that a newly generated SOW is never empty,
+   * because `validateSOWData` rejects an empty scope outright.
+   */
+  private static buildScopeOfWork(services: CreateSOWInput['services']): string[] {
+    const counts = new Map<string, { name: string; count: number }>();
+    for (const service of services) {
+      const entry = counts.get(service.id);
+      if (entry) entry.count += 1;
+      else counts.set(service.id, { name: service.name, count: 1 });
+    }
+
+    const lines = [...counts.values()].map(({ name, count }) => (count > 1 ? `Perform ${name} (${count} instances)` : `Perform ${name}`));
+    return lines.length ? lines : ['Perform molecular biology services as specified in the workflow'];
+  }
+
+  /**
+   * Opening deliverables, taken from each service record's own `deliverables`.
+   *
+   * Most seeded services carry none, hence the fallback: an empty array would
+   * fail validation and turn "Generate SOW" into an error message.
+   */
+  private async buildDeliverables(services: CreateSOWInput['services']): Promise<string[]> {
+    const deliverables = new Set<string>();
+
+    for (const id of new Set(services.map((s) => s.id))) {
+      const record = await this.dampLabServices.findOne(id);
+      for (const deliverable of (record as { deliverables?: string[] } | null)?.deliverables ?? []) {
+        if (typeof deliverable === 'string' && deliverable.trim()) deliverables.add(deliverable.trim());
+      }
+    }
+
+    if (deliverables.size === 0) {
+      deliverables.add('Completed molecular biology services as specified');
+      deliverables.add('Quality control results');
+    }
+
+    return [...deliverables];
+  }
+
+  /**
+   * Create the first SOW for a job, deriving everything from the job itself.
+   *
+   * This is what "Generate SOW" calls. The old flow built the whole payload in the
+   * browser and posted it; the document text now comes from the server, so the
+   * client sends nothing but the job id and the server decides what the opening
+   * draft says.
+   *
+   * Idempotent: a job that already has a SOW gets that SOW back rather than an
+   * error, so a double click cannot produce a failure the staff member has to
+   * interpret.
+   *
+   * `services` comes from the caller because walking the job's workflows down to
+   * their nodes belongs to the workflow layer, not here. Each entry must carry the
+   * node's `formData` — that is what the price multiplier is read from, and
+   * dropping it silently reprices a 70-run job as a single run.
+   */
+  async createForJob(jobId: string, services: CreateSOWInput['services'], createdBy: string): Promise<SOW> {
+    const existing = await this.sowModel.findOne({ jobId }).exec();
+    if (existing) return existing;
+
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+
+    if (!services.length) {
+      throw new BadRequestException('This job has no services yet, so there is nothing to put in a Statement of Work. Add a workflow to the job first.');
+    }
+
+    const startDate = new Date();
+    const endDate = new Date(startDate);
+    endDate.setDate(endDate.getDate() + SOWService.DEFAULT_DURATION_DAYS);
+
+    return this.create({
+      jobId,
+      // sowTitle is deliberately absent: the field calculator supplies the default
+      // title, and a second copy of that string here is exactly the divergence the
+      // document rewrite exists to prevent.
+      clientName: (job as any).clientDisplayName || job.username || job.name || 'Client',
+      clientEmail: job.email,
+      clientInstitution: job.institute,
+      clientAddress: job.institute,
+      scopeOfWork: SOWService.buildScopeOfWork(services),
+      deliverables: await this.buildDeliverables(services),
+      services,
+      timeline: { startDate, endDate, duration: `${SOWService.DEFAULT_DURATION_DAYS} days` },
+      resources: { projectManager: '', projectLead: '' },
+      // baseCost and totalCost are left out on purpose: `create` computes both from
+      // the service records and only validates figures the caller actually supplied.
+      pricing: { adjustments: [] },
+      additionalInformation: '',
+      createdBy,
+      status: SOWStatus.DRAFT
+    });
+  }
+
+  /**
    * Create a new SOW
    */
   async create(createSOWInput: CreateSOWInput): Promise<SOW> {
@@ -251,7 +420,12 @@ export class SOWService {
     };
 
     const sow = await this.sowModel.create(sowData);
-    return sow;
+    // Every SOW owns a document from the moment it exists, so the editor and the
+    // customer view never have to cope with a SOW that has no version.
+    await this.sowVersionService.createInitialVersion(sow, job as any, createSOWInput.createdBy);
+    // Re-read: creating the version sets the version pointers with a separate
+    // update, so the document created above still reports currentVersionNumber 0.
+    return (await this.sowModel.findById(sow._id).exec()) ?? sow;
   }
 
   /**
