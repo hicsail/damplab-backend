@@ -25,6 +25,15 @@ export interface SowFieldDefinition {
    */
   allowsTextOverride: boolean;
   enabledByDefault: boolean;
+  /**
+   * False on fields the document cannot be sent without. Blocks "Send to
+   * customer" while the generated text is empty, and — since an empty required
+   * field would otherwise sit hidden with no way for staff to notice it needs
+   * attention — lets the field re-enable itself once its content arrives (see
+   * normalizeIncomingFields / mergeCalculatedFields), rather than staying hidden
+   * forever after the first empty save.
+   */
+  allowsEmpty: boolean;
 }
 
 export const SOW_PROSE_DEFAULTS: Record<string, string> = {
@@ -70,27 +79,29 @@ export const SOW_PROSE_DEFAULTS: Record<string, string> = {
 const { CALCULATED, PROSE } = SowFieldKind;
 
 export const SOW_FIELD_CATALOG: SowFieldDefinition[] = [
-  { key: 'sowTitle', label: 'Title', kind: CALCULATED, order: 10, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'parties', label: 'Parties', kind: CALCULATED, order: 20, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'statementOfWork', label: 'Statement of Work', kind: PROSE, order: 30, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'periodOfPerformance', label: 'Period of Performance', kind: CALCULATED, order: 40, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'engagementResources', label: 'Engagement Resources', kind: CALCULATED, order: 50, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'scopeOfWork', label: 'Scope of Work', kind: CALCULATED, order: 60, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'deliverables', label: 'Deliverables', kind: CALCULATED, order: 70, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'universityResponsibilities', label: 'University Responsibilities', kind: PROSE, order: 80, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'clientResponsibilities', label: 'Client Responsibilities', kind: PROSE, order: 90, allowsTextOverride: true, enabledByDefault: true },
+  { key: 'sowTitle', label: 'Title', kind: CALCULATED, order: 10, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'parties', label: 'Parties', kind: CALCULATED, order: 20, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'statementOfWork', label: 'Statement of Work', kind: PROSE, order: 30, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'periodOfPerformance', label: 'Period of Performance', kind: CALCULATED, order: 40, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  // Requires a Project Manager and Project Lead to say anything; staff must set
+  // both before the document can be sent (see sendToCustomer's validation).
+  { key: 'engagementResources', label: 'Engagement Resources', kind: CALCULATED, order: 50, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: false },
+  { key: 'scopeOfWork', label: 'Scope of Work', kind: CALCULATED, order: 60, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'deliverables', label: 'Deliverables', kind: CALCULATED, order: 70, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'universityResponsibilities', label: 'University Responsibilities', kind: PROSE, order: 80, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'clientResponsibilities', label: 'Client Responsibilities', kind: PROSE, order: 90, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
   // The only field with no pencil: its figures are what invoices bill from.
-  { key: 'feeSchedule', label: 'Fee Schedule', kind: CALCULATED, order: 100, allowsTextOverride: false, enabledByDefault: true },
-  { key: 'billToAddress', label: 'Bill To Address', kind: PROSE, order: 110, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'invoiceProcedures', label: 'Invoice Procedures', kind: PROSE, order: 120, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'completionCriteria', label: 'Completion Criteria', kind: PROSE, order: 130, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'projectChangeControl', label: 'Project Change Control Procedure', kind: PROSE, order: 140, allowsTextOverride: true, enabledByDefault: true },
-  { key: 'additionalInformation', label: 'Additional Information', kind: PROSE, order: 150, allowsTextOverride: true, enabledByDefault: false },
+  { key: 'feeSchedule', label: 'Fee Schedule', kind: CALCULATED, order: 100, allowsTextOverride: false, enabledByDefault: true, allowsEmpty: true },
+  { key: 'billToAddress', label: 'Bill To Address', kind: PROSE, order: 110, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'invoiceProcedures', label: 'Invoice Procedures', kind: PROSE, order: 120, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'completionCriteria', label: 'Completion Criteria', kind: PROSE, order: 130, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'projectChangeControl', label: 'Project Change Control Procedure', kind: PROSE, order: 140, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true },
+  { key: 'additionalInformation', label: 'Additional Information', kind: PROSE, order: 150, allowsTextOverride: true, enabledByDefault: false, allowsEmpty: true },
   // Previously an overload in sowGenerator.ts that silently rewrote clientName /
   // clientInstitution. Now ordinary sections, off unless staff fill them in.
-  { key: 'clientProjectManager', label: 'Client Project Manager', kind: PROSE, order: 160, allowsTextOverride: true, enabledByDefault: false },
-  { key: 'clientCostCenter', label: 'Client Cost Center', kind: PROSE, order: 170, allowsTextOverride: true, enabledByDefault: false },
-  { key: 'signatures', label: 'Signatures', kind: PROSE, order: 180, allowsTextOverride: true, enabledByDefault: true }
+  { key: 'clientProjectManager', label: 'Client Project Manager', kind: PROSE, order: 160, allowsTextOverride: true, enabledByDefault: false, allowsEmpty: true },
+  { key: 'clientCostCenter', label: 'Client Cost Center', kind: PROSE, order: 170, allowsTextOverride: true, enabledByDefault: false, allowsEmpty: true },
+  { key: 'signatures', label: 'Signatures', kind: PROSE, order: 180, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true }
 ];
 
 /** Custom fields sort after everything in the catalog. */

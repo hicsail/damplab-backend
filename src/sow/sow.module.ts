@@ -5,6 +5,7 @@ import { SowVersion, SowVersionSchema } from './sow-version.model';
 import { SOWService } from './sow.service';
 import { SowVersionService } from './sow-version.service';
 import { SOWResolver } from './sow.resolver';
+import { SowVersionFieldsResolver } from './sow-version-fields.resolver';
 import { JobModule } from '../job/job.module';
 import { DampLabServicesModule } from '../services/damplab-services.module';
 
@@ -17,7 +18,7 @@ import { DampLabServicesModule } from '../services/damplab-services.module';
     forwardRef(() => JobModule),
     DampLabServicesModule
   ],
-  providers: [SOWService, SowVersionService, SOWResolver],
+  providers: [SOWService, SowVersionService, SOWResolver, SowVersionFieldsResolver],
   exports: [SOWService, SowVersionService]
 })
 export class SOWModule {}

@@ -72,7 +72,9 @@ export function buildLegacyFields(sow: SOW, job: { customerCategory?: string; jo
       calculatedValue: undefined,
       isOverridden: false,
       isEnabled: true,
-      allowsTextOverride: true
+      allowsTextOverride: true,
+      allowsEmpty: true,
+      requiresInitials: false
     });
   });
 
@@ -93,6 +95,7 @@ export function toConsent(signature: { name?: string; signedAt?: string; signatu
     // Legacy signatures predate per-group consent; the signer assented to the
     // whole document, so record that rather than inventing a narrower claim.
     consentedGroups: [SowFieldKind.CALCULATED, SowFieldKind.PROSE, SowFieldKind.CUSTOM],
+    sectionInitials: [],
     legacySignatureDataUrl: signature.signatureDataUrl
   };
 }
@@ -127,6 +130,9 @@ export async function migrateSows(db: mongoose.mongo.Db, opts: { dryRun?: boolea
 
       const clientSignature = toConsent(raw.clientSignature);
       const staffSignature = toConsent(raw.technicianSignature);
+      // A migrated SOW already issued under the old flow counts as its own
+      // send, same rule createInitialVersion applies going forward.
+      const versionNumber = SowVersionService.encodeVersionNumber(visibleToCustomer ? 1 : 0, visibleToCustomer ? 0 : 1);
 
       if (opts.dryRun) {
         log(
@@ -139,7 +145,7 @@ export async function migrateSows(db: mongoose.mongo.Db, opts: { dryRun?: boolea
       await versions.insertOne({
         sow: new mongoose.Types.ObjectId(sowId),
         sowId,
-        versionNumber: 1,
+        versionNumber,
         fields,
         inputs,
         status,
@@ -158,10 +164,9 @@ export async function migrateSows(db: mongoose.mongo.Db, opts: { dryRun?: boolea
         { _id: raw._id },
         {
           $set: {
-            currentVersionNumber: 1,
-            activeVersionNumber: visibleToCustomer ? 1 : 0,
-            documentStale: false,
-            questions: raw.questions ?? []
+            currentVersionNumber: versionNumber,
+            activeVersionNumber: visibleToCustomer ? versionNumber : 0,
+            documentStale: false
           }
         }
       );

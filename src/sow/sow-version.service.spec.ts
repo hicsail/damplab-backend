@@ -128,3 +128,34 @@ describe('billingFingerprint', () => {
     expect(SowVersionService.billingFingerprint(changed)).toBe(SowVersionService.billingFingerprint(base));
   });
 });
+
+describe('version number encoding', () => {
+  it('encodes major/minor into a single number, ordered exactly like major.minor would be', () => {
+    expect(SowVersionService.encodeVersionNumber(0, 1)).toBe(1);
+    expect(SowVersionService.encodeVersionNumber(0, 2)).toBe(2);
+    expect(SowVersionService.encodeVersionNumber(1, 0)).toBe(1000);
+    expect(SowVersionService.encodeVersionNumber(1, 2)).toBe(1002);
+    expect(SowVersionService.encodeVersionNumber(2, 0)).toBe(2000);
+
+    const encoded = [
+      SowVersionService.encodeVersionNumber(0, 1),
+      SowVersionService.encodeVersionNumber(0, 2),
+      SowVersionService.encodeVersionNumber(1, 0),
+      SowVersionService.encodeVersionNumber(1, 2),
+      SowVersionService.encodeVersionNumber(2, 0)
+    ];
+    expect([...encoded].sort((a, b) => a - b)).toEqual(encoded);
+  });
+
+  it('decodes back to the major/minor it was built from', () => {
+    expect(SowVersionService.decodeVersionNumber(1)).toEqual({ major: 0, minor: 1 });
+    expect(SowVersionService.decodeVersionNumber(1002)).toEqual({ major: 1, minor: 2 });
+    expect(SowVersionService.decodeVersionNumber(2000)).toEqual({ major: 2, minor: 0 });
+  });
+
+  it('formats the human label as major.minor', () => {
+    expect(SowVersionService.displayVersionLabel(1)).toBe('0.1');
+    expect(SowVersionService.displayVersionLabel(1000)).toBe('1.0');
+    expect(SowVersionService.displayVersionLabel(1002)).toBe('1.2');
+  });
+});

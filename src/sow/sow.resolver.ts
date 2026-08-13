@@ -204,10 +204,4 @@ export class SOWResolver {
     await this.authorizedSow(sowId, user);
     return this.sowVersionService.cancel(sowId, note, SOWResolver.author(user));
   }
-
-  @Mutation(() => SOW, { description: 'Adds a question to the SOW thread. The job owner or staff may post.' })
-  async askSowQuestion(@Args('sowId', { type: () => ID }) sowId: string, @Args('text') text: string, @CurrentUser() user: User): Promise<SOW> {
-    await this.authorizedSow(sowId, user);
-    return this.sowVersionService.addQuestion(sowId, text, { ...SOWResolver.author(user), isStaff: isStaff(user) });
-  }
 }

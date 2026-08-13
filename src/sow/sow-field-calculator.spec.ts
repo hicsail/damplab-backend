@@ -95,7 +95,7 @@ describe('period of performance text', () => {
     expect(v).not.toContain('- ');
   });
 
-  it('lists each period and totals the days when there are several', () => {
+  it('lists each period and gives the true period of performance — earliest start to latest end, not summed durations', () => {
     const v = calculateFieldValues(
       inputs({
         periods: [
@@ -108,7 +108,38 @@ describe('period of performance text', () => {
     expect(v).toContain('- Phase 1: 14 days, from March 3, 2026 through March 16, 2026');
     // 7 days from June 1 inclusive ends June 7, matching the 1-day case above.
     expect(v).toContain('- Phase 2: 7 days, from June 1, 2026 through June 7, 2026');
-    expect(v).toContain('21 days');
+    // Summing the two periods' durations would say 21 days; the actual span from
+    // the earliest start (March 3) to the latest end (June 7) is 97 days.
+    expect(v).not.toContain('21 days');
+    expect(v).toContain('The overall period of performance is estimated to be 97 days, from March 3, 2026 through June 7, 2026.');
+  });
+
+  it('takes the span from the earliest start to the latest end even when periods are given out of order', () => {
+    const v = calculateFieldValues(
+      inputs({
+        periods: [
+          { startDate: new Date('2026-06-01T00:00:00Z'), durationDays: 7, label: 'Phase 2' },
+          { startDate: new Date('2026-03-03T00:00:00Z'), durationDays: 14, label: 'Phase 1' }
+        ]
+      }),
+      ctx
+    ).periodOfPerformance;
+    expect(v).toContain('The overall period of performance is estimated to be 97 days, from March 3, 2026 through June 7, 2026.');
+  });
+
+  it('does not overcount overlapping periods as if they were sequential', () => {
+    const v = calculateFieldValues(
+      inputs({
+        periods: [
+          { startDate: new Date('2026-03-03T00:00:00Z'), durationDays: 14, label: 'Phase 1' },
+          { startDate: new Date('2026-03-10T00:00:00Z'), durationDays: 14, label: 'Phase 2' }
+        ]
+      }),
+      ctx
+    ).periodOfPerformance;
+    // Summed durations would claim 28 days; the two overlap, so the true span
+    // (March 3 through March 23) is 21 days.
+    expect(v).toContain('The overall period of performance is estimated to be 21 days, from March 3, 2026 through March 23, 2026.');
   });
 
   it('supports retroactive periods', () => {
@@ -251,5 +282,39 @@ describe('normalizeIncomingFields', () => {
     const out = normalizeIncomingFields([dup, { ...dup, value: 'second' }], inputs(), ctx);
     expect(out.filter((f) => f.key === 'billToAddress')).toHaveLength(1);
     expect(fieldByKey(out, 'billToAddress').value).toBe('first');
+  });
+
+  it('re-enables a required field once it goes from empty to populated', () => {
+    // Version 1 had no PM/Lead: Engagement Resources generated nothing and was
+    // hidden. Staff then pick a PM/Lead — the live preview refreshes the field's
+    // text (as SowEditorModal's runPreview does) but nothing client-side flips
+    // the checkbox, so it still arrives at Save marked hidden.
+    const previousFields = buildCalculatedFields(inputs({ projectManager: '', projectLead: '' }), ctx);
+    expect(fieldByKey(previousFields, 'engagementResources').isEnabled).toBe(false);
+
+    const freshValues = calculateFieldValues(inputs(), ctx);
+    const incoming = previousFields.map(
+      (f) => ({ key: f.key, label: f.label, kind: f.kind, order: f.order, value: freshValues[f.key] ?? f.value, isOverridden: f.isOverridden, isEnabled: false, allowsTextOverride: f.allowsTextOverride } as SowField)
+    );
+
+    const out = normalizeIncomingFields(incoming, inputs(), ctx, previousFields);
+    expect(fieldByKey(out, 'engagementResources').isEnabled).toBe(true);
+    expect(fieldByKey(out, 'engagementResources').value).toContain('Courtney Tretheway');
+  });
+
+  it('does not resurrect a required field the staff deliberately hid after it already had content', () => {
+    const previousFields = buildCalculatedFields(inputs(), ctx); // PM/Lead already set, so it has content
+    expect(fieldByKey(previousFields, 'engagementResources').isEnabled).toBe(true);
+
+    const incoming = previousFields.map((f) => ({ key: f.key, label: f.label, kind: f.kind, order: f.order, value: f.value, isOverridden: f.isOverridden, isEnabled: f.key === 'engagementResources' ? false : f.isEnabled, allowsTextOverride: f.allowsTextOverride } as SowField));
+
+    const out = normalizeIncomingFields(incoming, inputs(), ctx, previousFields);
+    expect(fieldByKey(out, 'engagementResources').isEnabled).toBe(false);
+  });
+
+  it('marks Engagement Resources as required and everything else as allowed to be empty', () => {
+    const out = normalizeIncomingFields([], inputs(), ctx);
+    expect(fieldByKey(out, 'engagementResources').allowsEmpty).toBe(false);
+    expect(fieldByKey(out, 'clientResponsibilities').allowsEmpty).toBe(true);
   });
 });

@@ -44,7 +44,9 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
       versionNumber: 1,
       fields: initial.fields ?? [
         { key: 'billToAddress', label: 'Bill To Address', kind: SowFieldKind.PROSE, order: 110, value: 'x', isOverridden: false, isEnabled: true, allowsTextOverride: true },
-        { key: 'feeSchedule', label: 'Fee Schedule', kind: SowFieldKind.CALCULATED, order: 100, value: 'Total: $0.00', isOverridden: false, isEnabled: true, allowsTextOverride: false }
+        { key: 'feeSchedule', label: 'Fee Schedule', kind: SowFieldKind.CALCULATED, order: 100, value: 'Total: $0.00', isOverridden: false, isEnabled: true, allowsTextOverride: false },
+        // Required before send — see sow-field-defaults.ts's allowsEmpty.
+        { key: 'engagementResources', label: 'Engagement Resources', kind: SowFieldKind.CALCULATED, order: 50, value: 'Jane Doe – Project Manager', isOverridden: false, isEnabled: true, allowsTextOverride: true, allowsEmpty: false }
       ],
       inputs: { services: [], adjustments: [], baseCost: 0, totalCost: 0, periods: [], scopeOfWork: [], deliverables: [], projectManager: '', projectLead: '' },
       status: initial.status ?? SOWStatus.DRAFT,
@@ -68,8 +70,7 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
     timeline: { startDate: new Date('2026-03-03T00:00:00Z'), duration: '14 days' },
     resources: { projectManager: '', projectLead: '' },
     scopeOfWork: [],
-    deliverables: [],
-    questions: []
+    deliverables: []
   };
 
   const versionModel: any = {
@@ -118,7 +119,6 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
     findByIdAndUpdate: (_id: any, u: any): any => ({
       exec: async (): Promise<any> => {
         Object.assign(sow, u.$set ?? {});
-        if (u.$push?.questions) sow.questions.push(u.$push.questions);
         return sow;
       }
     })
@@ -138,7 +138,13 @@ const owner = { sub: 'sub-owner', email: 'client@lab.org', preferred_username: '
 const saveInput = (base: number, note?: string): any => ({
   baseVersionNumber: base,
   note,
-  fields: [{ key: 'billToAddress', value: 'edited', isEnabled: true }],
+  // The real editor always resubmits its whole local field set, never a subset —
+  // this mirrors that so a save doesn't drop Engagement Resources back to
+  // disabled the way an actually-partial request deliberately does.
+  fields: [
+    { key: 'billToAddress', value: 'edited', isEnabled: true },
+    { key: 'engagementResources', value: 'PM – Project Manager\nPL – Project Lead', isEnabled: true }
+  ],
   inputs: { projectManager: 'PM', projectLead: 'PL', periods: [], scopeOfWork: [], deliverables: [], services: [], adjustments: [] }
 });
 
@@ -221,11 +227,68 @@ describe('sign', () => {
     const h = makeHarness({
       fields: [
         { key: 'billToAddress', kind: SowFieldKind.PROSE, order: 110, value: 'x', isEnabled: true, allowsTextOverride: true, label: 'b', isOverridden: false },
+        // Required, so it must stay enabled for sendToCustomer to succeed — it is
+        // the CALCULATED section present, not custom-1, which stays disabled.
+        { key: 'engagementResources', kind: SowFieldKind.CALCULATED, order: 50, value: 'Jane Doe – Project Manager', isEnabled: true, allowsTextOverride: true, allowsEmpty: false, label: 'Engagement Resources', isOverridden: false },
         { key: 'custom-1', kind: SowFieldKind.CUSTOM, order: 1000, value: 'hidden', isEnabled: false, allowsTextOverride: true, label: 'c', isOverridden: false }
       ]
     });
     await h.service.sendToCustomer(SOW_ID, staff);
-    const v = await h.service.sign(SOW_ID, { versionNumber: h.sow.activeVersionNumber, name: 'Jane', consentedGroups: [SowFieldKind.PROSE] }, owner);
+    const v = await h.service.sign(SOW_ID, { versionNumber: h.sow.activeVersionNumber, name: 'Jane', consentedGroups: [SowFieldKind.PROSE, SowFieldKind.CALCULATED] }, owner);
+    expect(v.status).toBe(SOWStatus.SIGNED);
+  });
+
+  it('requires initials on a section staff flagged, and refuses to sign without them', async () => {
+    const h = makeHarness({
+      fields: [
+        { key: 'billToAddress', kind: SowFieldKind.PROSE, order: 110, value: 'x', isEnabled: true, allowsTextOverride: true, label: 'b', isOverridden: false },
+        {
+          key: 'clientResponsibilities',
+          kind: SowFieldKind.PROSE,
+          order: 90,
+          value: 'Ships samples on dry ice.',
+          isEnabled: true,
+          allowsTextOverride: true,
+          label: 'Client Responsibilities',
+          isOverridden: false,
+          requiresInitials: true
+        },
+        { key: 'engagementResources', kind: SowFieldKind.CALCULATED, order: 50, value: 'Jane Doe – Project Manager', isEnabled: true, allowsTextOverride: true, allowsEmpty: false, label: 'Engagement Resources', isOverridden: false }
+      ]
+    });
+    await h.service.sendToCustomer(SOW_ID, staff);
+
+    await expect(h.service.sign(SOW_ID, { versionNumber: h.sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent }, owner)).rejects.toThrow(/initial/i);
+
+    const v = await h.service.sign(
+      SOW_ID,
+      { versionNumber: h.sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent, sectionInitials: [{ key: 'clientResponsibilities', initials: 'JR' }] },
+      owner
+    );
+    expect(v.status).toBe(SOWStatus.SIGNED);
+    expect(v.clientSignature?.sectionInitials).toEqual([{ key: 'clientResponsibilities', label: 'Client Responsibilities', initials: 'JR' }]);
+  });
+
+  it('ignores a requiresInitials flag on a section the staff hid', async () => {
+    const h = makeHarness({
+      fields: [
+        { key: 'billToAddress', kind: SowFieldKind.PROSE, order: 110, value: 'x', isEnabled: true, allowsTextOverride: true, label: 'b', isOverridden: false },
+        {
+          key: 'clientResponsibilities',
+          kind: SowFieldKind.PROSE,
+          order: 90,
+          value: 'x',
+          isEnabled: false,
+          allowsTextOverride: true,
+          label: 'Client Responsibilities',
+          isOverridden: false,
+          requiresInitials: true
+        },
+        { key: 'engagementResources', kind: SowFieldKind.CALCULATED, order: 50, value: 'Jane Doe – Project Manager', isEnabled: true, allowsTextOverride: true, allowsEmpty: false, label: 'Engagement Resources', isOverridden: false }
+      ]
+    });
+    await h.service.sendToCustomer(SOW_ID, staff);
+    const v = await h.service.sign(SOW_ID, { versionNumber: h.sow.activeVersionNumber, name: 'Jane', consentedGroups: [SowFieldKind.PROSE, SowFieldKind.CALCULATED] }, owner);
     expect(v.status).toBe(SOWStatus.SIGNED);
   });
 
@@ -280,12 +343,12 @@ describe('finalize and the draft-above-final rule', () => {
 describe('discardDraft', () => {
   it('drops an unsent draft and rolls the staff pointer back', async () => {
     const { service, sow } = makeHarness();
-    await service.sendToCustomer(SOW_ID, staff); // v2 SENT, active=2
-    const draft = await service.saveVersion(SOW_ID, saveInput(2), staff); // v3 DRAFT
+    await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000) SENT, active=1000
+    const draft = await service.saveVersion(SOW_ID, saveInput(1000), staff); // v1.1 (1001) DRAFT
 
     await service.discardDraft(SOW_ID, draft.versionNumber);
-    expect(sow.currentVersionNumber).toBe(2);
-    expect(sow.activeVersionNumber).toBe(2);
+    expect(sow.currentVersionNumber).toBe(1000);
+    expect(sow.activeVersionNumber).toBe(1000);
   });
 
   it('refuses to discard a version the customer has seen', async () => {
@@ -296,45 +359,32 @@ describe('discardDraft', () => {
 
   it('refuses to discard the only version, which would leave the SOW with no document', async () => {
     const { service } = makeHarness();
+    // The harness seeds v0.1 (encoded 1) — the very first version of any SOW,
+    // whose minor starts at 1 rather than 0 so it never collides with the
+    // "nothing sent yet" sentinel activeVersionNumber/currentVersionNumber use.
     await expect(service.discardDraft(SOW_ID, 1)).rejects.toThrow(/only version/i);
   });
 
   it('does not reopen the editor on the draft that was just discarded', async () => {
     const { service } = makeHarness();
-    await service.sendToCustomer(SOW_ID, staff); // v2 SENT
-    const draft = await service.saveVersion(SOW_ID, saveInput(2), staff); // v3 DRAFT
+    await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000) SENT
+    const draft = await service.saveVersion(SOW_ID, saveInput(1000), staff); // v1.1 (1001) DRAFT
     await service.discardDraft(SOW_ID, draft.versionNumber);
 
     const current = await service.getCurrentVersion(SOW_ID);
-    expect(current?.versionNumber).toBe(2);
+    expect(current?.versionNumber).toBe(1000);
     expect(current?.status).toBe(SOWStatus.SENT);
   });
 
   it('does not reuse the discarded number, which would collide on the unique index', async () => {
     const { service } = makeHarness();
-    await service.sendToCustomer(SOW_ID, staff); // v2
-    const draft = await service.saveVersion(SOW_ID, saveInput(2), staff); // v3
+    await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000)
+    const draft = await service.saveVersion(SOW_ID, saveInput(1000), staff); // v1.1 (1001)
     await service.discardDraft(SOW_ID, draft.versionNumber);
 
-    const next = await service.saveVersion(SOW_ID, saveInput(2), staff);
-    expect(next.versionNumber).toBe(4);
-  });
-});
-
-describe('questions', () => {
-  it('appends to the thread tagged with the version in force', async () => {
-    const { service, sow } = makeHarness();
-    await service.sendToCustomer(SOW_ID, staff);
-    await service.addQuestion(SOW_ID, '  Does the price include the QC rerun?  ', { sub: 'sub-owner', name: 'Jane', isStaff: false });
-
-    expect(sow.questions).toHaveLength(1);
-    expect(sow.questions[0].text).toBe('Does the price include the QC rerun?');
-    expect(sow.questions[0].isStaff).toBe(false);
-    expect(sow.questions[0].versionNumber).toBe(sow.activeVersionNumber);
-  });
-
-  it('rejects an empty question', async () => {
-    const { service } = makeHarness();
-    await expect(service.addQuestion(SOW_ID, '   ', { sub: 'x', name: 'x', isStaff: true })).rejects.toThrow(BadRequestException);
+    const next = await service.saveVersion(SOW_ID, saveInput(1000), staff);
+    // 1001 is still on the books (discarded, not deleted), so the next draft
+    // must skip past it to 1.2 (1002) rather than reusing 1.1.
+    expect(next.versionNumber).toBe(1002);
   });
 });

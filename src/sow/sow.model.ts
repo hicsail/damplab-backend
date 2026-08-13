@@ -159,34 +159,6 @@ export class SOWService {
   category: string;
 }
 
-@Schema({ _id: false })
-@ObjectType({ description: 'A question a customer asked about a SOW, or a staff reply' })
-export class SowQuestion {
-  @Prop({ required: true })
-  @Field({ description: 'Keycloak sub of the author' })
-  authorSub: string;
-
-  @Prop({ required: true, default: '' })
-  @Field({ defaultValue: '' })
-  authorName: string;
-
-  @Prop({ required: true, default: false })
-  @Field({ description: 'True when written by DampLab staff rather than the customer' })
-  isStaff: boolean;
-
-  @Prop({ required: true })
-  @Field()
-  text: string;
-
-  @Prop({ required: false })
-  @Field(() => Int, { nullable: true, description: 'Version the question was asked against' })
-  versionNumber?: number;
-
-  @Prop({ required: true, default: () => new Date() })
-  @Field()
-  createdAt: Date;
-}
-
 @Schema()
 @ObjectType({ description: 'Statement of Work (SOW) for a job' })
 export class SOW {
@@ -322,10 +294,6 @@ export class SOW {
       'The billing core moved (workflow added, category changed) since the current version was written, so its Fee Schedule is out of date. Surfaced to staff as a banner; never auto-applied to an issued document.'
   })
   documentStale: boolean;
-
-  @Prop({ type: [mongoose.Schema.Types.Mixed], default: [] })
-  @Field(() => [SowQuestion], { description: 'Append-only question thread between the customer and staff' })
-  questions: SowQuestion[];
 }
 
 export type SOWDocument = SOW & Document;

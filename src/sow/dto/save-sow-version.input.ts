@@ -14,6 +14,9 @@ export class SowFieldInput {
 
   @Field({ nullable: true, defaultValue: true, description: 'False hides the section from the customer, the PDF and consent, without discarding its text' })
   isEnabled?: boolean;
+
+  @Field({ nullable: true, defaultValue: false, description: 'Staff flag: when true, the customer must type their initials for this section before they can sign' })
+  requiresInitials?: boolean;
 }
 
 @InputType()

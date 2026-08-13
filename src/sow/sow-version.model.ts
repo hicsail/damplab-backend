@@ -68,6 +68,14 @@ export class SowField {
     description: 'False on fields whose text carries figures another system bills from (Fee Schedule), where free-text editing would let the document disagree with the invoice'
   })
   allowsTextOverride: boolean;
+
+  @Prop({ required: true, default: true })
+  @Field({ description: 'False on fields the document cannot be sent to the customer without (e.g. Engagement Resources needs a Project Manager and Project Lead)' })
+  allowsEmpty: boolean;
+
+  @Prop({ required: true, default: false })
+  @Field({ description: 'Staff flag: when true, the customer must type their initials for this section before they can sign' })
+  requiresInitials: boolean;
 }
 
 /**
@@ -194,6 +202,22 @@ export class SowVersionInputs {
   customerCategory?: string;
 }
 
+@Schema({ _id: false })
+@ObjectType({ description: 'Initials a signer typed for one section flagged as requiring them' })
+export class SowSectionInitial {
+  @Prop({ required: true })
+  @Field({ description: 'Section key the initials were given for' })
+  key: string;
+
+  @Prop({ required: true, default: '' })
+  @Field({ defaultValue: '', description: "Section's label at the time it was signed, for display without a fields lookup" })
+  label: string;
+
+  @Prop({ required: true })
+  @Field({ description: 'Initials as typed by the signer' })
+  initials: string;
+}
+
 /**
  * A customer's or staff member's assent. Consent is per field-kind: the reader
  * ticks one box for the calculated figures, one for the standard prose, one for
@@ -213,6 +237,10 @@ export class SowConsent {
   @Prop({ type: [String], default: [] })
   @Field(() => [SowFieldKind], { description: 'Field kinds the signer explicitly acknowledged' })
   consentedGroups: SowFieldKind[];
+
+  @Prop({ type: [mongoose.Schema.Types.Mixed], default: [] })
+  @Field(() => [SowSectionInitial], { description: 'Initials given for each section staff flagged requiresInitials' })
+  sectionInitials: SowSectionInitial[];
 
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Keycloak sub of the signer' })
@@ -240,8 +268,15 @@ export class SowVersion {
   sowId: string;
 
   @Prop({ required: true })
-  @Field(() => Int, { description: 'Monotonic per SOW, starting at 1' })
+  @Field(() => Int, {
+    description:
+      'Sortable, unique key, and the encoding of the human-facing "<sent-count>.<sub-revision>" label in one number: major*1000 + minor. See displayVersion for the decoded "1.2" form — SowVersionService.encodeVersionNumber/decodeVersionNumber own the encoding.'
+  })
   versionNumber: number;
+
+  // displayVersion has no class property: it is resolved purely from
+  // versionNumber by SowVersionFieldsResolver, so it can never be forgotten on
+  // one write path and present on another.
 
   @Prop({ type: [mongoose.Schema.Types.Mixed], default: [] })
   @Field(() => [SowField], { description: 'The document, in order' })

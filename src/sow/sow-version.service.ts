@@ -5,6 +5,7 @@ import mongoose from 'mongoose';
 import { SOW, SOWDocument, SOWStatus, SOWAdjustmentType } from './sow.model';
 import { SowVersion, SowVersionDocument, SowVersionInputs, SowField, SowFieldKind, SowPeriod, SowConsent } from './sow-version.model';
 import { buildCalculatedFields, calculateFieldValues, normalizeIncomingFields, SowDocumentContext } from './sow-field-calculator';
+import { SOW_FIELD_CATALOG } from './sow-field-defaults';
 import { SOWService } from './sow.service';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
 import { SignSowInput } from './dto/sign-sow.input';
@@ -117,6 +118,33 @@ export class SowVersionService {
   }
 
   /**
+   * versionNumber encodes its own "<sent-count>.<sub-revision>" display label —
+   * major*MINOR_WIDTH + minor — rather than that label being a second, separately
+   * computed value. One number for a version to have, not two that can drift
+   * apart or fall out of sync depending on which code path produced it.
+   *
+   * MINOR_WIDTH is headroom, not a hard limit read back out: nothing ever divides
+   * or reads a raw versionNumber except encode/decode, so there is no overflow
+   * to guard against, only an assumption (at most 999 saves between sends) that
+   * would need revisiting if ever seriously threatened.
+   */
+  private static readonly MINOR_WIDTH = 1000;
+
+  static encodeVersionNumber(major: number, minor: number): number {
+    return major * SowVersionService.MINOR_WIDTH + minor;
+  }
+
+  static decodeVersionNumber(versionNumber: number): { major: number; minor: number } {
+    return { major: Math.floor(versionNumber / SowVersionService.MINOR_WIDTH), minor: versionNumber % SowVersionService.MINOR_WIDTH };
+  }
+
+  /** Human-facing "<sent-count>.<sub-revision>" label, e.g. "1.2". */
+  static displayVersionLabel(versionNumber: number): string {
+    const { major, minor } = SowVersionService.decodeVersionNumber(versionNumber);
+    return `${major}.${minor}`;
+  }
+
+  /**
    * The newest version that still counts — what the editor opens and what the
    * transitions act on. Discarded drafts are skipped: after abandoning one, staff
    * must land back on real content rather than the draft they just threw away.
@@ -131,17 +159,29 @@ export class SowVersionService {
   /**
    * Next free version number, counting discarded drafts.
    *
-   * Numbers are never reused. Discarding v4 rolls the current pointer back to v3,
-   * but the next save must still be v5 — reusing 4 would collide with the
-   * discarded row on the unique {sowId, versionNumber} index, and would make the
-   * history read as though the abandoned draft had been edited into existence.
+   * A send bumps the whole number and resets the sub-revision; anything else — a
+   * plain save, a signature, a countersignature, a cancellation — just bumps the
+   * sub-revision. Numbers are never reused: discarding v1.3 rolls the current
+   * pointer back to v1.2, but the next save must still be v1.4 — reusing 1.3
+   * would collide with the discarded row on the unique {sowId, versionNumber}
+   * index, and would make the history read as though the abandoned draft had
+   * been edited into existence.
+   *
+   * The very first version of a SOW is the one exception to "minor starts at
+   * 0": it starts at 1 (so "0.1", not "0.0"). currentVersionNumber and
+   * activeVersionNumber use bare 0 to mean "no version yet" (see
+   * getActiveVersion), and encode(0, 0) is also 0 — reusing it for a real
+   * version would make the very first draft indistinguishable from "nothing
+   * exists yet" everywhere that sentinel is checked.
    */
-  private async nextVersionNumber(sowId: string): Promise<number> {
+  private async nextVersionNumber(sowId: string, opts: { bumpMajor: boolean }): Promise<number> {
     const highest = await this.versionModel
       .findOne({ sowId: String(sowId) })
       .sort({ versionNumber: -1 })
       .exec();
-    return (highest?.versionNumber ?? 0) + 1;
+    if (!highest) return SowVersionService.encodeVersionNumber(opts.bumpMajor ? 1 : 0, opts.bumpMajor ? 0 : 1);
+    const { major, minor } = SowVersionService.decodeVersionNumber(highest.versionNumber);
+    return opts.bumpMajor ? SowVersionService.encodeVersionNumber(major + 1, 0) : SowVersionService.encodeVersionNumber(major, minor + 1);
   }
 
   async getVersion(sowId: string, versionNumber: number): Promise<SowVersionDocument | null> {
@@ -175,11 +215,14 @@ export class SowVersionService {
     const fields = opts.fields ?? buildCalculatedFields(inputs, ctx);
     const status = opts.status ?? SOWStatus.DRAFT;
     const visibleToCustomer = opts.visibleToCustomer ?? status !== SOWStatus.DRAFT;
+    // A version created already issued (migration, or an opts.status override)
+    // counts as its own send — same rule sendToCustomer applies going forward.
+    const versionNumber = await this.nextVersionNumber(sowId, { bumpMajor: status !== SOWStatus.DRAFT });
 
     const created = await this.versionModel.create({
       sow: new mongoose.Types.ObjectId(sowId),
       sowId,
-      versionNumber: 1,
+      versionNumber,
       fields,
       inputs,
       status,
@@ -194,8 +237,8 @@ export class SowVersionService {
     await this.sowModel
       .findByIdAndUpdate(sowId, {
         $set: {
-          currentVersionNumber: 1,
-          activeVersionNumber: visibleToCustomer ? 1 : 0,
+          currentVersionNumber: versionNumber,
+          activeVersionNumber: visibleToCustomer ? versionNumber : 0,
           documentStale: false
         }
       })
@@ -227,7 +270,10 @@ export class SowVersionService {
     author: { sub: string; name: string }
   ): Promise<SowVersionDocument> {
     const sowId = String(sow._id);
-    const versionNumber = await this.nextVersionNumber(sowId);
+    // Sending is the only one of these four transitions that is itself "a
+    // send" — sign/finalize/cancel record an event against the version
+    // already in force, so they only bump the sub-revision.
+    const versionNumber = await this.nextVersionNumber(sowId, { bumpMajor: changes.status === SOWStatus.SENT });
 
     const created = await this.versionModel.create({
       sow: new mongoose.Types.ObjectId(sowId),
@@ -348,12 +394,15 @@ export class SowVersionService {
 
     const ctx = SowVersionService.buildContext(fresh, job);
     const fields = normalizeIncomingFields(
-      (input.fields ?? []).map((f) => ({ key: f.key, label: f.label ?? '', value: f.value ?? '', isEnabled: f.isEnabled !== false } as SowField)),
+      (input.fields ?? []).map((f) => ({ key: f.key, label: f.label ?? '', value: f.value ?? '', isEnabled: f.isEnabled !== false, requiresInitials: f.requiresInitials === true } as SowField)),
       inputs,
-      ctx
+      ctx,
+      current?.fields ?? []
     );
 
-    const versionNumber = await this.nextVersionNumber(sowId);
+    // A save is never itself a send, whatever status the version it's built on
+    // was in — that's what lets staff revise a sent/signed/finalized SOW.
+    const versionNumber = await this.nextVersionNumber(sowId, { bumpMajor: false });
     const created = await this.versionModel.create({
       sow: new mongoose.Types.ObjectId(sowId),
       sowId,
@@ -405,12 +454,32 @@ export class SowVersionService {
     return updated as SOW;
   }
 
+  /**
+   * Fields the document cannot be sent without: hidden or empty means the
+   * customer would see a blank or missing section (Engagement Resources with no
+   * Project Manager or Project Lead selected, for instance).
+   */
+  private static missingRequiredFields(fields: SowField[]): string[] {
+    const byKey = new Map(fields.map((f) => [f.key, f]));
+    return SOW_FIELD_CATALOG.filter((def) => !def.allowsEmpty)
+      .filter((def) => {
+        const field = byKey.get(def.key);
+        return !field || !field.isEnabled || !field.value?.trim();
+      })
+      .map((def) => def.label);
+  }
+
   /** Issues the current draft to the customer. */
   async sendToCustomer(sowId: string, author: { sub: string; name: string }): Promise<SowVersionDocument> {
     const sow = await this.requireSow(sowId);
     const current = await this.getCurrentVersion(sowId);
     if (!current) throw new BadRequestException('This SOW has no document to send.');
     if (current.status !== SOWStatus.DRAFT) throw new BadRequestException(`Only a draft can be sent; v${current.versionNumber} is ${current.status}.`);
+
+    const missing = SowVersionService.missingRequiredFields(current.fields ?? []);
+    if (missing.length > 0) {
+      throw new BadRequestException(`Complete the following before sending to the customer: ${missing.join(', ')}.`);
+    }
 
     const now = new Date();
     return this.appendVersion(sow, current, { status: SOWStatus.SENT, sentToCustomerAt: now, makeActive: true, note: 'Sent to customer' }, author);
@@ -444,10 +513,21 @@ export class SowVersionService {
       throw new BadRequestException(`Please confirm every section before signing. Missing: ${missing.join(', ')}.`);
     }
 
+    // Sections staff flagged requiresInitials each need their own typed initials,
+    // on top of the one overall consent checkbox.
+    const initialsByKey = new Map((input.sectionInitials ?? []).map((s) => [s.key, s.initials?.trim() ?? '']));
+    const enabledRequiringInitials = (active.fields ?? []).filter((f) => f.isEnabled && f.requiresInitials);
+    const missingInitials = enabledRequiringInitials.filter((f) => !initialsByKey.get(f.key));
+    if (missingInitials.length > 0) {
+      throw new BadRequestException(`Please initial the following before signing: ${missingInitials.map((f) => f.label).join(', ')}.`);
+    }
+    const sectionInitials = enabledRequiringInitials.map((f) => ({ key: f.key, label: f.label, initials: initialsByKey.get(f.key) ?? '' }));
+
     const signature: SowConsent = {
       name: input.name.trim(),
       signedAt: new Date(),
       consentedGroups: [...consented] as SowFieldKind[],
+      sectionInitials,
       bySub: user.sub
     };
 
@@ -466,6 +546,7 @@ export class SowVersionService {
       name: name.trim(),
       signedAt: new Date(),
       consentedGroups: [SowFieldKind.CALCULATED, SowFieldKind.PROSE, SowFieldKind.CUSTOM],
+      sectionInitials: [],
       bySub: author.sub
     };
 
@@ -479,24 +560,6 @@ export class SowVersionService {
     if (current.status === SOWStatus.CANCELLED) throw new BadRequestException('This SOW is already cancelled.');
 
     return this.appendVersion(sow, current, { status: SOWStatus.CANCELLED, makeActive: true, note: note ?? 'Cancelled' }, author);
-  }
-
-  /** Appends to the question thread. Staff and the job owner may both post. */
-  async addQuestion(sowId: string, text: string, author: { sub: string; name: string; isStaff: boolean }): Promise<SOW> {
-    if (!text?.trim()) throw new BadRequestException('A question cannot be empty.');
-    const sow = await this.requireSow(sowId);
-
-    const question = {
-      authorSub: author.sub,
-      authorName: author.name,
-      isStaff: author.isStaff,
-      text: text.trim(),
-      versionNumber: sow.activeVersionNumber || sow.currentVersionNumber || undefined,
-      createdAt: new Date()
-    };
-
-    const updated = await this.sowModel.findByIdAndUpdate(sowId, { $push: { questions: question } }, { new: true }).exec();
-    return updated as SOW;
   }
 
   /**

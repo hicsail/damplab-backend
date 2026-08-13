@@ -57,6 +57,27 @@ export function totalDurationDays(periods: SowPeriod[]): number {
   return (periods ?? []).reduce((sum, p) => sum + (Number.isFinite(p.durationDays) ? p.durationDays : 0), 0);
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * The true period of performance across possibly-non-consecutive periods: the
+ * span from the earliest start date to the latest end date. Not the same as
+ * summing each period's duration — that overcounts when periods are gapped and
+ * undercounts (relative to the calendar span the prose describes) when they
+ * overlap, and it is the start/end dates that the sentence actually promises.
+ */
+export function periodOfPerformanceSpan(periods: SowPeriod[]): { start: Date; end: Date; days: number } | null {
+  const list = (periods ?? []).filter((p) => p && p.startDate);
+  if (list.length === 0) return null;
+
+  const starts = list.map((p) => (p.startDate instanceof Date ? p.startDate : new Date(p.startDate)));
+  const ends = list.map((p) => periodEndDate(p));
+  const start = new Date(Math.min(...starts.map((d) => d.getTime())));
+  const end = new Date(Math.max(...ends.map((d) => d.getTime())));
+  const days = Math.round((end.getTime() - start.getTime()) / MS_PER_DAY) + 1;
+  return { start, end, days };
+}
+
 function bulletList(lines: string[]): string {
   return lines
     .filter((l) => l && l.trim() !== '')
@@ -103,13 +124,18 @@ function buildPeriodOfPerformance(inputs: SowVersionInputs): string {
     )} and continue until ${formatDate(periodEndDate(p))}.`;
   }
 
-  // Multiple periods may be non-consecutive or retroactive, so state each and
-  // give the total rather than implying one continuous stretch.
+  // Multiple periods may be non-consecutive or retroactive, so state each one,
+  // then give the true period of performance: the span from the earliest start
+  // to the latest end, not the sum of each period's working days.
   const rows = periods.map((p, i) => {
     const label = (p.label || '').trim() || `Period ${i + 1}`;
     return `${label}: ${p.durationDays} days, from ${formatDate(p.startDate)} through ${formatDate(periodEndDate(p))}`;
   });
-  return ['The Operations shall be performed over the following periods:', bulletList(rows), `Total turn-around time is estimated to be ${totalDurationDays(periods)} days.`].join('\n');
+  const span = periodOfPerformanceSpan(periods);
+  const summary = span
+    ? `The overall period of performance is estimated to be ${span.days} days, from ${formatDate(span.start)} through ${formatDate(span.end)}.`
+    : '';
+  return ['The Operations shall be performed over the following periods:', bulletList(rows), summary].join('\n');
 }
 
 function buildEngagementResources(inputs: SowVersionInputs): string {
@@ -207,7 +233,9 @@ export function buildCalculatedFields(inputs: SowVersionInputs, ctx: SowDocument
     isOverridden: false,
     // A section with nothing in it would render as a bare heading.
     isEnabled: def.enabledByDefault && (values[def.key] ?? '').trim() !== '',
-    allowsTextOverride: def.allowsTextOverride
+    allowsTextOverride: def.allowsTextOverride,
+    allowsEmpty: def.allowsEmpty,
+    requiresInitials: false
   }));
 }
 
@@ -239,7 +267,9 @@ export function mergeCalculatedFields(previous: SowField[], inputs: SowVersionIn
         calculatedValue: calculated,
         isOverridden: false,
         isEnabled: def.enabledByDefault && calculated.trim() !== '',
-        allowsTextOverride: def.allowsTextOverride
+        allowsTextOverride: def.allowsTextOverride,
+        allowsEmpty: def.allowsEmpty,
+        requiresInitials: false
       });
       continue;
     }
@@ -249,14 +279,23 @@ export function mergeCalculatedFields(previous: SowField[], inputs: SowVersionIn
     const canOverride = def.allowsTextOverride;
     const isOverridden = canOverride && prev.isOverridden;
 
+    // A required field that was hidden only because it had nothing to say gets a
+    // second chance to show itself once content arrives — otherwise it stays
+    // hidden forever after the first empty save, with no visible way to notice.
+    // A field the staff hid while it already had content is left alone.
+    const wasEmptyAndRequired = def.allowsEmpty === false && (prev.calculatedValue ?? '').trim() === '';
+    const justPopulated = wasEmptyAndRequired && calculated.trim() !== '';
+
     merged.push({
       ...prev,
       label: def.label,
       kind: def.kind,
       order: def.order,
       allowsTextOverride: canOverride,
+      allowsEmpty: def.allowsEmpty,
       calculatedValue: calculated,
       isOverridden,
+      isEnabled: prev.isEnabled || justPopulated,
       value: isOverridden ? prev.value : calculated
     });
   }
@@ -273,8 +312,9 @@ export function mergeCalculatedFields(previous: SowField[], inputs: SowVersionIn
  * than the request, so a caller cannot relabel a section, reorder the document,
  * or grant itself a text override on Fee Schedule.
  */
-export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersionInputs, ctx: SowDocumentContext): SowField[] {
+export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersionInputs, ctx: SowDocumentContext, previousFields: SowField[] = []): SowField[] {
   const values = calculateFieldValues(inputs, ctx);
+  const prevByKey = new Map(previousFields.map((f) => [f.key, f]));
   const seen = new Set<string>();
   const out: SowField[] = [];
 
@@ -292,7 +332,9 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
         calculatedValue: undefined,
         isOverridden: false,
         isEnabled: field.isEnabled !== false,
-        allowsTextOverride: true
+        allowsTextOverride: true,
+        allowsEmpty: true,
+        requiresInitials: field.requiresInitials === true
       });
       continue;
     }
@@ -303,6 +345,13 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
     const calculated = values[def.key] ?? '';
     const isOverridden = def.allowsTextOverride && (field.value ?? '') !== calculated;
 
+    // A required field the client sent as hidden gets shown again if it was
+    // hidden only for lack of content and now has some — see mergeCalculatedFields
+    // for why this doesn't resurrect a field staff hid deliberately.
+    const prev = prevByKey.get(def.key);
+    const wasEmptyAndRequired = def.allowsEmpty === false && (prev?.calculatedValue ?? '').trim() === '';
+    const justPopulated = wasEmptyAndRequired && calculated.trim() !== '';
+
     out.push({
       key: def.key,
       label: def.label,
@@ -311,8 +360,10 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
       value: isOverridden ? field.value : calculated,
       calculatedValue: calculated,
       isOverridden,
-      isEnabled: field.isEnabled !== false,
-      allowsTextOverride: def.allowsTextOverride
+      isEnabled: field.isEnabled !== false || justPopulated,
+      allowsTextOverride: def.allowsTextOverride,
+      allowsEmpty: def.allowsEmpty,
+      requiresInitials: field.requiresInitials === true
     });
   }
 
@@ -330,7 +381,9 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
       calculatedValue: calculated,
       isOverridden: false,
       isEnabled: false,
-      allowsTextOverride: def.allowsTextOverride
+      allowsTextOverride: def.allowsTextOverride,
+      allowsEmpty: def.allowsEmpty,
+      requiresInitials: false
     });
   }
 
