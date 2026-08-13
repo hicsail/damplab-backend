@@ -142,6 +142,15 @@ export class DampLabService {
   })
   pricingMode?: ServicePricingMode;
 
+  @Prop({ default: false })
+  @Field(() => Boolean, {
+    nullable: true,
+    defaultValue: false,
+    description:
+      'When true, a canvas node for this service offers a "Number of runs" count, and its price is multiplied by it. Off by default: most operations run once, and an always-present run count is noise on every node. Affects only what the editor offers going forward — a run count already stored on a submitted job keeps pricing and displaying either way, so turning this off never silently reprices history.'
+  })
+  allowMultipleRuns?: boolean;
+
   @Prop({ type: [String], required: false, default: [] })
   @Field(() => [String], {
     description: 'Array of deliverable descriptions for this service',

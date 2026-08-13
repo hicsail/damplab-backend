@@ -124,6 +124,20 @@ export class JobResolver {
     return (user.realm_access?.roles ?? []).includes(Role.DamplabStaff) ? JobVersionAuthorRole.STAFF : JobVersionAuthorRole.CUSTOMER;
   }
 
+  /**
+   * How a state transition reads in the version history. Only the transitions
+   * that are part of the customer/staff conversation get an entry — the internal
+   * lab pipeline (QUEUED → IN_PROGRESS → COMPLETE) is already tracked per node
+   * and would just add noise to a list about document revisions.
+   */
+  private static readonly STATE_EVENT_NOTES: Partial<Record<JobState, string>> = {
+    [JobState.CHANGES_REQUESTED]: 'Changes requested',
+    [JobState.SUBMITTED]: 'Submitted',
+    [JobState.ACCEPTED]: 'Accepted',
+    [JobState.REJECTED]: 'Rejected',
+    [JobState.CLOSED]: 'Closed'
+  };
+
   @Query(() => [Job])
   @Roles(Role.DamplabStaff)
   async jobs(): Promise<Job[]> {
@@ -432,7 +446,19 @@ export class JobResolver {
         throw new ForbiddenException('You do not have permission to change the state of this job');
       }
     }
-    return (await this.jobService.updateState(job, newState))!;
+
+    const wasResubmission = job.state === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
+    const updated = (await this.jobService.updateState(job, newState))!;
+
+    // Recorded after the state actually moved, so a failed transition leaves no
+    // entry. A resubmission is called out by name: "Submitted" on the second
+    // pass would read as a duplicate of the original submission.
+    const note = wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState];
+    if (note) {
+      await this.jobVersionService.appendStateEvent(updated, newState, { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' }, note);
+    }
+
+    return updated;
   }
 
   /**

@@ -132,9 +132,7 @@ function buildPeriodOfPerformance(inputs: SowVersionInputs): string {
     return `${label}: ${p.durationDays} days, from ${formatDate(p.startDate)} through ${formatDate(periodEndDate(p))}`;
   });
   const span = periodOfPerformanceSpan(periods);
-  const summary = span
-    ? `The overall period of performance is estimated to be ${span.days} days, from ${formatDate(span.start)} through ${formatDate(span.end)}.`
-    : '';
+  const summary = span ? `The overall period of performance is estimated to be ${span.days} days, from ${formatDate(span.start)} through ${formatDate(span.end)}.` : '';
   return ['The Operations shall be performed over the following periods:', bulletList(rows), summary].join('\n');
 }
 

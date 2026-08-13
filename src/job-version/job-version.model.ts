@@ -3,6 +3,7 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, Int, Float, registerEnumType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
+import { JobState } from '../job/job.model';
 
 /**
  * A job version is an immutable snapshot of a job's workflow graph. Every save
@@ -139,8 +140,31 @@ export class JobVersion {
   @Field(() => [JobVersionWorkflow], { description: 'The whole graph, one entry per disconnected tree' })
   workflows: JobVersionWorkflow[];
 
+  /**
+   * Nullable by necessity, not by preference: versions written before this field
+   * existed have none, and neither does the v1 backfilled for a job submitted
+   * before versioning. The history UI shows the author chip alone in that case.
+   */
   @Prop({ required: false })
-  @Field({ nullable: true, description: 'Optional note describing what changed' })
+  @Field(() => JobState, { nullable: true, description: "The job's state when this version was written. Absent on versions predating the field." })
+  jobState?: JobState;
+
+  /**
+   * True for a version that records a state change rather than a graph edit. Its
+   * workflows are a verbatim copy of its predecessor's, so it diffs empty by
+   * construction — and must be skipped when choosing what to compare against, or
+   * it would silently swallow the edit it followed.
+   */
+  @Prop({ default: false })
+  @Field(() => Boolean, { nullable: true, defaultValue: false, description: 'True when this version records a state change rather than an edit to the graph.' })
+  isEvent?: boolean;
+
+  /**
+   * Optional on the way out — see jobState. `SaveJobWorkflowsInput` requires one
+   * on the way in; the gap is the backfilled v1 and the canned event versions.
+   */
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Note describing what changed' })
   note?: string;
 
   @Prop({ required: true, default: '' })

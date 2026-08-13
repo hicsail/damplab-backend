@@ -36,10 +36,25 @@ export class WorkflowNodeService {
   }
 
   /**
-   * Get all nodes whose ID is in the given list
+   * Get all nodes whose ID is in the given list, in the order they were asked for.
+   *
+   * `$in` does not preserve the order of its argument — Mongo returns documents in
+   * natural (creation) order. A workflow's `nodes` array holds the graph's flow
+   * order, established breadth-first at submit time, so returning natural order
+   * here silently re-sorts every operation list into the order nodes happened to
+   * be created. That is invisible on a fresh submission, where the two coincide,
+   * and shows up the moment an edit inserts a node into the middle of a chain.
+   *
+   * Ids with no matching document are dropped rather than left as holes.
    */
   async getByIDs(ids: string[]): Promise<WorkflowNode[]> {
-    return this.workflowNodeModel.find({ _id: { $in: ids } });
+    const nodes = await this.workflowNodeModel.find({ _id: { $in: ids } });
+
+    const byId = new Map(nodes.map((node) => [String(node._id), node]));
+    return ids.flatMap((id) => {
+      const node = byId.get(String(id));
+      return node ? [node] : [];
+    });
   }
 
   async updateState(node: WorkflowNode, newState: WorkflowNodeState): Promise<WorkflowNode | null> {
@@ -64,12 +79,7 @@ export class WorkflowNodeService {
    * node. Caller is expected to have already verified the node itself is in
    * IN_PROGRESS (UI hides the picker otherwise).
    */
-  async setUsedInventory(
-    node: WorkflowNode,
-    inventoryIds: string[],
-    reservationStart?: Date | null,
-    reservationEnd?: Date | null
-  ): Promise<WorkflowNode | null> {
+  async setUsedInventory(node: WorkflowNode, inventoryIds: string[], reservationStart?: Date | null, reservationEnd?: Date | null): Promise<WorkflowNode | null> {
     const oids = (inventoryIds || []).map((id) => new mongoose.Types.ObjectId(id));
     if (reservationStart && reservationEnd && new Date(reservationEnd).getTime() <= new Date(reservationStart).getTime()) {
       throw new BadRequestException('Reservation end must be after the start.');
@@ -98,9 +108,7 @@ export class WorkflowNodeService {
 
   /** All in-progress nodes that currently hold any inventory (for the availability board). */
   async getInProgressNodesHoldingInventory(): Promise<WorkflowNode[]> {
-    return this.workflowNodeModel
-      .find({ state: WorkflowNodeState.IN_PROGRESS, usedInventory: { $exists: true, $ne: [] } })
-      .exec();
+    return this.workflowNodeModel.find({ state: WorkflowNodeState.IN_PROGRESS, usedInventory: { $exists: true, $ne: [] } }).exec();
   }
 
   async updateAssignee(node: WorkflowNode, assigneeId: string | null, assigneeDisplayName: string | null): Promise<WorkflowNode | null> {

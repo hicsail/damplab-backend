@@ -375,6 +375,11 @@ export class SowVersionService {
       throw new ConflictException(`This SOW has moved on since you opened it (you have v${input.baseVersionNumber}, it is now v${currentNumber}). Reload to see the newer version before saving.`);
     }
 
+    // Non-nullable in the schema already stops an omitted note; this catches the
+    // whitespace-only one, which would satisfy the type and tell a reader nothing.
+    const note = input.note?.trim();
+    if (!note) throw new BadRequestException('Describe what you changed before saving.');
+
     // Billing figures first: the fee schedule text is generated from the billing
     // core, so it has to be written before the document is composed or the saved
     // text would describe the previous prices.
@@ -423,7 +428,7 @@ export class SowVersionService {
       status: SOWStatus.DRAFT,
       visibleToCustomer: false,
       isDiscarded: false,
-      note: input.note,
+      note,
       createdBy: author.sub,
       createdByName: author.name,
       createdAt: new Date()

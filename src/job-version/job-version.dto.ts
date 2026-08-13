@@ -77,8 +77,13 @@ export class SaveJobWorkflowsInput {
   @Field(() => ID)
   jobId: string;
 
-  @Field({ nullable: true, description: 'Optional note describing what changed' })
-  note?: string;
+  /**
+   * Required on the way in, but `JobVersion.note` stays nullable on the way out:
+   * versions written before this was enforced, and the v1 backfill synthesised
+   * for pre-versioning jobs, both legitimately have no author-written note.
+   */
+  @Field({ description: 'Note describing what changed. Required — the history is unreadable without it.' })
+  note: string;
 
   @Field(() => [SaveWorkflowInput], { description: 'The complete graph. Anything absent is deleted.' })
   workflows: SaveWorkflowInput[];

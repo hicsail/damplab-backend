@@ -46,7 +46,17 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
         { key: 'billToAddress', label: 'Bill To Address', kind: SowFieldKind.PROSE, order: 110, value: 'x', isOverridden: false, isEnabled: true, allowsTextOverride: true },
         { key: 'feeSchedule', label: 'Fee Schedule', kind: SowFieldKind.CALCULATED, order: 100, value: 'Total: $0.00', isOverridden: false, isEnabled: true, allowsTextOverride: false },
         // Required before send — see sow-field-defaults.ts's allowsEmpty.
-        { key: 'engagementResources', label: 'Engagement Resources', kind: SowFieldKind.CALCULATED, order: 50, value: 'Jane Doe – Project Manager', isOverridden: false, isEnabled: true, allowsTextOverride: true, allowsEmpty: false }
+        {
+          key: 'engagementResources',
+          label: 'Engagement Resources',
+          kind: SowFieldKind.CALCULATED,
+          order: 50,
+          value: 'Jane Doe – Project Manager',
+          isOverridden: false,
+          isEnabled: true,
+          allowsTextOverride: true,
+          allowsEmpty: false
+        }
       ],
       inputs: { services: [], adjustments: [], baseCost: 0, totalCost: 0, periods: [], scopeOfWork: [], deliverables: [], projectManager: '', projectLead: '' },
       status: initial.status ?? SOWStatus.DRAFT,
@@ -135,7 +145,9 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
 const staff = { sub: 'sub-staff', name: 'tech' };
 const owner = { sub: 'sub-owner', email: 'client@lab.org', preferred_username: 'jane', realm_access: { roles: [] } } as User;
 
-const saveInput = (base: number, note?: string): any => ({
+// A note is required on every save, so the default stands in for one the test
+// does not care about; the tests that do care pass their own.
+const saveInput = (base: number, note = 'edited'): any => ({
   baseVersionNumber: base,
   note,
   // The real editor always resubmits its whole local field set, never a subset —
@@ -173,6 +185,21 @@ describe('saveVersion', () => {
     sow.documentStale = true;
     await service.saveVersion(SOW_ID, saveInput(1), staff);
     expect(sow.documentStale).toBe(false);
+  });
+
+  it('rejects a save whose note is only whitespace', async () => {
+    // The schema stops a missing note; this is the one that would otherwise slip
+    // through typed and still leave the history entry unlabelled.
+    const { service } = makeHarness();
+    await expect(service.saveVersion(SOW_ID, saveInput(1, '   '), staff)).rejects.toThrow(BadRequestException);
+  });
+
+  it('still lets the canned event versions through without an author note', async () => {
+    // sendToCustomer/sign/finalize write via appendVersion, not the save input,
+    // so requiring a note on saves must not reach them.
+    const { service } = makeHarness();
+    const sent = await service.sendToCustomer(SOW_ID, staff);
+    expect(sent.note).toBe('Sent to customer');
   });
 });
 
@@ -229,7 +256,17 @@ describe('sign', () => {
         { key: 'billToAddress', kind: SowFieldKind.PROSE, order: 110, value: 'x', isEnabled: true, allowsTextOverride: true, label: 'b', isOverridden: false },
         // Required, so it must stay enabled for sendToCustomer to succeed — it is
         // the CALCULATED section present, not custom-1, which stays disabled.
-        { key: 'engagementResources', kind: SowFieldKind.CALCULATED, order: 50, value: 'Jane Doe – Project Manager', isEnabled: true, allowsTextOverride: true, allowsEmpty: false, label: 'Engagement Resources', isOverridden: false },
+        {
+          key: 'engagementResources',
+          kind: SowFieldKind.CALCULATED,
+          order: 50,
+          value: 'Jane Doe – Project Manager',
+          isEnabled: true,
+          allowsTextOverride: true,
+          allowsEmpty: false,
+          label: 'Engagement Resources',
+          isOverridden: false
+        },
         { key: 'custom-1', kind: SowFieldKind.CUSTOM, order: 1000, value: 'hidden', isEnabled: false, allowsTextOverride: true, label: 'c', isOverridden: false }
       ]
     });
@@ -253,7 +290,17 @@ describe('sign', () => {
           isOverridden: false,
           requiresInitials: true
         },
-        { key: 'engagementResources', kind: SowFieldKind.CALCULATED, order: 50, value: 'Jane Doe – Project Manager', isEnabled: true, allowsTextOverride: true, allowsEmpty: false, label: 'Engagement Resources', isOverridden: false }
+        {
+          key: 'engagementResources',
+          kind: SowFieldKind.CALCULATED,
+          order: 50,
+          value: 'Jane Doe – Project Manager',
+          isEnabled: true,
+          allowsTextOverride: true,
+          allowsEmpty: false,
+          label: 'Engagement Resources',
+          isOverridden: false
+        }
       ]
     });
     await h.service.sendToCustomer(SOW_ID, staff);
@@ -284,7 +331,17 @@ describe('sign', () => {
           isOverridden: false,
           requiresInitials: true
         },
-        { key: 'engagementResources', kind: SowFieldKind.CALCULATED, order: 50, value: 'Jane Doe – Project Manager', isEnabled: true, allowsTextOverride: true, allowsEmpty: false, label: 'Engagement Resources', isOverridden: false }
+        {
+          key: 'engagementResources',
+          kind: SowFieldKind.CALCULATED,
+          order: 50,
+          value: 'Jane Doe – Project Manager',
+          isEnabled: true,
+          allowsTextOverride: true,
+          allowsEmpty: false,
+          label: 'Engagement Resources',
+          isOverridden: false
+        }
       ]
     });
     await h.service.sendToCustomer(SOW_ID, staff);

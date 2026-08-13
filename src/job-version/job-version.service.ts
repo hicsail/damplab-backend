@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import mongoose, { HydratedDocument, Model } from 'mongoose';
 import { JobVersion, JobVersionAuthorRole, JobVersionDocument, JobVersionEdge, JobVersionNode, JobVersionWorkflow } from './job-version.model';
 import { SaveJobWorkflowsInput, SaveWorkflowInput } from './job-version.dto';
-import { Job, JobDocument } from '../job/job.model';
+import { Job, JobDocument, JobState } from '../job/job.model';
 import { Workflow, WorkflowDocument, WorkflowState } from '../workflow/models/workflow.model';
 import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../workflow/models/node.model';
 import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.model';
@@ -120,13 +120,18 @@ export class JobVersionService {
    * against the other party's last version, which is what makes "the customer's
    * edits relative to the one sent to them" work after the customer saved twice.
    *
+   * Event versions are never chosen: their graph is a verbatim copy of the
+   * version before them, so baselining against one reports "nothing changed" and
+   * hides the edit it followed. Closing a job right after the customer edited it
+   * would otherwise erase the highlight on those very edits.
+   *
    * Returns null when nothing below it was written by the other side.
    */
-  static baselineFor(versions: Pick<JobVersion, 'versionNumber' | 'authorRole'>[], versionNumber: number): number | null {
+  static baselineFor(versions: Pick<JobVersion, 'versionNumber' | 'authorRole' | 'isEvent'>[], versionNumber: number): number | null {
     const current = versions.find((v) => v.versionNumber === versionNumber);
     if (!current) return null;
 
-    const earlierByOtherSide = versions.filter((v) => v.versionNumber < versionNumber && v.authorRole !== current.authorRole).sort((a, b) => b.versionNumber - a.versionNumber);
+    const earlierByOtherSide = versions.filter((v) => v.versionNumber < versionNumber && v.authorRole !== current.authorRole && v.isEvent !== true).sort((a, b) => b.versionNumber - a.versionNumber);
 
     return earlierByOtherSide.length ? earlierByOtherSide[0].versionNumber : null;
   }
@@ -229,7 +234,7 @@ export class JobVersionService {
   async appendVersion(
     job: Job,
     workflows: JobVersionWorkflow[],
-    meta: { authorRole: JobVersionAuthorRole; createdBy: string; createdByName: string; note?: string; createdAt?: Date }
+    meta: { authorRole: JobVersionAuthorRole; createdBy: string; createdByName: string; note?: string; createdAt?: Date; jobState?: JobState; isEvent?: boolean }
   ): Promise<JobVersion> {
     const jobId = String(job._id);
     const highest = await this.versionModel.findOne({ jobId }).sort({ versionNumber: -1 }).exec();
@@ -242,9 +247,48 @@ export class JobVersionService {
       authorRole: meta.authorRole,
       workflows,
       note: meta.note,
+      // Explicit override first, so a transition can record the state it is
+      // moving *to* rather than whatever the in-memory job still says.
+      jobState: meta.jobState ?? job.state,
+      isEvent: meta.isEvent === true,
       createdBy: meta.createdBy,
       createdByName: meta.createdByName,
       createdAt: meta.createdAt ?? new Date()
+    });
+  }
+
+  /**
+   * Record a state change as a version of its own.
+   *
+   * The graph is unchanged, so the snapshot is identical to its predecessor and
+   * the entry diffs empty — which is the point. Without it the history is only
+   * the saves, and the events between them (a customer resubmitting, staff
+   * asking for changes) leave no trace at all, so a state chip on the save rows
+   * would show nearly the same value on every row.
+   *
+   * Modelled on the SOW's event versions, which exist for the same reason.
+   */
+  async appendStateEvent(job: Job, newState: JobState, author: { role: JobVersionAuthorRole; sub: string; name: string }, note: string): Promise<JobVersion | null> {
+    // Force the lazy v1 backfill first. On a job submitted before versioning
+    // existed the event would otherwise be written as version 1, and listByJob
+    // only backfills when it finds *no* versions — so the original submission
+    // would be permanently unrecoverable and the history would begin with
+    // "Changes requested" against nothing.
+    await this.listByJob(String(job._id));
+
+    // Nothing to snapshot means a job with no workflows; there is no history to
+    // add an event to, and the lazy v1 backfill would be confused by a v1 that
+    // carries no graph.
+    const workflows = await this.snapshotLiveWorkflows(job);
+    if (workflows.length === 0) return null;
+
+    return this.appendVersion(job, workflows, {
+      authorRole: author.role,
+      createdBy: author.sub,
+      createdByName: author.name,
+      note,
+      jobState: newState,
+      isEvent: true
     });
   }
 
@@ -257,6 +301,11 @@ export class JobVersionService {
   async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string }): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
+
+    // Non-nullable in the schema already stops an omitted note; this catches the
+    // whitespace-only one, which would satisfy the type and tell a reader nothing.
+    const note = input.note?.trim();
+    if (!note) throw new BadRequestException('Describe what you changed before saving.');
 
     const liveNodes = await this.loadLiveNodes(job);
 
@@ -287,7 +336,7 @@ export class JobVersionService {
       authorRole: author.role,
       createdBy: author.sub,
       createdByName: author.name,
-      note: input.note
+      note
     });
 
     return refreshed!;

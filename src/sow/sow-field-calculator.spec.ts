@@ -294,7 +294,17 @@ describe('normalizeIncomingFields', () => {
 
     const freshValues = calculateFieldValues(inputs(), ctx);
     const incoming = previousFields.map(
-      (f) => ({ key: f.key, label: f.label, kind: f.kind, order: f.order, value: freshValues[f.key] ?? f.value, isOverridden: f.isOverridden, isEnabled: false, allowsTextOverride: f.allowsTextOverride } as SowField)
+      (f) =>
+        ({
+          key: f.key,
+          label: f.label,
+          kind: f.kind,
+          order: f.order,
+          value: freshValues[f.key] ?? f.value,
+          isOverridden: f.isOverridden,
+          isEnabled: false,
+          allowsTextOverride: f.allowsTextOverride
+        } as SowField)
     );
 
     const out = normalizeIncomingFields(incoming, inputs(), ctx, previousFields);
@@ -306,7 +316,19 @@ describe('normalizeIncomingFields', () => {
     const previousFields = buildCalculatedFields(inputs(), ctx); // PM/Lead already set, so it has content
     expect(fieldByKey(previousFields, 'engagementResources').isEnabled).toBe(true);
 
-    const incoming = previousFields.map((f) => ({ key: f.key, label: f.label, kind: f.kind, order: f.order, value: f.value, isOverridden: f.isOverridden, isEnabled: f.key === 'engagementResources' ? false : f.isEnabled, allowsTextOverride: f.allowsTextOverride } as SowField));
+    const incoming = previousFields.map(
+      (f) =>
+        ({
+          key: f.key,
+          label: f.label,
+          kind: f.kind,
+          order: f.order,
+          value: f.value,
+          isOverridden: f.isOverridden,
+          isEnabled: f.key === 'engagementResources' ? false : f.isEnabled,
+          allowsTextOverride: f.allowsTextOverride
+        } as SowField)
+    );
 
     const out = normalizeIncomingFields(incoming, inputs(), ctx, previousFields);
     expect(fieldByKey(out, 'engagementResources').isEnabled).toBe(false);

@@ -33,6 +33,12 @@ export class SaveSowVersionInput {
   @Field(() => SowInputsInput)
   inputs: SowInputsInput;
 
-  @Field({ nullable: true, description: 'Optional note describing what changed, shown in the version history' })
-  note?: string;
+  /**
+   * Required on the way in, while `SowVersion.note` stays optional on the way
+   * out — versions saved before this was enforced have none, and the canned
+   * event versions (sent / signed / countersigned / cancelled) are written
+   * through appendVersion rather than this input.
+   */
+  @Field({ description: 'Note describing what changed, shown in the version history. Required.' })
+  note: string;
 }

@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { JobVersionService } from './job-version.service';
 import { JobVersionAuthorRole } from './job-version.model';
 import { WorkflowNodeState } from '../workflow/models/node.model';
+import { JobState } from '../job/job.model';
 
 /**
  * The baseline rule is pure, so it is exercised directly. Everything else runs
@@ -44,6 +45,15 @@ describe('baselineFor', () => {
 
   it('returns null for a version that is not in the list', () => {
     expect(JobVersionService.baselineFor(flow, 99)).toBeNull();
+  });
+
+  it('never baselines against a state-change event', () => {
+    // An event version copies its predecessor's graph verbatim, so baselining
+    // against one reports "nothing changed" and hides the edit it followed —
+    // e.g. closing a job right after the customer edited it.
+    const ev = (versionNumber: number, authorRole: JobVersionAuthorRole): any => ({ versionNumber, authorRole, isEvent: true });
+    const withEvent = [v(1, CUSTOMER), v(2, STAFF), ev(3, STAFF), v(4, CUSTOMER)];
+    expect(JobVersionService.baselineFor(withEvent, 4)).toBe(2);
   });
 });
 
@@ -194,30 +204,32 @@ const author = { role: JobVersionAuthorRole.STAFF, sub: 'tech-1', name: 'tech@bu
 describe('saveWorkflows — work already in flight', () => {
   it('refuses to delete a node the lab has started', async () => {
     const { service } = buildHarness({ nodes: [liveNode({ state: WorkflowNodeState.IN_PROGRESS })] });
-    await expect(service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [], edges: [] }] } as any, author)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [], edges: [] }] } as any, author)).rejects.toBeInstanceOf(BadRequestException);
   });
 
   it('refuses to delete a node that is holding inventory', async () => {
     const { service } = buildHarness({ nodes: [liveNode({ usedInventory: ['inv-1'] })] });
-    await expect(service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [], edges: [] }] } as any, author)).rejects.toThrow(/holding inventory/);
+    await expect(service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [], edges: [] }] } as any, author)).rejects.toThrow(/holding inventory/);
   });
 
   it('refuses to change the parameters of a node in progress', async () => {
     const { service } = buildHarness({ nodes: [liveNode({ state: WorkflowNodeState.IN_PROGRESS })] });
-    await expect(service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 999 }] })], edges: [] }] } as any, author)).rejects.toThrow(
-      /parameters changed/
-    );
+    await expect(
+      service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 999 }] })], edges: [] }] } as any, author)
+    ).rejects.toThrow(/parameters changed/);
   });
 
   it('refuses to swap the service of a node in progress', async () => {
     const { service } = buildHarness({ nodes: [liveNode({ state: WorkflowNodeState.IN_PROGRESS })] });
-    await expect(service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode({ serviceId: SVC_B })], edges: [] }] } as any, author)).rejects.toThrow(/change service/);
+    await expect(service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ serviceId: SVC_B })], edges: [] }] } as any, author)).rejects.toThrow(
+      /change service/
+    );
   });
 
   it('allows an in-progress node through untouched, so the rest of the graph stays editable', async () => {
     const { service, nodes } = buildHarness({ nodes: [liveNode({ state: WorkflowNodeState.IN_PROGRESS })] });
     await service.saveWorkflows(
-      { jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode(), inputNode({ id: 'b', serviceId: SVC_B, label: 'Sequencing', formData: [] })], edges: [] }] } as any,
+      { jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode(), inputNode({ id: 'b', serviceId: SVC_B, label: 'Sequencing', formData: [] })], edges: [] }] } as any,
       author
     );
     expect(nodes).toHaveLength(2);
@@ -239,6 +251,7 @@ describe('saveWorkflows — work already in flight', () => {
       service.saveWorkflows(
         {
           jobId: JOB_ID,
+          note: 'edited',
           workflows: [
             {
               workflowId: WF_ID,
@@ -266,7 +279,7 @@ describe('saveWorkflows — reconciliation', () => {
       nodes: [liveNode({ assigneeId: 'staff-9', assigneeDisplayName: 'Sam', completedSteps: ['step-1', 'step-2'], startedAt: new Date('2026-08-01') })]
     });
 
-    await service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 42 }] })], edges: [] }] } as any, author);
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 42 }] })], edges: [] }] } as any, author);
 
     const saved = nodes[0];
     expect(saved.formData).toEqual([{ id: 'vol', value: 42 }]);
@@ -284,6 +297,7 @@ describe('saveWorkflows — reconciliation', () => {
     await service.saveWorkflows(
       {
         jobId: JOB_ID,
+        note: 'edited',
         workflows: [{ workflowId: WF_ID, nodes: [{ ...inputNode(), ghost: true, locked: true, diffKind: 'changed', state: WorkflowNodeState.COMPLETE }], edges: [] }]
       } as any,
       author
@@ -299,7 +313,7 @@ describe('saveWorkflows — reconciliation', () => {
   it('creates a node the editor added, queued', async () => {
     const { service, nodes } = buildHarness({ nodes: [liveNode()] });
     await service.saveWorkflows(
-      { jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode(), inputNode({ id: 'new1', serviceId: SVC_B, label: 'Sequencing', formData: [] })], edges: [] }] } as any,
+      { jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode(), inputNode({ id: 'new1', serviceId: SVC_B, label: 'Sequencing', formData: [] })], edges: [] }] } as any,
       author
     );
     const added = nodes.find((n) => n.id === 'new1');
@@ -309,21 +323,21 @@ describe('saveWorkflows — reconciliation', () => {
 
   it('deletes a queued node the editor removed', async () => {
     const { service, nodes } = buildHarness({ nodes: [liveNode(), liveNode({ id: 'b', _id: NODE_B_DB })] });
-    await service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
     expect(nodes.map((n) => n.id)).toEqual(['a']);
   });
 
   it('stores the position so the graph reopens where its author left it', async () => {
     const { service, nodes } = buildHarness({ nodes: [liveNode()] });
-    await service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode({ position: { x: 640, y: 128 } })], edges: [] }] } as any, author);
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ position: { x: 640, y: 128 } })], edges: [] }] } as any, author);
     expect(nodes[0].reactNode.position).toEqual({ x: 640, y: 128 });
   });
 
   it('rejects a service that is not in the catalogue rather than writing a dangling node', async () => {
     const { service } = buildHarness({ nodes: [liveNode()] });
-    await expect(service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode({ serviceId: 'nope' })], edges: [] }] } as any, author)).rejects.toBeInstanceOf(
-      BadRequestException
-    );
+    await expect(
+      service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ serviceId: 'nope' })], edges: [] }] } as any, author)
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 
@@ -333,7 +347,7 @@ describe('saveWorkflows — pricing and versioning', () => {
     const internalService = { ...SERVICE_A, pricing: { internal: 25, external: 400 } };
     (service as any).dampLabServices.findOneActive = async (): Promise<any> => internalService;
 
-    await service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
 
     // A technician saved this, but the job belongs to an internal customer.
     expect(nodes[0].price).toBe(25);
@@ -341,7 +355,7 @@ describe('saveWorkflows — pricing and versioning', () => {
 
   it('appends exactly one version per save, numbered in sequence', async () => {
     const { service, versions } = buildHarness({ nodes: [liveNode()] });
-    const input = { jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any;
+    const input = { jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any;
 
     await service.saveWorkflows(input, author);
     await service.saveWorkflows(input, { ...author, role: JobVersionAuthorRole.CUSTOMER });
@@ -358,7 +372,7 @@ describe('saveWorkflows — pricing and versioning', () => {
 
   it('snapshots the saved graph, keyed by the client-side node id', async () => {
     const { service, versions } = buildHarness({ nodes: [liveNode()] });
-    await service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 7 }] })], edges: [] }] } as any, author);
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 7 }] })], edges: [] }] } as any, author);
     const snapshot = versions[0].workflows[0];
     expect(snapshot.nodes[0].id).toBe('a');
     expect(snapshot.nodes[0].formData).toEqual([{ id: 'vol', value: 7 }]);
@@ -367,6 +381,15 @@ describe('saveWorkflows — pricing and versioning', () => {
   it('rejects an unknown job', async () => {
     const { service } = buildHarness();
     await expect(service.saveWorkflows({ jobId: '0000000000000000000000ff', workflows: [] } as any, author)).rejects.toThrow(/not found/);
+  });
+
+  it('rejects a save whose note is only whitespace', async () => {
+    // The schema stops a missing note; this is the one that would otherwise slip
+    // through typed and still leave the history entry unlabelled.
+    const { service, versions } = buildHarness({ nodes: [liveNode()] });
+    await expect(service.saveWorkflows({ jobId: JOB_ID, note: '  ', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author)).rejects.toBeInstanceOf(BadRequestException);
+    // Rejected before anything was written.
+    expect(versions).toHaveLength(0);
   });
 });
 
@@ -391,6 +414,51 @@ describe('listByJob', () => {
     const { service } = buildHarness();
     expect(await service.listByJob('0000000000000000000000ff')).toEqual([]);
   });
+
+  it('leaves the backfilled v1 without a job state, since none was recorded', async () => {
+    // The state chip has nothing to show for it, which is the intended reading —
+    // better than inventing a state the job may not have been in at the time.
+    const { service, versions } = buildHarness({ nodes: [liveNode()] });
+    await service.listByJob(JOB_ID);
+    expect(versions[0].jobState).toBeUndefined();
+  });
+});
+
+describe('appendStateEvent', () => {
+  const stateAuthor = { role: JobVersionAuthorRole.CUSTOMER, sub: 'client-1', name: 'jane@bu.edu' };
+
+  it('backfills the original submission before recording the event', async () => {
+    // On a job submitted before versioning existed, writing the event straight in
+    // would take version 1 — and listByJob only backfills when it finds *no*
+    // versions, so the original submission would be lost for good and the
+    // history would open with "Resubmitted" against nothing.
+    const { service, versions, job } = buildHarness({ nodes: [liveNode()] });
+    await service.appendStateEvent(job, JobState.SUBMITTED, stateAuthor, 'Resubmitted');
+
+    expect(versions).toHaveLength(2);
+    expect(versions[0]).toMatchObject({ versionNumber: 1, note: 'Original submission' });
+    expect(versions[1]).toMatchObject({ versionNumber: 2, note: 'Resubmitted', jobState: JobState.SUBMITTED, authorRole: JobVersionAuthorRole.CUSTOMER });
+  });
+
+  it('snapshots the graph unchanged, so the entry diffs empty', async () => {
+    // The point of an event version: it marks that something happened without
+    // claiming the workflow changed.
+    const { service, versions, job } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    await service.appendStateEvent(job, JobState.CHANGES_REQUESTED, stateAuthor, 'Changes requested');
+
+    const [saved, event] = versions;
+    expect(versions).toHaveLength(2);
+    expect(event.workflows).toEqual(saved.workflows);
+    expect(event.note).toBe('Changes requested');
+  });
+
+  it('writes nothing for a job with no workflows to snapshot', async () => {
+    const { service, versions, job } = buildHarness();
+    job.workflows = [];
+    expect(await service.appendStateEvent(job, JobState.CLOSED, stateAuthor, 'Closed')).toBeNull();
+    expect(versions).toHaveLength(0);
+  });
 });
 
 describe('saveWorkflows — catalogue drift against an in-flight node', () => {
@@ -403,6 +471,7 @@ describe('saveWorkflows — catalogue drift against an in-flight node', () => {
       service.saveWorkflows(
         {
           jobId: JOB_ID,
+          note: 'edited',
           workflows: [
             {
               workflowId: WF_ID,
@@ -429,6 +498,7 @@ describe('saveWorkflows — catalogue drift against an in-flight node', () => {
       service.saveWorkflows(
         {
           jobId: JOB_ID,
+          note: 'edited',
           workflows: [
             {
               workflowId: WF_ID,
@@ -457,6 +527,7 @@ describe('saveWorkflows — catalogue drift against an in-flight node', () => {
       service.saveWorkflows(
         {
           jobId: JOB_ID,
+          note: 'edited',
           workflows: [
             {
               workflowId: WF_ID,
@@ -483,6 +554,7 @@ describe('saveWorkflows — catalogue drift against an in-flight node', () => {
       service.saveWorkflows(
         {
           jobId: JOB_ID,
+          note: 'edited',
           workflows: [
             {
               workflowId: WF_ID,
@@ -506,7 +578,7 @@ describe('saveWorkflows — catalogue drift against an in-flight node', () => {
   it('treats a number typed as text as the same value', async () => {
     const { service } = buildHarness({ nodes: [liveNode({ state: WorkflowNodeState.IN_PROGRESS, formData: [{ id: 'vol', value: 10 }] })] });
     await expect(
-      service.saveWorkflows({ jobId: JOB_ID, workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: '10' }] })], edges: [] }] } as any, author)
+      service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: '10' }] })], edges: [] }] } as any, author)
     ).resolves.toBeDefined();
   });
 });
