@@ -157,6 +157,10 @@ export class SOWService {
   @Prop({ required: true })
   @Field({ description: 'Category of the service' })
   category: string;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'The run-count multiplier baked into cost, if the underlying node has one. Informational — cost is the figure invoices read.' })
+  runCount?: number;
 }
 
 @Schema()

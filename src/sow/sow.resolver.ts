@@ -2,14 +2,14 @@ import { Resolver, Query, Mutation, Args, ID, Int, ResolveField, Parent } from '
 import { SOW, SOWStatus } from './sow.model';
 import { SOWService } from './sow.service';
 import { SowVersionService } from './sow-version.service';
-import { SowVersion, SowCalculatedValue } from './sow-version.model';
+import { SowVersion, SowCalculatedValue, SowVersionService as SowVersionServiceLine } from './sow-version.model';
 import { CreateSOWInput } from './dto/create-sow.input';
 import { UpdateSOWInput } from './dto/update-sow.input';
 import { SubmitSOWSignatureInput } from './dto/submit-sow-signature.input';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
 import { SignSowInput } from './dto/sign-sow.input';
 import { SowInputsInput } from './dto/sow-inputs.input';
-import { Job } from '../job/job.model';
+import { Job, CustomerCategory } from '../job/job.model';
 import { JobService } from '../job/job.service';
 import { UseGuards, NotFoundException } from '@nestjs/common';
 import { AuthRolesGuard } from '../auth/auth.guard';
@@ -106,6 +106,27 @@ export class SOWResolver {
   @ResolveField(() => Job, { description: 'Job this SOW is associated with' })
   async job(@Parent() sow: SOW): Promise<Job | null> {
     return this.jobService.findById(sow.jobId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Live Fee Schedule figures — recomputed fresh on every query, independent of
+  // whatever is stored on the SOW or frozen into a version. What the "Stale"
+  // chip and Recalculate button on the Fee Schedule compare local edits against.
+  // ---------------------------------------------------------------------------
+
+  @ResolveField(() => [SowVersionServiceLine], {
+    description:
+      'The SOW\'s current service lines and their costs, read fresh on every query. Kept in sync with the job\'s services/category by syncSowServicesFromJobWorkflows — this is what the Fee Schedule "Stale" chip and Recalculate compare a local draft against.'
+  })
+  async liveServices(@Parent() sow: SOW): Promise<SowVersionServiceLine[]> {
+    const job = await this.jobService.findById(sow.jobId);
+    return SowVersionService.deriveInputs(sow, job).services;
+  }
+
+  @ResolveField(() => CustomerCategory, { nullable: true, description: "The job's current pricing category — may differ from what a stale local draft has." })
+  async liveCustomerCategory(@Parent() sow: SOW): Promise<CustomerCategory | null> {
+    const job = await this.jobService.findById(sow.jobId);
+    return job?.customerCategory ?? null;
   }
 
   // ---------------------------------------------------------------------------

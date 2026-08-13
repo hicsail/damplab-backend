@@ -10,7 +10,7 @@ import { Job } from '../job/job.model';
 import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
-import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
+import { calculateServiceCost, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
 
 @Injectable()
@@ -151,13 +151,15 @@ export class SOWService {
           throw new NotFoundException(`Service with ID ${service.id} not found`);
         }
         const cost = calculateServiceCost(serviceRecord, service.formData, service.cost, customerCategory);
+        const runCount = extractRunCount(service.formData);
         return {
           _id: service.id,
           serviceId: service.id,
           name: service.name,
           description: service.description,
           cost,
-          category: service.category
+          category: service.category,
+          runCount
         };
       })
     );
@@ -225,19 +227,32 @@ export class SOWService {
    * cost the staff member sees is the cost that is stored; only baseCost and
    * totalCost are derived, and only from values already on the SOW.
    *
-   * Costs are matched by serviceId and applied only to lines that already exist,
-   * so a document save can never add or remove a billable line — that remains the
-   * job of the workflow sync.
+   * Costs are matched by position, not serviceId — a job can legitimately use the
+   * same catalogue service more than once (e.g. two PCR steps at different run
+   * counts), so serviceId is not unique per line. A serviceId-keyed override map
+   * would collapse every line sharing that id onto whichever cost came last in
+   * the request, corrupting the other lines' totals. The editor never adds,
+   * removes, or reorders lines — SowFieldSourceControls only edits the cost
+   * already at a given index — so position is the reliable correlation key here,
+   * same as collectSowServiceInputs already assumes elsewhere. If the arrays
+   * have diverged (e.g. a workflow sync changed the billable lines while the
+   * editor was open) a line is left unchanged rather than risk writing its cost
+   * onto the wrong service — that's what "applied only to lines that already
+   * exist" means in practice.
    */
   async applyDocumentBilling(sowId: string, changes: { serviceCosts?: Array<{ serviceId: string; cost: number }>; adjustments?: CreateSOWInput['pricing']['adjustments'] }): Promise<SOW> {
     const sow = await this.sowModel.findById(sowId).exec();
     if (!sow) throw new NotFoundException(`SOW with ID ${sowId} not found`);
 
-    const costByServiceId = new Map((changes.serviceCosts ?? []).map((s) => [String(s.serviceId), Number(s.cost)]));
+    const incoming = changes.serviceCosts ?? [];
+    const sameLength = incoming.length === (sow.services ?? []).length;
 
-    const services = (sow.services ?? []).map((service) => {
-      const override = costByServiceId.get(String(service.serviceId ?? service._id));
-      if (override === undefined || !Number.isFinite(override) || override < 0) return service;
+    const services = (sow.services ?? []).map((service, i) => {
+      if (!sameLength) return service;
+      const line = incoming[i];
+      if (String(line.serviceId) !== String(service.serviceId ?? service._id)) return service;
+      const override = Number(line.cost);
+      if (!Number.isFinite(override) || override < 0) return service;
       return { ...service, cost: override };
     });
 

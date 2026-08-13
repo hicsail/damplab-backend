@@ -388,3 +388,28 @@ describe('discardDraft', () => {
     expect(next.versionNumber).toBe(1002);
   });
 });
+
+describe('previewCalculatedValues', () => {
+  it('keeps each line at its own edited cost when the same service appears twice', async () => {
+    const { service, sow } = makeHarness();
+    sow.services = [
+      { serviceId: 'pcr', name: 'PCR', description: '', cost: 350 }, // 70 runs
+      { serviceId: 'pcr', name: 'PCR', description: '', cost: 5 } // 1 run
+    ];
+
+    const preview = await service.previewCalculatedValues(SOW_ID, {
+      services: [
+        { serviceId: 'pcr', name: 'PCR', description: '', cost: 350 },
+        { serviceId: 'pcr', name: 'PCR', description: '', cost: 5 }
+      ]
+    } as any);
+
+    const feeSchedule = preview.find((f) => f.key === 'feeSchedule')?.calculatedValue ?? '';
+    // Both lines' costs must survive distinctly; a serviceId-keyed lookup would
+    // have applied the first line's edit ($350) to both, showing $700 total
+    // instead of $355 and losing the second line's true cost entirely.
+    expect(feeSchedule).toContain('$350.00');
+    expect(feeSchedule).toContain('$5.00');
+    expect(feeSchedule).toContain('Total: $355.00');
+  });
+});

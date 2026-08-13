@@ -147,6 +147,18 @@ function getMultiplier(parameters: unknown, rawFormData: unknown): number {
   return multiplier;
 }
 
+/**
+ * The universal run-count value for a node, if any — the same figure
+ * getMultiplier folds into cost. Exposed separately so the Fee Schedule editor
+ * can show staff what multiplier is baked into a line's total, since the
+ * total itself doesn't say.
+ */
+export function extractRunCount(rawFormData: unknown): number | undefined {
+  const formData = normalizeFormDataToArray(rawFormData, new Set());
+  const entry = formData.find((e) => e.id === RUN_COUNT_PARAM_ID);
+  return entry ? resolveQty(entry.value) : undefined;
+}
+
 export function calculateServiceCost(service: DampLabService, rawFormData: unknown, fallbackCost?: number, customerCategory?: CustomerCategory): number {
   const pricingMode = service.pricingMode ?? ServicePricingMode.SERVICE;
   let baseCost = 0;

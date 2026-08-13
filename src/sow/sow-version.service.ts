@@ -82,7 +82,8 @@ export class SowVersionService {
         serviceId: String(s.serviceId ?? s._id ?? ''),
         name: s.name ?? 'Service',
         description: s.description ?? '',
-        cost: Number(s.cost ?? 0)
+        cost: Number(s.cost ?? 0),
+        runCount: s.runCount
       })),
       adjustments: (sow.pricing?.adjustments ?? [])
         .filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)
@@ -323,9 +324,19 @@ export class SowVersionService {
       deliverables: inputs.deliverables ?? stored.deliverables,
       // Unsaved billing edits still need to show in the preview, but only as
       // costs applied to lines the SOW already has — a preview cannot invent one.
-      services: (stored.services ?? []).map((s) => {
-        const edited = (inputs.services ?? []).find((x) => String(x.serviceId) === String(s.serviceId));
-        return edited && Number.isFinite(edited.cost) && edited.cost >= 0 ? { ...s, cost: edited.cost } : s;
+      // Matched by position, not serviceId: the same catalogue service can appear
+      // on more than one line (different run counts), and a serviceId lookup
+      // would apply the first matching line's edit to every line sharing that id
+      // — see the identical reasoning on SOWService.applyDocumentBilling. Unlike
+      // that save path, there's no length gate here: a preview must keep showing
+      // whatever edits it safely can rather than dropping all of them the moment
+      // the arrays are transiently out of step (e.g. mid-render while inputs are
+      // still loading) — a line whose position no longer matches its own
+      // serviceId just falls through to the stored value, same as a genuine
+      // mismatch would.
+      services: (stored.services ?? []).map((s, i) => {
+        const edited = inputs.services?.[i];
+        return edited && String(edited.serviceId) === String(s.serviceId) && Number.isFinite(edited.cost) && edited.cost >= 0 ? { ...s, cost: edited.cost } : s;
       }),
       adjustments: (inputs.adjustments ?? stored.adjustments ?? []).filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)
     };

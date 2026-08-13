@@ -127,6 +127,10 @@ export class SowVersionService {
   @Prop({ required: true })
   @Field(() => Float)
   cost: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'The run-count multiplier baked into cost, if the underlying node has one. Informational only — Fee Schedule has no control to edit it.' })
+  runCount?: number;
 }
 
 @Schema({ _id: false })

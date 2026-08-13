@@ -1,5 +1,5 @@
 import { DampLabService, ServicePricingMode } from '../services/models/damplab-service.model';
-import { calculateServiceCost, RUN_COUNT_PARAM_ID } from './service-pricing.util';
+import { calculateServiceCost, extractRunCount, RUN_COUNT_PARAM_ID } from './service-pricing.util';
 
 /**
  * The universal run count is injected into formData client-side under a synthetic
@@ -69,5 +69,20 @@ describe('calculateServiceCost — run count multiplier', () => {
       { id: RUN_COUNT_PARAM_ID, value: 70 }
     ];
     expect(calculateServiceCost(svc, formData)).toBe(1050);
+  });
+});
+
+describe('extractRunCount', () => {
+  it('reads the run count out of formData, the same figure getMultiplier uses', () => {
+    expect(extractRunCount([{ id: RUN_COUNT_PARAM_ID, value: 70 }])).toBe(70);
+  });
+
+  it('is undefined when no run count entry is present', () => {
+    expect(extractRunCount([{ id: 'unrelated', value: 1 }])).toBeUndefined();
+    expect(extractRunCount(undefined)).toBeUndefined();
+  });
+
+  it('reads the legacy object-keyed formData shape too', () => {
+    expect(extractRunCount({ [RUN_COUNT_PARAM_ID]: 70 })).toBe(70);
   });
 });
