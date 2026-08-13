@@ -136,6 +136,22 @@ export class Job {
     nullable: 'itemsAndList'
   })
   attachments?: JobAttachment[];
+
+  @Prop({ type: Boolean, default: false })
+  @Field({ description: 'Whether the job has been archived by staff', defaultValue: false })
+  isArchived: boolean;
+
+  @Prop({ type: Date, required: false })
+  @Field({ description: 'When the job was archived', nullable: true })
+  archivedAt?: Date;
+
+  @Prop({ type: String, required: false })
+  @Field({ description: 'Username of staff member who archived the job', nullable: true })
+  archivedBy?: string;
+
+  @Prop({ type: String, required: false })
+  @Field({ description: 'Job state at the time of archiving', nullable: true })
+  archivedFromState?: string;
 }
 
 export type JobDocument = Job & Document;
@@ -143,3 +159,4 @@ export const JobSchema = SchemaFactory.createForClass(Job);
 
 // Unique among jobs that have a display id; sparse so many legacy docs without jobId do not conflict.
 JobSchema.index({ jobId: 1 }, { unique: true, sparse: true });
+JobSchema.index({ isArchived: 1, state: 1 });

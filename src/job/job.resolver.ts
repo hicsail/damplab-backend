@@ -324,6 +324,35 @@ export class JobResolver {
     return (await this.jobService.updateState(job, newState))!;
   }
 
+  @Mutation(() => Job, {
+    description: 'Staff-only. Archive a job so it is hidden from the Lab Monitor and Dashboard active view.'
+  })
+  @Roles(Role.DamplabStaff)
+  async archiveJob(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @CurrentUser() user: User
+  ): Promise<Job> {
+    const updated = await this.jobService.archiveJob(jobId, user.preferred_username ?? user.email);
+    if (!updated) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    return updated;
+  }
+
+  @Mutation(() => Job, {
+    description: 'Staff-only. Restore an archived job so it reappears on the Lab Monitor and Dashboard.'
+  })
+  @Roles(Role.DamplabStaff)
+  async unarchiveJob(
+    @Args('jobId', { type: () => ID }) jobId: string
+  ): Promise<Job> {
+    const updated = await this.jobService.unarchiveJob(jobId);
+    if (!updated) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    return updated;
+  }
+
   @ResolveField()
   async workflows(@Parent() job: Job): Promise<Workflow[]> {
     return this.workflowService.findByIds(job.workflows.map((workflow) => workflow._id));

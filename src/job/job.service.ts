@@ -86,12 +86,40 @@ export class JobService {
   async getWorkflowIdsForApprovedJobs(): Promise<mongoose.Types.ObjectId[]> {
     const approvedStates = [JobState.ACCEPTED, JobState.WAITING_FOR_SOW, JobState.QUEUED, JobState.IN_PROGRESS, JobState.COMPLETE];
     const jobs = await this.jobModel
-      .find({ state: { $in: approvedStates } })
+      .find({ state: { $in: approvedStates }, isArchived: { $ne: true } })
       .select('workflows')
       .lean()
       .exec();
     const ids = jobs.flatMap((j) => (j.workflows ?? []) as mongoose.Types.ObjectId[]);
     return [...new Set(ids)];
+  }
+
+  async archiveJob(jobId: string, archivedBy: string): Promise<Job | null> {
+    const job = await this.jobModel.findById(jobId).exec();
+    if (!job) return null;
+    return this.jobModel.findOneAndUpdate(
+      { _id: jobId },
+      {
+        $set: {
+          isArchived: true,
+          archivedAt: new Date(),
+          archivedBy,
+          archivedFromState: String(job.state)
+        }
+      },
+      { new: true }
+    ).exec();
+  }
+
+  async unarchiveJob(jobId: string): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate(
+      { _id: jobId },
+      {
+        $set: { isArchived: false },
+        $unset: { archivedAt: 1, archivedBy: 1, archivedFromState: 1 }
+      },
+      { new: true }
+    ).exec();
   }
 
   async updateState(job: Job, newState: JobState): Promise<Job | null> {
@@ -170,6 +198,12 @@ export class JobService {
     }
     if (input.state != null) {
       match.push({ state: input.state });
+    }
+    const archiveFilter = (input as AllJobsInput).archiveFilter ?? 'ACTIVE';
+    if (archiveFilter === 'ACTIVE') {
+      match.push({ isArchived: { $ne: true } });
+    } else if (archiveFilter === 'ARCHIVED') {
+      match.push({ isArchived: true });
     }
 
     const lookup = {

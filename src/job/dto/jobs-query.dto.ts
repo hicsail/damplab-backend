@@ -59,6 +59,9 @@ export class AllJobsInput {
 
   @Field(() => SortOrder, { description: 'Sort order (default DESC = latest first)', nullable: true })
   sortOrder?: SortOrder;
+
+  @Field({ description: 'Archive filter: ACTIVE (default, non-archived), ARCHIVED (archived only), or ALL', nullable: true })
+  archiveFilter?: string;
 }
 
 @ObjectType()

@@ -17,7 +17,7 @@ export interface CreateJobPreProcessed extends Pick<Job, 'name' | 'institute' | 
 }
 
 // CreateJobFull is what the job service receives.
-export interface CreateJobFull extends Omit<Job, '_id' | 'workflows' | 'submitted' | 'jobId'> {
+export interface CreateJobFull extends Omit<Job, '_id' | 'workflows' | 'submitted' | 'jobId' | 'isArchived' | 'archivedAt' | 'archivedBy' | 'archivedFromState'> {
   workflows: AddWorkflowInputFull[];
 }
 
