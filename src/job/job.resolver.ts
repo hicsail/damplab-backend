@@ -23,6 +23,9 @@ import { UpdateSOWInput } from '../sow/dto/update-sow.input';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
+import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
+import { JobVersionService } from '../job-version/job-version.service';
+import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -108,8 +111,18 @@ export class JobResolver {
     private readonly sowService: SOWService,
     @Inject(forwardRef(() => SowVersionService))
     private readonly sowVersionService: SowVersionService,
-    private readonly jobAttachmentsService: JobAttachmentsService
+    private readonly jobAttachmentsService: JobAttachmentsService,
+    private readonly jobVersionService: JobVersionService
   ) {}
+
+  /**
+   * Which side of the conversation a caller writes as. Staff editing their own
+   * job still write as STAFF — the baseline rule is about the two sides of the
+   * review, not about identity.
+   */
+  private authorRoleFor(user: User): JobVersionAuthorRole {
+    return (user.realm_access?.roles ?? []).includes(Role.DamplabStaff) ? JobVersionAuthorRole.STAFF : JobVersionAuthorRole.CUSTOMER;
+  }
 
   @Query(() => [Job])
   @Roles(Role.DamplabStaff)
@@ -203,6 +216,15 @@ export class JobResolver {
       email: user.email,
       customerCategory
     });
+    // v1 is the submission itself, so the first technician edit has something to
+    // diff against.
+    await this.jobVersionService.appendVersion(created, await this.jobVersionService.snapshotLiveWorkflows(created), {
+      authorRole: this.authorRoleFor(user),
+      createdBy: user.sub,
+      createdByName: user.preferred_username ?? user.email ?? '',
+      note: 'Original submission'
+    });
+
     await this.activityService.createEvent({
       type: 'JOB_SUBMITTED',
       message: `Job "${created.name}" was submitted`,
@@ -394,10 +416,71 @@ export class JobResolver {
     return updated;
   }
 
+  /**
+   * Staff, or the job's owner. Owners need this so "Resubmit job" can put a
+   * job that came back as CHANGES_REQUESTED into SUBMITTED again; they are held
+   * to exactly that transition so the customer cannot walk their own job
+   * through the lab's pipeline.
+   */
   @Mutation(() => Job)
-  @Roles(Role.DamplabStaff)
-  async changeJobState(@Args('job', { type: () => ID }, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState): Promise<Job> {
+  async changeJobState(@Args('job', { type: () => ID }, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState, @CurrentUser() user: User): Promise<Job> {
+    const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
+    if (!isStaff) {
+      const isOwner = job.sub === user.sub;
+      const isResubmission = job.state === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
+      if (!isOwner || !isResubmission) {
+        throw new ForbiddenException('You do not have permission to change the state of this job');
+      }
+    }
     return (await this.jobService.updateState(job, newState))!;
+  }
+
+  /**
+   * Replace the job's workflow graph with what the editor produced, and record
+   * the result as a new version.
+   *
+   * Staff may edit any job that is not CLOSED. Customers may edit only their own
+   * job, and only while changes have been requested of them.
+   */
+  @Mutation(() => Job, {
+    description: "Replace a job's workflow graph from the workflow editor and record the result as a new job version."
+  })
+  async saveJobWorkflows(@Args('input', { type: () => SaveJobWorkflowsInput }) input: SaveJobWorkflowsInput, @CurrentUser() user: User): Promise<Job> {
+    const job = await this.jobService.findById(input.jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${input.jobId} not found`);
+    }
+
+    const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
+    if (isStaff) {
+      if (job.state === JobState.CLOSED) {
+        throw new ForbiddenException('This job is closed and can no longer be edited');
+      }
+    } else if (job.sub !== user.sub) {
+      throw new ForbiddenException('You do not have permission to edit this job');
+    } else if (job.state !== JobState.CHANGES_REQUESTED) {
+      throw new ForbiddenException('This job can only be edited while changes have been requested');
+    }
+
+    const updated = await this.jobVersionService.saveWorkflows(input, {
+      role: this.authorRoleFor(user),
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? ''
+    });
+
+    // The billing core has moved. This is a no-op on a job with no SOW, which is
+    // most jobs being edited; where there is one it flags the document stale so
+    // staff can decide whether to issue a new version for re-signature.
+    await this.syncSowServicesFromJobWorkflows(input.jobId);
+
+    await this.activityService.createEvent({
+      type: 'JOB_WORKFLOWS_EDITED',
+      message: `Workflows edited on job "${job.name}"${input.note ? `: ${input.note}` : ''}`,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      jobId: input.jobId
+    });
+
+    return updated;
   }
 
   @ResolveField()
@@ -444,5 +527,12 @@ export class JobResolver {
   @ResolveField(() => SOW, { nullable: true, description: 'SOW associated with this job' })
   async sow(@Parent() job: Job): Promise<SOW | null> {
     return this.sowService.findByJobId(job._id);
+  }
+
+  @ResolveField(() => [JobVersion], {
+    description: "Every saved version of this job's workflow graph, oldest first. Jobs submitted before versioning get a v1 synthesized from their live workflows on first read."
+  })
+  async versions(@Parent() job: Job): Promise<JobVersion[]> {
+    return this.jobVersionService.listByJob(String(job._id));
   }
 }
