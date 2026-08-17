@@ -7,6 +7,7 @@ import { Workflow, WorkflowSchema } from '../workflow/models/workflow.model';
 import { WorkflowNode, WorkflowNodeSchema } from '../workflow/models/node.model';
 import { WorkflowEdge, WorkflowEdgeSchema } from '../workflow/models/edge.model';
 import { DampLabServicesModule } from '../services/damplab-services.module';
+import { JobVersionFieldsResolver } from './job-version-fields.resolver';
 
 /**
  * Versioning owns its own model handles rather than routing through
@@ -27,7 +28,7 @@ import { DampLabServicesModule } from '../services/damplab-services.module';
     ]),
     DampLabServicesModule
   ],
-  providers: [JobVersionService],
+  providers: [JobVersionService, JobVersionFieldsResolver],
   exports: [JobVersionService]
 })
 export class JobVersionModule {}

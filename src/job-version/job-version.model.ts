@@ -159,6 +159,13 @@ export class JobVersion {
   @Field(() => Boolean, { nullable: true, defaultValue: false, description: 'True when this version records a state change rather than an edit to the graph.' })
   isEvent?: boolean;
 
+  @Prop({ required: true, default: true })
+  @Field(() => Boolean, {
+    description:
+      'False for unpublished staff drafts. Missing on legacy rows; treat as true so customers do not lose history.'
+  })
+  visibleToCustomer: boolean;
+
   /**
    * Optional on the way out — see jobState. `SaveJobWorkflowsInput` requires one
    * on the way in; the gap is the backfilled v1 and the canned event versions.

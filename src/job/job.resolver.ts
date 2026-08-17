@@ -1,5 +1,5 @@
 import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID } from '@nestjs/graphql';
+import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
 import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
@@ -236,7 +236,9 @@ export class JobResolver {
       authorRole: this.authorRoleFor(user),
       createdBy: user.sub,
       createdByName: user.preferred_username ?? user.email ?? '',
-      note: 'Original submission'
+      note: 'Original submission',
+      bumpMajor: true,
+      visibleToCustomer: true
     });
 
     await this.activityService.createEvent({
@@ -556,9 +558,22 @@ export class JobResolver {
   }
 
   @ResolveField(() => [JobVersion], {
-    description: "Every saved version of this job's workflow graph, oldest first. Jobs submitted before versioning get a v1 synthesized from their live workflows on first read."
+    description:
+      "Saved versions of this job's workflow graph, oldest first. Staff see every row; customers see published rows plus their own."
   })
-  async versions(@Parent() job: Job): Promise<JobVersion[]> {
-    return this.jobVersionService.listByJob(String(job._id));
+  async versions(@Parent() job: Job, @CurrentUser() user: User): Promise<JobVersion[]> {
+    const all = await this.jobVersionService.listByJob(String(job._id));
+    const isStaff = (user?.realm_access?.roles ?? []).includes(Role.DamplabStaff);
+    return isStaff ? all : JobVersionService.filterVisibleToCustomer(all);
+  }
+
+  @ResolveField(() => Int, {
+    nullable: true,
+    description:
+      'Newest content versionNumber on the job, including unpublished staff drafts. Used by the editor conflict check; not a customer graph source.'
+  })
+  async latestContentVersionNumber(@Parent() job: Job): Promise<number | null> {
+    const all = await this.jobVersionService.listByJob(String(job._id));
+    return JobVersionService.latestContentVersionNumber(all);
   }
 }

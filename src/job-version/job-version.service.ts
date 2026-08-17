@@ -109,6 +109,58 @@ export class JobVersionService {
     private readonly dampLabServices: DampLabServices
   ) {}
 
+  // ---------------------------------------------------------- version numbers
+
+  private static readonly MINOR_WIDTH = 1000;
+
+  static encodeVersionNumber(major: number, minor: number): number {
+    return major * JobVersionService.MINOR_WIDTH + minor;
+  }
+
+  static decodeVersionNumber(versionNumber: number): { major: number; minor: number } {
+    return {
+      major: Math.floor(versionNumber / JobVersionService.MINOR_WIDTH),
+      minor: versionNumber % JobVersionService.MINOR_WIDTH
+    };
+  }
+
+  /** Encoded values as "1.2"; pre-scheme integers (< 1000) as "3". */
+  static displayVersionLabel(versionNumber: number): string {
+    if (versionNumber < JobVersionService.MINOR_WIDTH) return String(versionNumber);
+    const { major, minor } = JobVersionService.decodeVersionNumber(versionNumber);
+    return `${major}.${minor}`;
+  }
+
+  /**
+   * Next free versionNumber.
+   *
+   * `highest` is the current max on the job (events included). `bumpMajor` is
+   * true only for Request Changes and for the original submission (the first
+   * row of a new job). Legacy jobs whose highest is still < 1000 stay on
+   * consecutive integers until the first major bump, which becomes 1.0.
+   */
+  static nextVersionNumber(highest: number | null, bumpMajor: boolean): number {
+    if (highest == null) {
+      return bumpMajor ? JobVersionService.encodeVersionNumber(1, 0) : JobVersionService.encodeVersionNumber(0, 1);
+    }
+    const { major, minor } = JobVersionService.decodeVersionNumber(highest);
+    return bumpMajor ? JobVersionService.encodeVersionNumber(major + 1, 0) : JobVersionService.encodeVersionNumber(major, minor + 1);
+  }
+
+  static isVisibleToCustomer(version: { visibleToCustomer?: boolean | null; authorRole: JobVersionAuthorRole }): boolean {
+    if (version.authorRole === JobVersionAuthorRole.CUSTOMER) return true;
+    return version.visibleToCustomer !== false;
+  }
+
+  static filterVisibleToCustomer<T extends { visibleToCustomer?: boolean | null; authorRole: JobVersionAuthorRole }>(versions: T[]): T[] {
+    return versions.filter((v) => JobVersionService.isVisibleToCustomer(v));
+  }
+
+  static latestContentVersionNumber(versions: { versionNumber: number; isEvent?: boolean | null }[]): number | null {
+    const content = versions.filter((v) => v.isEvent !== true).sort((a, b) => b.versionNumber - a.versionNumber);
+    return content[0]?.versionNumber ?? null;
+  }
+
   // ---------------------------------------------------------------- baseline
 
   /**
@@ -161,7 +213,9 @@ export class JobVersionService {
         createdBy: job.sub ?? '',
         createdByName: job.clientDisplayName || job.username || job.email || '',
         note: 'Original submission',
-        createdAt: job.submitted ?? new Date()
+        createdAt: job.submitted ?? new Date(),
+        bumpMajor: true,
+        visibleToCustomer: true
       });
       return [created];
     } catch (error: any) {
@@ -234,11 +288,21 @@ export class JobVersionService {
   async appendVersion(
     job: Job,
     workflows: JobVersionWorkflow[],
-    meta: { authorRole: JobVersionAuthorRole; createdBy: string; createdByName: string; note?: string; createdAt?: Date; jobState?: JobState; isEvent?: boolean }
+    meta: {
+      authorRole: JobVersionAuthorRole;
+      createdBy: string;
+      createdByName: string;
+      note?: string;
+      createdAt?: Date;
+      jobState?: JobState;
+      isEvent?: boolean;
+      bumpMajor?: boolean;
+      visibleToCustomer?: boolean;
+    }
   ): Promise<JobVersion> {
     const jobId = String(job._id);
     const highest = await this.versionModel.findOne({ jobId }).sort({ versionNumber: -1 }).exec();
-    const versionNumber = (highest?.versionNumber ?? 0) + 1;
+    const versionNumber = JobVersionService.nextVersionNumber(highest?.versionNumber ?? null, meta.bumpMajor === true);
 
     return this.versionModel.create({
       job: new mongoose.Types.ObjectId(jobId),
@@ -251,6 +315,7 @@ export class JobVersionService {
       // moving *to* rather than whatever the in-memory job still says.
       jobState: meta.jobState ?? job.state,
       isEvent: meta.isEvent === true,
+      visibleToCustomer: meta.visibleToCustomer === true,
       createdBy: meta.createdBy,
       createdByName: meta.createdByName,
       createdAt: meta.createdAt ?? new Date()
@@ -288,7 +353,9 @@ export class JobVersionService {
       createdByName: author.name,
       note,
       jobState: newState,
-      isEvent: true
+      isEvent: true,
+      visibleToCustomer: true,
+      bumpMajor: newState === JobState.CHANGES_REQUESTED
     });
   }
 
@@ -315,17 +382,36 @@ export class JobVersionService {
     const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined);
     this.assertWorkInFlightUntouched(liveNodes, prepared);
 
+    // Which nodes existed before this save, across every tree. Node deletion is
+    // decided once, globally, at the end — never per tree.
+    //
+    // Trees are recomputed from connectivity on each save, so a node routinely
+    // migrates between them: deleting an edge splits one tree into two, adding
+    // one merges two into one. A per-tree rule reads such a node as "dropped"
+    // while the tree that now owns it is still wiring edges to it, leaving an
+    // edge pointing at a deleted node — which makes the whole job unreadable.
+    const nodeIdsBefore = await this.collectJobNodeIds(job);
+
     const workflowIds: mongoose.Types.ObjectId[] = [];
+    const keptNodeIds = new Set<string>();
     for (let i = 0; i < input.workflows.length; i++) {
-      const id = await this.reconcileWorkflow(input.workflows[i], prepared[i], liveNodes);
-      workflowIds.push(id);
+      const { workflowId, nodeIds } = await this.reconcileWorkflow(input.workflows[i], prepared[i], liveNodes);
+      workflowIds.push(workflowId);
+      for (const nodeId of nodeIds) keptNodeIds.add(String(nodeId));
     }
 
-    // Workflows the edit emptied or removed entirely.
+    // Workflows the edit emptied or removed entirely. Their nodes are left to
+    // the global pass below, since a "removed" tree is often just one whose
+    // nodes now live in a tree that survived.
     const keptIds = new Set(workflowIds.map(String));
     for (const ref of job.workflows ?? []) {
       if (keptIds.has(String(ref))) continue;
       await this.deleteWorkflow(String(ref));
+    }
+
+    const removedNodeIds = nodeIdsBefore.filter((nodeId) => !keptNodeIds.has(nodeId));
+    if (removedNodeIds.length) {
+      await this.nodeModel.deleteMany({ _id: { $in: removedNodeIds } }).exec();
     }
 
     await this.jobModel.findByIdAndUpdate(job._id, { $set: { workflows: workflowIds } }).exec();
@@ -336,10 +422,21 @@ export class JobVersionService {
       authorRole: author.role,
       createdBy: author.sub,
       createdByName: author.name,
-      note
+      note,
+      visibleToCustomer: author.role === JobVersionAuthorRole.CUSTOMER
     });
 
     return refreshed!;
+  }
+
+  /** Database ids of every node the job currently owns, across all its trees. */
+  private async collectJobNodeIds(job: Job): Promise<string[]> {
+    const ids = new Set<string>();
+    for (const workflowRef of job.workflows ?? []) {
+      const workflow = await this.workflowModel.findById(String(workflowRef)).exec();
+      for (const nodeRef of workflow?.nodes ?? []) ids.add(String(nodeRef));
+    }
+    return [...ids];
   }
 
   /** Every live node on the job, keyed by client-side id. */
@@ -439,7 +536,15 @@ export class JobVersionService {
   }
 
   /** Apply one tree to the live documents, returning the Workflow id it landed in. */
-  private async reconcileWorkflow(input: SaveWorkflowInput, prepared: PreparedNode[], liveNodes: Map<string, LiveNode>): Promise<mongoose.Types.ObjectId> {
+  /**
+   * Persist one tree. Returns the workflow id plus the node ids it now owns, so
+   * `saveWorkflows` can decide deletion across every tree at once.
+   */
+  private async reconcileWorkflow(
+    input: SaveWorkflowInput,
+    prepared: PreparedNode[],
+    liveNodes: Map<string, LiveNode>
+  ): Promise<{ workflowId: mongoose.Types.ObjectId; nodeIds: mongoose.Types.ObjectId[] }> {
     const nodeDbIdByClientId = new Map<string, mongoose.Types.ObjectId>();
 
     for (const node of prepared) {
@@ -494,14 +599,12 @@ export class JobVersionService {
     const nodeIds = prepared.map((n) => nodeDbIdByClientId.get(n.clientId)!).filter(Boolean);
 
     if (existing) {
-      // Nodes dropped from this tree. Nodes that merely moved to another tree in
-      // the same save are spared — they are still referenced somewhere.
-      const stillHere = new Set(nodeIds.map(String));
-      const orphaned = (existing.nodes ?? []).map((n: any) => String(n)).filter((id) => !stillHere.has(id));
-      if (orphaned.length) await this.nodeModel.deleteMany({ _id: { $in: orphaned } }).exec();
-
+      // Deliberately no node deletion here: a node missing from this tree may
+      // have migrated to another tree in the same save, which has not
+      // necessarily been reconciled yet. `saveWorkflows` deletes globally once
+      // every tree has claimed its nodes.
       await this.workflowModel.findByIdAndUpdate(existing._id, { $set: { nodes: nodeIds, edges: edgeIds, name: input.name ?? existing.name } }).exec();
-      return toObjectId(existing._id);
+      return { workflowId: toObjectId(existing._id), nodeIds };
     }
 
     const created = await this.workflowModel.create({
@@ -510,13 +613,18 @@ export class JobVersionService {
       edges: edgeIds,
       state: WorkflowState.QUEUED
     });
-    return toObjectId(created._id);
+    return { workflowId: toObjectId(created._id), nodeIds };
   }
 
+  /**
+   * Drop a workflow and its edges. Nodes are left alone on purpose — a workflow
+   * disappears whenever trees are re-partitioned (an added edge merging two into
+   * one), and its nodes are usually alive in the tree that absorbed them.
+   * `saveWorkflows` deletes the genuinely removed ones globally.
+   */
   private async deleteWorkflow(workflowId: string): Promise<void> {
     const workflow = await this.workflowModel.findById(workflowId).exec();
     if (!workflow) return;
-    await this.nodeModel.deleteMany({ _id: { $in: (workflow.nodes ?? []).map((n: any) => String(n)) } }).exec();
     await this.edgeModel.deleteMany({ _id: { $in: (workflow.edges ?? []).map((e: any) => String(e)) } }).exec();
     await this.workflowModel.findByIdAndDelete(workflowId).exec();
   }

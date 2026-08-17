@@ -12,6 +12,90 @@ import { JobState } from '../job/job.model';
  * told about.
  */
 
+// -------------------------------------------------------------- version numbers
+
+describe('version numbers', () => {
+  it('encodes major.minor as major*1000 + minor', () => {
+    expect(JobVersionService.encodeVersionNumber(0, 1)).toBe(1);
+    expect(JobVersionService.encodeVersionNumber(1, 0)).toBe(1000);
+    expect(JobVersionService.encodeVersionNumber(1, 2)).toBe(1002);
+    expect(JobVersionService.encodeVersionNumber(2, 0)).toBe(2000);
+  });
+
+  it('decodes that encoding back', () => {
+    expect(JobVersionService.decodeVersionNumber(1)).toEqual({ major: 0, minor: 1 });
+    expect(JobVersionService.decodeVersionNumber(1002)).toEqual({ major: 1, minor: 2 });
+  });
+
+  it('labels encoded numbers as major.minor and legacy integers as themselves', () => {
+    expect(JobVersionService.displayVersionLabel(1000)).toBe('1.0');
+    expect(JobVersionService.displayVersionLabel(1002)).toBe('1.2');
+    expect(JobVersionService.displayVersionLabel(3)).toBe('3');
+  });
+
+  it('starts a new job at 1.0 when the first row is a send-equivalent (original submission)', () => {
+    expect(JobVersionService.nextVersionNumber(null, true)).toBe(1000);
+  });
+
+  it('bumps minor on the current major', () => {
+    expect(JobVersionService.nextVersionNumber(1000, false)).toBe(1001);
+    expect(JobVersionService.nextVersionNumber(1002, false)).toBe(1003);
+  });
+
+  it('bumps major and resets minor on Request Changes', () => {
+    expect(JobVersionService.nextVersionNumber(1002, true)).toBe(2000);
+  });
+
+  it('keeps legacy integers consecutive, then jumps to 1.0 on the first major bump', () => {
+    expect(JobVersionService.nextVersionNumber(3, false)).toBe(4);
+    expect(JobVersionService.nextVersionNumber(3, true)).toBe(1000);
+  });
+});
+
+describe('customer visibility filter', () => {
+  const row = (over: Record<string, unknown>) => ({
+    versionNumber: 1000,
+    authorRole: JobVersionAuthorRole.STAFF,
+    visibleToCustomer: true,
+    ...over
+  });
+
+  it('keeps published rows and customer-authored rows', () => {
+    const versions = [
+      row({ versionNumber: 1000, authorRole: JobVersionAuthorRole.CUSTOMER, visibleToCustomer: true }),
+      row({ versionNumber: 1001, visibleToCustomer: false }),
+      row({ versionNumber: 1002, authorRole: JobVersionAuthorRole.CUSTOMER, visibleToCustomer: true }),
+      row({ versionNumber: 2000, visibleToCustomer: true, isEvent: true })
+    ];
+    expect(JobVersionService.filterVisibleToCustomer(versions).map((v) => v.versionNumber)).toEqual([1000, 1002, 2000]);
+  });
+
+  it('treats a missing visibleToCustomer as visible so legacy rows are not hidden', () => {
+    const versions = [row({ versionNumber: 1, visibleToCustomer: undefined })];
+    expect(JobVersionService.filterVisibleToCustomer(versions)).toHaveLength(1);
+  });
+
+  it('still shows a customer-authored row if visibleToCustomer were false', () => {
+    const versions = [row({ authorRole: JobVersionAuthorRole.CUSTOMER, visibleToCustomer: false })];
+    expect(JobVersionService.filterVisibleToCustomer(versions)).toHaveLength(1);
+  });
+});
+
+describe('latestContentVersionNumber', () => {
+  it('skips events and returns the newest content versionNumber', () => {
+    const versions = [
+      { versionNumber: 1000, isEvent: false },
+      { versionNumber: 1001, isEvent: false },
+      { versionNumber: 2000, isEvent: true }
+    ];
+    expect(JobVersionService.latestContentVersionNumber(versions)).toBe(1001);
+  });
+
+  it('is null when there are no versions', () => {
+    expect(JobVersionService.latestContentVersionNumber([])).toBeNull();
+  });
+});
+
 // ------------------------------------------------------------------ baseline
 
 describe('baselineFor', () => {
@@ -333,6 +417,56 @@ describe('saveWorkflows — reconciliation', () => {
     expect(nodes[0].reactNode.position).toEqual({ x: 640, y: 128 });
   });
 
+  // Trees are recomputed from connectivity on every save, so nodes migrate
+  // between them constantly. Deciding deletion per tree used to delete a node
+  // that had merely moved, leaving an edge pointing at nothing — which made the
+  // whole job unreadable, because WorkflowEdge.source throws on a missing node.
+  it('keeps both nodes when deleting an edge splits one tree into two', async () => {
+    const { service, nodes, edges } = buildHarness({ nodes: [liveNode(), liveNode({ id: 'b', _id: NODE_B_DB })] });
+
+    // a and b were connected; the edge is gone, so the editor sends two trees —
+    // the original workflow keeps 'a', and 'b' arrives as a brand new tree.
+    await service.saveWorkflows(
+      {
+        jobId: JOB_ID,
+        note: 'removed the connection',
+        workflows: [
+          { workflowId: WF_ID, nodes: [inputNode()], edges: [] },
+          { nodes: [inputNode({ id: 'b' })], edges: [] }
+        ]
+      } as any,
+      author
+    );
+
+    expect(nodes.map((n) => n.id).sort()).toEqual(['a', 'b']);
+    expect(edges).toHaveLength(0);
+  });
+
+  it('keeps every node when adding an edge merges two trees into one', async () => {
+    const { service, nodes, workflows, edges, job } = buildHarness({ nodes: [liveNode(), liveNode({ id: 'b', _id: NODE_B_DB })] });
+    // Start from two separate trees, the second holding 'b'.
+    const SECOND_WF = '000000000000000000000012';
+    workflows[0].nodes = [NODE_A_DB];
+    workflows.push({ _id: SECOND_WF, name: 'Workflow-2', nodes: [NODE_B_DB], edges: [] });
+    job.workflows = [WF_ID, SECOND_WF];
+
+    await service.saveWorkflows(
+      {
+        jobId: JOB_ID,
+        note: 'connected them',
+        workflows: [{ workflowId: WF_ID, nodes: [inputNode(), inputNode({ id: 'b' })], edges: [{ id: 'e1', source: 'a', target: 'b' }] }]
+      } as any,
+      author
+    );
+
+    expect(nodes.map((n) => n.id).sort()).toEqual(['a', 'b']);
+    // The surviving edge must point at nodes that still exist.
+    expect(edges).toHaveLength(1);
+    const present = new Set(nodes.map((n) => String(n._id)));
+    expect(present.has(String(edges[0].source))).toBe(true);
+    expect(present.has(String(edges[0].target))).toBe(true);
+  });
+
   it('rejects a service that is not in the catalogue rather than writing a dangling node', async () => {
     const { service } = buildHarness({ nodes: [liveNode()] });
     await expect(
@@ -393,13 +527,60 @@ describe('saveWorkflows — pricing and versioning', () => {
   });
 });
 
+describe('visibility and major bumps on write', () => {
+  it('hides a staff editor save from the customer', async () => {
+    const { service, versions } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    expect(versions[0].visibleToCustomer).toBe(false);
+    expect(versions[0].versionNumber).toBe(1);
+  });
+
+  it('shows a customer editor save', async () => {
+    const { service, versions } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, { ...author, role: JobVersionAuthorRole.CUSTOMER });
+    expect(versions[0].visibleToCustomer).toBe(true);
+  });
+
+  it('bumps major on Request Changes and marks that row visible', async () => {
+    const { service, versions, job } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    await service.appendStateEvent(job, JobState.CHANGES_REQUESTED, author, 'Changes requested');
+    expect(versions.map((v) => v.versionNumber)).toEqual([1, 1000]);
+    expect(versions[1]).toMatchObject({
+      isEvent: true,
+      visibleToCustomer: true,
+      jobState: JobState.CHANGES_REQUESTED
+    });
+  });
+
+  it('does not bump major on resubmit', async () => {
+    const { service, versions, job } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    await service.appendStateEvent(job, JobState.CHANGES_REQUESTED, author, 'Changes requested');
+    await service.appendStateEvent(job, JobState.SUBMITTED, { ...author, role: JobVersionAuthorRole.CUSTOMER }, 'Resubmitted');
+    expect(versions.map((v) => v.versionNumber)).toEqual([1, 1000, 1001]);
+    expect(versions[2]).toMatchObject({ visibleToCustomer: true, jobState: JobState.SUBMITTED, isEvent: true });
+  });
+
+  it('backfills the original submission as 1.0 and visible', async () => {
+    const { service, versions } = buildHarness({ nodes: [liveNode()] });
+    await service.listByJob(JOB_ID);
+    expect(versions[0]).toMatchObject({
+      versionNumber: 1000,
+      visibleToCustomer: true,
+      note: 'Original submission',
+      authorRole: JobVersionAuthorRole.CUSTOMER
+    });
+  });
+});
+
 describe('listByJob', () => {
   it('synthesizes v1 for a job submitted before versioning existed', async () => {
     const { service, versions } = buildHarness({ nodes: [liveNode()] });
     const listed = await service.listByJob(JOB_ID);
 
     expect(listed).toHaveLength(1);
-    expect(versions[0]).toMatchObject({ versionNumber: 1, authorRole: JobVersionAuthorRole.CUSTOMER, note: 'Original submission' });
+    expect(versions[0]).toMatchObject({ versionNumber: 1000, authorRole: JobVersionAuthorRole.CUSTOMER, note: 'Original submission' });
     expect(versions[0].workflows[0].nodes[0].id).toBe('a');
   });
 
@@ -436,8 +617,8 @@ describe('appendStateEvent', () => {
     await service.appendStateEvent(job, JobState.SUBMITTED, stateAuthor, 'Resubmitted');
 
     expect(versions).toHaveLength(2);
-    expect(versions[0]).toMatchObject({ versionNumber: 1, note: 'Original submission' });
-    expect(versions[1]).toMatchObject({ versionNumber: 2, note: 'Resubmitted', jobState: JobState.SUBMITTED, authorRole: JobVersionAuthorRole.CUSTOMER });
+    expect(versions[0]).toMatchObject({ versionNumber: 1000, note: 'Original submission' });
+    expect(versions[1]).toMatchObject({ versionNumber: 1001, note: 'Resubmitted', jobState: JobState.SUBMITTED, authorRole: JobVersionAuthorRole.CUSTOMER });
   });
 
   it('snapshots the graph unchanged, so the entry diffs empty', async () => {
