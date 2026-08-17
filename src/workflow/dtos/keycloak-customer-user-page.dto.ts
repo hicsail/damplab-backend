@@ -13,4 +13,3 @@ export class KeycloakUserCustomerManagementPage {
   })
   hasNextPage: boolean;
 }
-

@@ -11,12 +11,7 @@ import { ApiKeyService } from '../api-key/api-key.service';
 
 @Injectable()
 export class AuthRolesGuard implements CanActivate {
-  constructor(
-    private configService: ConfigService,
-    private jwtService: JwtService,
-    private reflector: Reflector,
-    private apiKeyService: ApiKeyService
-  ) {}
+  constructor(private configService: ConfigService, private jwtService: JwtService, private reflector: Reflector, private apiKeyService: ApiKeyService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     let request;

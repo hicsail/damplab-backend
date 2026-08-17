@@ -47,7 +47,10 @@ export class ApiKeyService {
     if (doc.revoked) return null;
     if (doc.expiresAt && new Date(doc.expiresAt).getTime() < Date.now()) return null;
     // fire-and-forget last-used stamp
-    this.model.updateOne({ _id: doc._id }, { $set: { lastUsedAt: new Date() } }).exec().catch(() => undefined);
+    this.model
+      .updateOne({ _id: doc._id }, { $set: { lastUsedAt: new Date() } })
+      .exec()
+      .catch(() => undefined);
     return doc;
   }
 }

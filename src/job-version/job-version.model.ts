@@ -161,8 +161,7 @@ export class JobVersion {
 
   @Prop({ required: true, default: true })
   @Field(() => Boolean, {
-    description:
-      'False for unpublished staff drafts. Missing on legacy rows; treat as true so customers do not lose history.'
+    description: 'False for unpublished staff drafts. Missing on legacy rows; treat as true so customers do not lose history.'
   })
   visibleToCustomer: boolean;
 

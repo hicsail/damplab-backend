@@ -22,9 +22,7 @@ export class InventoryService {
     if (!Array.isArray(doc.placements) || doc.placements.length === 0) {
       doc.placements = doc.stationId ? [{ stationId: String(doc.stationId), quantity: 1 }] : [];
     } else {
-      doc.placements = doc.placements
-        .filter((p: any) => p?.stationId)
-        .map((p: any) => ({ stationId: String(p.stationId), quantity: Math.max(1, Math.trunc(Number(p.quantity) || 1)) }));
+      doc.placements = doc.placements.filter((p: any) => p?.stationId).map((p: any) => ({ stationId: String(p.stationId), quantity: Math.max(1, Math.trunc(Number(p.quantity) || 1)) }));
     }
     return item;
   }
@@ -60,7 +58,10 @@ export class InventoryService {
   /** Active-only — for catalog pickers (service editor, lab monitor). */
   async findAllActive(): Promise<InventoryItem[]> {
     return this.normalizeAll(
-      await this.inventoryModel.find({ $or: [{ isDeleted: false }, { isDeleted: { $exists: false } }] }).sort({ name: 1 }).exec()
+      await this.inventoryModel
+        .find({ $or: [{ isDeleted: false }, { isDeleted: { $exists: false } }] })
+        .sort({ name: 1 })
+        .exec()
     );
   }
 

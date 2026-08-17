@@ -1,15 +1,8 @@
-import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
 import { ProtocolStepMapping } from './protocol-step-mapping.model';
 import { ProtocolMapService } from './protocol-map.service';
-import {
-  ResolvedEquipment,
-  ResolvedPlacement,
-  ResolvedProtocol,
-  ResolvedStep,
-  StepMappingStatus,
-  UpsertProtocolStepMappingInput
-} from './protocol-map.dto';
+import { ResolvedEquipment, ResolvedPlacement, ResolvedProtocol, ResolvedStep, StepMappingStatus, UpsertProtocolStepMappingInput } from './protocol-map.dto';
 import { ProtocolsService } from '../protocols/protocols.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { StationService } from '../station/station.service';
@@ -21,7 +14,11 @@ import { User } from '../auth/user.interface';
 
 /** Strip HTML tags to a short plain-text label (drift-detection snapshot; NOT protocol content storage). */
 function toLabel(html: string, max = 120): string {
-  const text = (html || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+  const text = (html || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
@@ -42,18 +39,12 @@ export class ProtocolMapResolver {
   }
 
   @Mutation(() => ProtocolStepMapping, { description: 'Create or update the mapping for one protocol step.' })
-  async upsertProtocolStepMapping(
-    @Args('input') input: UpsertProtocolStepMappingInput,
-    @CurrentUser() user: User
-  ): Promise<ProtocolStepMapping> {
+  async upsertProtocolStepMapping(@Args('input') input: UpsertProtocolStepMappingInput, @CurrentUser() user: User): Promise<ProtocolStepMapping> {
     return this.mapService.upsert(input, user?.preferred_username || user?.email);
   }
 
   @Mutation(() => Boolean, { description: 'Remove the mapping for one protocol step.' })
-  async deleteProtocolStepMapping(
-    @Args('protocolId') protocolId: string,
-    @Args('stepId') stepId: string
-  ): Promise<boolean> {
+  async deleteProtocolStepMapping(@Args('protocolId') protocolId: string, @Args('stepId') stepId: string): Promise<boolean> {
     return this.mapService.remove(protocolId, stepId);
   }
 

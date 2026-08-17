@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, forwardRef, BadRequestException, ConflictException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
@@ -367,7 +367,8 @@ export class SowVersionService {
    * lets staff iterate on a signed SOW without invalidating the signature.
    */
   async saveVersion(sowId: string, input: SaveSowVersionInput, author: { sub: string; name: string }): Promise<SowVersionDocument> {
-    const sow = await this.requireSow(sowId);
+    // Called for the 404 it throws: nothing below reads the SOW itself.
+    await this.requireSow(sowId);
     const current = await this.getCurrentVersion(sowId);
     const currentNumber = current?.versionNumber ?? 0;
 

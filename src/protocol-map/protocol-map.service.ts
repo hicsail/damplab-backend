@@ -17,9 +17,7 @@ export class ProtocolMapService {
     for (const k of ['stepNumber', 'stepTitle', 'equipmentIds', 'requiresNoEquipment', 'paramTags', 'reviewed'] as const) {
       if (input[k] !== undefined) set[k] = input[k] as unknown;
     }
-    return (await this.model
-      .findOneAndUpdate({ protocolId: input.protocolId, stepId: input.stepId }, { $set: set }, { upsert: true, new: true, setDefaultsOnInsert: true })
-      .exec())!;
+    return (await this.model.findOneAndUpdate({ protocolId: input.protocolId, stepId: input.stepId }, { $set: set }, { upsert: true, new: true, setDefaultsOnInsert: true }).exec())!;
   }
 
   async findByProtocol(protocolId: string): Promise<ProtocolStepMapping[]> {

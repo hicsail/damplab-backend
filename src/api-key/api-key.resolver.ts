@@ -22,11 +22,7 @@ export class ApiKeyResolver {
   }
 
   @Mutation(() => CreateApiKeyResult, { description: 'Create a read-only API key. The raw secret is returned once and cannot be retrieved again.' })
-  async createApiKey(
-    @Args('name') name: string,
-    @Args('expiresAt', { type: () => Date, nullable: true }) expiresAt: Date | null,
-    @CurrentUser() user: User
-  ): Promise<CreateApiKeyResult> {
+  async createApiKey(@Args('name') name: string, @Args('expiresAt', { type: () => Date, nullable: true }) expiresAt: Date | null, @CurrentUser() user: User): Promise<CreateApiKeyResult> {
     const createdBy = user?.preferred_username || user?.email || 'staff';
     return this.apiKeyService.create(name, createdBy, expiresAt);
   }

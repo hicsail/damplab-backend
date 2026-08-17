@@ -40,4 +40,3 @@ export class InvoiceResolver {
     return this.jobService.findById((invoice as any).jobId);
   }
 }
-

@@ -15,10 +15,7 @@ import { User } from '../auth/user.interface';
 @UseGuards(AuthRolesGuard)
 @Roles(Role.DamplabStaff)
 export class UsageBillingResolver {
-  constructor(
-    private readonly usageBillingService: UsageBillingService,
-    private readonly bookingService: BookingService
-  ) {}
+  constructor(private readonly usageBillingService: UsageBillingService, private readonly bookingService: BookingService) {}
 
   @Query(() => [BillableOwner], { description: 'Users with confirmed, unbilled inventory usage.' })
   async billableOwners(): Promise<BillableOwner[]> {

@@ -46,21 +46,12 @@ const overlaps = (aS: Date, aE: Date, bS: Date, bE: Date): boolean => aS < bE &&
  */
 @Injectable()
 export class AvailabilityService {
-  constructor(
-    @InjectModel(WorkflowNode.name) private readonly nodeModel: Model<WorkflowNodeDocument>,
-    @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>
-  ) {}
+  constructor(@InjectModel(WorkflowNode.name) private readonly nodeModel: Model<WorkflowNodeDocument>, @InjectModel(Booking.name) private readonly bookingModel: Model<BookingDocument>) {}
 
   /** Effective [start,end] window an operation's inventory hold occupies. */
   private nodeWindow(n: any): [Date, Date] {
-    const s = n.inventoryReservationStart
-      ? new Date(n.inventoryReservationStart)
-      : n.startedAt
-        ? new Date(n.startedAt)
-        : new Date();
-    const e = n.inventoryReservationEnd
-      ? new Date(n.inventoryReservationEnd)
-      : new Date(s.getTime() + (n.estimatedMinutes || DEFAULT_HOLD_MIN) * 60000);
+    const s = n.inventoryReservationStart ? new Date(n.inventoryReservationStart) : n.startedAt ? new Date(n.startedAt) : new Date();
+    const e = n.inventoryReservationEnd ? new Date(n.inventoryReservationEnd) : new Date(s.getTime() + (n.estimatedMinutes || DEFAULT_HOLD_MIN) * 60000);
     return [s, e];
   }
 
@@ -74,11 +65,7 @@ export class AvailabilityService {
     // --- Operation holds ---
     const nodeFilter: any = { usedInventory: ids.length ? { $in: oids } : { $exists: true, $ne: [] } };
     if (q.excludeNodeId) nodeFilter._id = { $ne: q.excludeNodeId };
-    const nodes = await this.nodeModel
-      .find(nodeFilter)
-      .select('_id label usedInventory state startedAt estimatedMinutes inventoryReservationStart inventoryReservationEnd')
-      .lean()
-      .exec();
+    const nodes = await this.nodeModel.find(nodeFilter).select('_id label usedInventory state startedAt estimatedMinutes inventoryReservationStart inventoryReservationEnd').lean().exec();
     for (const n of nodes as any[]) {
       const hasWindow = !!(n.inventoryReservationStart || n.inventoryReservationEnd);
       // A node "holds" inventory if it's IN_PROGRESS, or has an explicit (possibly future) reservation window.
@@ -100,11 +87,7 @@ export class AvailabilityService {
     };
     if (ids.length) bookingFilter.inventoryItem = { $in: oids };
     if (q.excludeBookingId) bookingFilter._id = { $ne: q.excludeBookingId };
-    const bookings = await this.bookingModel
-      .find(bookingFilter)
-      .select('_id inventoryItem inventoryName startTime endTime ownerName ownerEmail')
-      .lean()
-      .exec();
+    const bookings = await this.bookingModel.find(bookingFilter).select('_id inventoryItem inventoryName startTime endTime ownerName ownerEmail').lean().exec();
     for (const b of bookings as any[]) {
       conflicts.push({
         itemId: String(b.inventoryItem),

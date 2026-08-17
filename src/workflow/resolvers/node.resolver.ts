@@ -54,10 +54,7 @@ export class WorkflowNodeResolver {
     @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState
   ): Promise<WorkflowNode> {
     const updated = (await this.nodeService.updateState(workflowNode, newState))!;
-    const serviceName =
-      (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
-      (updated as any)?.service?.name ||
-      'Service';
+    const serviceName = (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) || (updated as any)?.service?.name || 'Service';
     await this.activityService.createEvent({
       type: 'LAB_NODE_STATE_CHANGED',
       message: `Moved "${serviceName}" to ${newState}`,
@@ -77,10 +74,7 @@ export class WorkflowNodeResolver {
     @Args('assigneeDisplayName', { type: () => String, nullable: true }) assigneeDisplayName: string | null
   ): Promise<WorkflowNode> {
     const updated = (await this.nodeService.updateAssignee(workflowNode, assigneeId, assigneeDisplayName))!;
-    const serviceName =
-      (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
-      (updated as any)?.service?.name ||
-      'Service';
+    const serviceName = (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) || (updated as any)?.service?.name || 'Service';
     await this.activityService.createEvent({
       type: 'LAB_NODE_ASSIGNED',
       message: assigneeDisplayName ? `Assigned "${serviceName}" to ${assigneeDisplayName}` : `Unassigned "${serviceName}"`,
@@ -101,16 +95,10 @@ export class WorkflowNodeResolver {
     @Args('reservationEnd', { nullable: true }) reservationEnd?: Date
   ): Promise<WorkflowNode> {
     const updated = (await this.nodeService.setUsedInventory(workflowNode, inventoryIds, reservationStart ?? null, reservationEnd ?? null))!;
-    const serviceName =
-      (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
-      (updated as any)?.service?.name ||
-      'Service';
+    const serviceName = (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) || (updated as any)?.service?.name || 'Service';
     await this.activityService.createEvent({
       type: 'LAB_NODE_INVENTORY_SET',
-      message:
-        inventoryIds.length > 0
-          ? `Set inventory on "${serviceName}" (${inventoryIds.length} item${inventoryIds.length === 1 ? '' : 's'})`
-          : `Cleared inventory on "${serviceName}"`,
+      message: inventoryIds.length > 0 ? `Set inventory on "${serviceName}" (${inventoryIds.length} item${inventoryIds.length === 1 ? '' : 's'})` : `Cleared inventory on "${serviceName}"`,
       actorDisplayName: undefined,
       workflowNodeId: String(updated._id),
       serviceName
@@ -148,10 +136,7 @@ export class WorkflowNodeResolver {
     @Args('estimatedMinutes', { type: () => Float, nullable: true }) estimatedMinutes: number | null
   ): Promise<WorkflowNode> {
     const updated = (await this.nodeService.updateEstimatedMinutes(workflowNode, estimatedMinutes))!;
-    const serviceName =
-      (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) ||
-      (updated as any)?.service?.name ||
-      'Service';
+    const serviceName = (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) || (updated as any)?.service?.name || 'Service';
     await this.activityService.createEvent({
       type: 'LAB_NODE_ESTIMATE_UPDATED',
       message: estimatedMinutes != null ? `Updated estimate for "${serviceName}" to ${estimatedMinutes} min` : `Cleared estimate for "${serviceName}"`,

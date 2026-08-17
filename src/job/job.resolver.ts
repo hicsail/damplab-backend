@@ -558,8 +558,7 @@ export class JobResolver {
   }
 
   @ResolveField(() => [JobVersion], {
-    description:
-      "Saved versions of this job's workflow graph, oldest first. Staff see every row; customers see published rows plus their own."
+    description: "Saved versions of this job's workflow graph, oldest first. Staff see every row; customers see published rows plus their own."
   })
   async versions(@Parent() job: Job, @CurrentUser() user: User): Promise<JobVersion[]> {
     const all = await this.jobVersionService.listByJob(String(job._id));
@@ -569,8 +568,7 @@ export class JobResolver {
 
   @ResolveField(() => Int, {
     nullable: true,
-    description:
-      'Newest content versionNumber on the job, including unpublished staff drafts. Used by the editor conflict check; not a customer graph source.'
+    description: 'Newest content versionNumber on the job, including unpublished staff drafts. Used by the editor conflict check; not a customer graph source.'
   })
   async latestContentVersionNumber(@Parent() job: Job): Promise<number | null> {
     const all = await this.jobVersionService.listByJob(String(job._id));

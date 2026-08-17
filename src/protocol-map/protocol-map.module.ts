@@ -8,12 +8,7 @@ import { InventoryModule } from '../inventory/inventory.module';
 import { StationModule } from '../station/station.module';
 
 @Module({
-  imports: [
-    MongooseModule.forFeature([{ name: ProtocolStepMapping.name, schema: ProtocolStepMappingSchema }]),
-    ProtocolsModule,
-    InventoryModule,
-    StationModule
-  ],
+  imports: [MongooseModule.forFeature([{ name: ProtocolStepMapping.name, schema: ProtocolStepMappingSchema }]), ProtocolsModule, InventoryModule, StationModule],
   providers: [ProtocolMapService, ProtocolMapResolver],
   exports: [ProtocolMapService]
 })

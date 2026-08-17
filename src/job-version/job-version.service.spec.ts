@@ -53,7 +53,7 @@ describe('version numbers', () => {
 });
 
 describe('customer visibility filter', () => {
-  const row = (over: Record<string, unknown>) => ({
+  const row = (over: Record<string, unknown>): Record<string, unknown> & { versionNumber: number; authorRole: JobVersionAuthorRole; visibleToCustomer?: boolean | null } => ({
     versionNumber: 1000,
     authorRole: JobVersionAuthorRole.STAFF,
     visibleToCustomer: true,

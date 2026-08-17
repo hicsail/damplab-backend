@@ -115,9 +115,7 @@ export class KeycloakService {
   }
 
   private async getGroupMembers(groupId: string, first: number, max: number): Promise<KeycloakUser[]> {
-    const path = `/admin/realms/${this.realm}/groups/${groupId}/members?first=${encodeURIComponent(
-      Math.max(first ?? 0, 0)
-    )}&max=${encodeURIComponent(Math.max(max ?? 0, 0))}`;
+    const path = `/admin/realms/${this.realm}/groups/${groupId}/members?first=${encodeURIComponent(Math.max(first ?? 0, 0))}&max=${encodeURIComponent(Math.max(max ?? 0, 0))}`;
     const res = await this.fetchWithToken(path);
     if (!res.ok) {
       this.logger.warn(`Keycloak group members request failed: ${res.status} ${await res.text()}`);
@@ -138,8 +136,7 @@ export class KeycloakService {
   /** Same precedence as `JobResolver.createJob` / `AddNodeInputPipe`. */
   deriveCustomerCategoryFromGroups(groups: { name?: string; path?: string }[]): CustomerCategory | undefined {
     const claims = this.claimsFromGroupList(groups);
-    const hasGroup = (groupName: string): boolean =>
-      claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
+    const hasGroup = (groupName: string): boolean => claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
     if (hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)) return CustomerCategory.INTERNAL_CUSTOMERS;
     if (hasGroup(Role.ExternalCustomerAcademic)) return CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC;
     if (hasGroup(Role.ExternalCustomerMarket)) return CustomerCategory.EXTERNAL_CUSTOMER_MARKET;
@@ -159,15 +156,9 @@ export class KeycloakService {
    */
   private isDefaultExternalCustomer(groups: { name?: string }[]): boolean {
     const claims = this.claimsFromGroupList(groups);
-    const has = (n: string) => claims.some((e) => e === n || e.endsWith(`/${n}`));
+    const has = (n: string): boolean => claims.some((e) => e === n || e.endsWith(`/${n}`));
     if (!has(Role.ExternalCustomer)) return false;
-    return !(
-      has(Role.InternalCustomer) ||
-      has(Role.InternalCustomers) ||
-      has(Role.ExternalCustomerAcademic) ||
-      has(Role.ExternalCustomerMarket) ||
-      has(Role.ExternalCustomerNoSalary)
-    );
+    return !(has(Role.InternalCustomer) || has(Role.InternalCustomers) || has(Role.ExternalCustomerAcademic) || has(Role.ExternalCustomerMarket) || has(Role.ExternalCustomerNoSalary));
   }
 
   private rowFromUserAndGroups(user: KeycloakUser, groups: KeycloakGroup[]): KeycloakUserCustomerManagementRow {
@@ -297,11 +288,7 @@ export class KeycloakService {
     return this.findGroupInList(groups, groupName);
   }
 
-  async listUsersInGroupWithCustomerCategory(
-    groupName: string,
-    first: number,
-    max: number
-  ): Promise<KeycloakUserCustomerManagementRow[]> {
+  async listUsersInGroupWithCustomerCategory(groupName: string, first: number, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
     if (!this.isConfigured()) return [];
     const group = await this.findGroupByName(groupName);
     if (!group) return [];
@@ -324,9 +311,7 @@ export class KeycloakService {
    */
   async listAllUsersWithCustomerCategory(first: number, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
     if (!this.isConfigured()) return [];
-    const path = `/admin/realms/${this.realm}/users?first=${encodeURIComponent(
-      Math.max(first ?? 0, 0)
-    )}&max=${encodeURIComponent(Math.max(max ?? 0, 0))}`;
+    const path = `/admin/realms/${this.realm}/users?first=${encodeURIComponent(Math.max(first ?? 0, 0))}&max=${encodeURIComponent(Math.max(max ?? 0, 0))}`;
     const res = await this.fetchWithToken(path);
     if (!res.ok) {
       this.logger.warn(`Keycloak list users request failed: ${res.status} ${await res.text()}`);

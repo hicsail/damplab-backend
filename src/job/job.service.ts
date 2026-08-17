@@ -109,24 +109,12 @@ export class JobService {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
     if (archived) {
-      return this.jobModel
-        .findOneAndUpdate(
-          { _id: jobId },
-          { $set: { isArchived: true, archivedAt: new Date(), archivedBy: actor ?? 'unknown', archivedFromState: job.state } },
-          { new: true }
-        )
-        .exec();
+      return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { isArchived: true, archivedAt: new Date(), archivedBy: actor ?? 'unknown', archivedFromState: job.state } }, { new: true }).exec();
     }
     // $unset, not $set-to-undefined: Mongoose strips undefined values from $set,
     // which would leave the audit fields behind and make a restored job still
     // look archived-by-someone.
-    return this.jobModel
-      .findOneAndUpdate(
-        { _id: jobId },
-        { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } },
-        { new: true }
-      )
-      .exec();
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } }, { new: true }).exec();
   }
 
   async updateState(job: Job, newState: JobState): Promise<Job | null> {
