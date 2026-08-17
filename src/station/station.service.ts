@@ -13,7 +13,10 @@ export class StationService {
   }
 
   async findAll(includeDeleted = false): Promise<Station[]> {
-    return this.model.find(includeDeleted ? {} : { isDeleted: { $ne: true } }).sort({ name: 1 }).exec();
+    return this.model
+      .find(includeDeleted ? {} : { isDeleted: { $ne: true } })
+      .sort({ name: 1 })
+      .exec();
   }
 
   async findById(id: string): Promise<Station | null> {

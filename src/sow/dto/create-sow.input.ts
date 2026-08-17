@@ -134,8 +134,8 @@ export class CreateSOWInput {
   @Field(() => SOWPricingInput, { description: 'Pricing information' })
   pricing: SOWPricingInput;
 
-  @Field({ description: 'Terms and conditions' })
-  terms: string;
+  @Field({ description: 'Legacy free-text terms. The live document text lives on the SOW version; new SOWs need not send this.', nullable: true })
+  terms?: string;
 
   @Field({ description: 'Additional information', nullable: true })
   additionalInformation?: string;

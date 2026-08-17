@@ -65,4 +65,3 @@ export class ActivityEvent {
   @Field(() => String, { nullable: true })
   serviceName?: string | null;
 }
-

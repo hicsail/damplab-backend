@@ -1,21 +1,13 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import {
-  UsageBillingResult,
-  UsageInvoice,
-  UsageInvoiceDocument,
-  UsageLineItem,
-  UsageSow,
-  UsageSowDocument
-} from './usage-billing.model';
+import { UsageBillingResult, UsageInvoice, UsageInvoiceDocument, UsageLineItem, UsageSow, UsageSowDocument } from './usage-billing.model';
 import { GenerateUsageBillingInput } from './dtos/usage-billing.dto';
 import { BookingService } from '../booking/booking.service';
 import { Booking, BookingBillingStatus, BookingKind, BookingStatus } from '../booking/booking.model';
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
-const DEFAULT_TERMS =
-  'Net 30. This statement covers inventory/equipment usage logged at DAMPLab for the period indicated. Rates are applied per the customer category on file.';
+const DEFAULT_TERMS = 'Net 30. This statement covers inventory/equipment usage logged at DAMPLab for the period indicated. Rates are applied per the customer category on file.';
 
 @Injectable()
 export class UsageBillingService {
@@ -46,7 +38,7 @@ export class UsageBillingService {
       bookingId: String(b._id),
       label: b.inventoryName || 'Inventory item',
       detail: this.lineDetail(b),
-      usedAt: (b.usedOn || b.startTime) ? new Date(b.usedOn || b.startTime).toISOString() : undefined,
+      usedAt: b.usedOn || b.startTime ? new Date(b.usedOn || b.startTime).toISOString() : undefined,
       cost: round2(b.cost ?? 0)
     };
   }
@@ -114,11 +106,17 @@ export class UsageBillingService {
   }
 
   async findSows(ownerSub?: string): Promise<UsageSow[]> {
-    return this.sowModel.find(ownerSub ? { billToSub: ownerSub } : {}).sort({ createdAt: -1 }).exec();
+    return this.sowModel
+      .find(ownerSub ? { billToSub: ownerSub } : {})
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
   async findInvoices(ownerSub?: string): Promise<UsageInvoice[]> {
-    return this.invoiceModel.find(ownerSub ? { billToSub: ownerSub } : {}).sort({ createdAt: -1 }).exec();
+    return this.invoiceModel
+      .find(ownerSub ? { billToSub: ownerSub } : {})
+      .sort({ createdAt: -1 })
+      .exec();
   }
 
   async sowById(id: string): Promise<UsageSow | null> {

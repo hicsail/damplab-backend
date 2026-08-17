@@ -1,4 +1,4 @@
-import { UseGuards, Inject, forwardRef } from '@nestjs/common';
+import { UseGuards, Inject, forwardRef, Logger } from '@nestjs/common';
 import { Resolver, Query, Mutation, Args, ResolveField, Parent, ID } from '@nestjs/graphql';
 import { Workflow, WorkflowState } from './models/workflow.model';
 import { WorkflowService } from './workflow.service';
@@ -16,6 +16,8 @@ import { JobService } from '../job/job.service';
 @Resolver(() => Workflow)
 @UseGuards(AuthRolesGuard)
 export class WorkflowResolver {
+  private readonly logger = new Logger(WorkflowResolver.name);
+
   constructor(
     private readonly workflowService: WorkflowService,
     private readonly nodeService: WorkflowNodeService,
@@ -55,9 +57,29 @@ export class WorkflowResolver {
     return this.nodeService.getByIDs(workflow.nodes.map((node) => node._id.toString()));
   }
 
+  /**
+   * Dangling edges are dropped rather than returned.
+   *
+   * `WorkflowEdge.source`/`target` are non-nullable and throw when the node is
+   * gone, which fails the *entire* enclosing query — a single bad edge makes the
+   * whole job unreadable, for staff as well as the owner. A save that leaves an
+   * edge behind is a bug to fix at the write end (see JobVersionService), but
+   * this read path should degrade to a missing connection, not to a dead job.
+   * Warned rather than silent: dropping one is still data loss worth seeing.
+   */
   @ResolveField()
   async edges(@Parent() workflow: Workflow): Promise<WorkflowEdge[]> {
-    return this.edgeService.getByIDs(workflow.edges.map((edge) => edge._id.toString()));
+    const edges = await this.edgeService.getByIDs(workflow.edges.map((edge) => edge._id.toString()));
+    if (!edges.length) return edges;
+
+    const referenced = [...new Set(edges.flatMap((edge) => [String(edge.source), String(edge.target)]))];
+    const present = new Set((await this.nodeService.getByIDs(referenced)).map((node) => String(node._id)));
+
+    const kept = edges.filter((edge) => present.has(String(edge.source)) && present.has(String(edge.target)));
+    if (kept.length !== edges.length) {
+      this.logger.warn(`Workflow ${String(workflow._id)}: dropped ${edges.length - kept.length} edge(s) referencing missing nodes`);
+    }
+    return kept;
   }
 
   @ResolveField(() => Job, { nullable: true, description: 'The parent job this workflow belongs to' })

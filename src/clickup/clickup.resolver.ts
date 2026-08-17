@@ -57,11 +57,7 @@ export class ClickUpResolver {
   }
 
   @Mutation(() => BacklogComment, { description: 'Add a comment to a backlog card, attributed to the signed-in user.' })
-  async addBacklogComment(
-    @Args('cardId', { type: () => ID }) cardId: string,
-    @Args('body') body: string,
-    @CurrentUser() user: User
-  ): Promise<BacklogComment> {
+  async addBacklogComment(@Args('cardId', { type: () => ID }) cardId: string, @Args('body') body: string, @CurrentUser() user: User): Promise<BacklogComment> {
     // Attribution comes from the verified token, never from client input —
     // otherwise anyone could post as anyone else. Prefer the `name` claim so the
     // thread reads with real names, matching how bug reports capture reporters.

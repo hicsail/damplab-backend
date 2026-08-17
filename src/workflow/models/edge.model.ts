@@ -30,8 +30,12 @@ export class WorkflowEdge {
   target: mongoose.Types.ObjectId | WorkflowNode;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
-  @Field(() => JSON, { description: 'React Flow representation of the graph for re-generating' })
-  reactEdge: any;
+  @Field(() => JSON, {
+    nullable: true,
+    description:
+      'React Flow representation of the edge for re-generating the graph. Nullable for the same reason as WorkflowNode.reactNode: older edges have none, and selecting a non-nullable field would fail the whole query.'
+  })
+  reactEdge?: any;
 }
 
 export type WorkflowEdgeDocument = WorkflowEdge & Document;

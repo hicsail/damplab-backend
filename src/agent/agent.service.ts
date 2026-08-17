@@ -29,10 +29,7 @@ export interface AgentResult {
 export class AgentService {
   private readonly logger = new Logger(AgentService.name);
 
-  constructor(
-    private readonly dampLabServices: DampLabServices,
-    private readonly configService: ConfigService
-  ) {}
+  constructor(private readonly dampLabServices: DampLabServices, private readonly configService: ConfigService) {}
 
   /**
    * Build a compact catalog of active services for the agent. We deliberately
@@ -52,14 +49,10 @@ export class AgentService {
               name: String(p.name ?? p.id ?? ''),
               type: String(p.type ?? 'string'),
               required: !!p.required,
-              options: Array.isArray(p.options)
-                ? p.options.map((o: any) => (o && o.name ? String(o.name) : String(o))).filter(Boolean)
-                : undefined
+              options: Array.isArray(p.options) ? p.options.map((o: any) => (o && o.name ? String(o.name) : String(o))).filter(Boolean) : undefined
             }))
         : [];
-      const allowedConnections = Array.isArray(s.allowedConnections)
-        ? s.allowedConnections.map((c: any) => String(c?.id ?? c?._id ?? c)).filter(Boolean)
-        : [];
+      const allowedConnections = Array.isArray(s.allowedConnections) ? s.allowedConnections.map((c: any) => String(c?.id ?? c?._id ?? c)).filter(Boolean) : [];
       return {
         id: String(s.id ?? s._id),
         name: String(s.name ?? ''),
@@ -78,16 +71,8 @@ export class AgentService {
    *  - 'canvas'      → workflow builder, catalog injected
    *  - 'lab-status'  → reads Mongo directly via n8n, no catalog
    */
-  async runAgent(
-    agentKey: 'canvas' | 'lab-status',
-    message: string,
-    history: ChatHistoryEntry[],
-    csv?: { filename?: string; content: string } | null
-  ): Promise<AgentResult> {
-    const webhookUrl =
-      agentKey === 'lab-status'
-        ? this.configService.get<string>('agent.labStatusWebhookUrl')
-        : this.configService.get<string>('agent.webhookUrl');
+  async runAgent(agentKey: 'canvas' | 'lab-status', message: string, history: ChatHistoryEntry[], csv?: { filename?: string; content: string } | null): Promise<AgentResult> {
+    const webhookUrl = agentKey === 'lab-status' ? this.configService.get<string>('agent.labStatusWebhookUrl') : this.configService.get<string>('agent.webhookUrl');
     if (!webhookUrl) {
       throw new ServiceUnavailableException(`Agent "${agentKey}" is not configured (missing webhook URL).`);
     }
@@ -129,9 +114,7 @@ export class AgentService {
 
   private normalize(data: Partial<AgentResult> | null): AgentResult {
     const type = data?.type === 'workflow' ? 'workflow' : 'question';
-    const message = String(
-      data?.message || (type === 'question' ? 'Could you tell me more about what you want to do?' : 'Here is a suggested workflow.')
-    );
+    const message = String(data?.message || (type === 'question' ? 'Could you tell me more about what you want to do?' : 'Here is a suggested workflow.'));
     const wf = data?.workflow && typeof data.workflow === 'object' ? data.workflow : { nodes: [], edges: [] };
     return {
       type,

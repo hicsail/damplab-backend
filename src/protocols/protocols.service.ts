@@ -146,9 +146,7 @@ export class ProtocolsService {
       }
     }
 
-    const url =
-      (typeof p.url === 'string' && p.url) ||
-      (typeof p.uri === 'string' ? `https://www.protocols.io/view/${p.uri}` : `https://www.protocols.io/view/${idOrSlug}`);
+    const url = (typeof p.url === 'string' && p.url) || (typeof p.uri === 'string' ? `https://www.protocols.io/view/${p.uri}` : `https://www.protocols.io/view/${idOrSlug}`);
 
     return {
       id: String(numericId ?? idOrSlug),

@@ -1,14 +1,24 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { SOW, SOWSchema } from './sow.model';
+import { SowVersion, SowVersionSchema } from './sow-version.model';
 import { SOWService } from './sow.service';
+import { SowVersionService } from './sow-version.service';
 import { SOWResolver } from './sow.resolver';
+import { SowVersionFieldsResolver } from './sow-version-fields.resolver';
 import { JobModule } from '../job/job.module';
 import { DampLabServicesModule } from '../services/damplab-services.module';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: SOW.name, schema: SOWSchema }]), forwardRef(() => JobModule), DampLabServicesModule],
-  providers: [SOWService, SOWResolver],
-  exports: [SOWService]
+  imports: [
+    MongooseModule.forFeature([
+      { name: SOW.name, schema: SOWSchema },
+      { name: SowVersion.name, schema: SowVersionSchema }
+    ]),
+    forwardRef(() => JobModule),
+    DampLabServicesModule
+  ],
+  providers: [SOWService, SowVersionService, SOWResolver, SowVersionFieldsResolver],
+  exports: [SOWService, SowVersionService]
 })
 export class SOWModule {}

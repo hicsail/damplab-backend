@@ -46,8 +46,12 @@ export class WorkflowNode {
   formData: any;
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
-  @Field(() => JSON, { description: 'React Flow representation of the graph for re-generating' })
-  reactNode: JSON;
+  @Field(() => JSON, {
+    nullable: true,
+    description:
+      'React Flow representation of the node (including its canvas position) for re-generating the graph. Nullable: nodes created before this was persisted, or through paths that never set it, have none — and a non-nullable field would make merely selecting it fail the whole job query.'
+  })
+  reactNode?: JSON;
 
   @Prop({ requied: true, default: WorkflowNodeState.QUEUED })
   @Field(() => WorkflowNodeState, { description: 'Where in the process is the current node' })
@@ -76,8 +80,7 @@ export class WorkflowNode {
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' }], required: false, default: [] })
   @Field(() => [String], {
     nullable: true,
-    description:
-      'Inventory items currently held by this node while it is IN_PROGRESS. Cleared automatically on transition out of IN_PROGRESS.'
+    description: 'Inventory items currently held by this node while it is IN_PROGRESS. Cleared automatically on transition out of IN_PROGRESS.'
   })
   usedInventory?: mongoose.Types.ObjectId[];
 

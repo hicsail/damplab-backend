@@ -12,6 +12,7 @@ import { SOWModule } from '../sow/sow.module';
 import { JobAttachmentsService } from './job-attachments.service';
 import { JobFeedStatusEntity, JobFeedStatusEntitySchema } from './job-feed-status.model';
 import { ActivityModule } from '../activity/activity.module';
+import { JobVersionModule } from '../job-version/job-version.module';
 
 @Module({
   imports: [
@@ -23,7 +24,8 @@ import { ActivityModule } from '../activity/activity.module';
     forwardRef(() => WorkflowModule),
     forwardRef(() => CommentModule),
     forwardRef(() => SOWModule),
-    ActivityModule
+    ActivityModule,
+    JobVersionModule
   ],
   providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService],
   exports: [JobService, JobAttachmentsService]

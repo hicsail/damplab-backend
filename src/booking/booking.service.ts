@@ -25,11 +25,7 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 @Injectable()
 export class BookingService {
-  constructor(
-    @InjectModel(Booking.name) private readonly model: Model<BookingDocument>,
-    private readonly inventoryService: InventoryService,
-    private readonly availability: AvailabilityService
-  ) {}
+  constructor(@InjectModel(Booking.name) private readonly model: Model<BookingDocument>, private readonly inventoryService: InventoryService, private readonly availability: AvailabilityService) {}
 
   /** Resolve the $/hour or $/unit rate for a customer category from a Pricing object. */
   private resolveRate(pricing: any, category?: string): number | undefined {
@@ -135,17 +131,12 @@ export class BookingService {
     };
 
     if (b.kind === BookingKind.TIMED) {
-      const hours =
-        actualHours != null
-          ? actualHours
-          : b.startTime && b.endTime
-            ? (new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 3_600_000
-            : 0;
+      const hours = actualHours != null ? actualHours : b.startTime && b.endTime ? (new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 3_600_000 : 0;
       if (hours < 0) throw new BadRequestException('Hours cannot be negative.');
       update.actualHours = round2(hours);
       update.cost = rate != null ? round2(hours * rate) : b.cost;
     } else {
-      const qty = actualQuantity != null ? actualQuantity : (b.quantity ?? 0);
+      const qty = actualQuantity != null ? actualQuantity : b.quantity ?? 0;
       if (qty < 0) throw new BadRequestException('Quantity cannot be negative.');
       update.actualQuantity = qty;
       update.cost = rate != null ? round2(qty * rate) : b.cost;

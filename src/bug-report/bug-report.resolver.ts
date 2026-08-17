@@ -14,11 +14,7 @@ import { BugTriageNotifier } from './bug-triage-notifier.service';
 export class BugReportResolver {
   private readonly logger = new Logger(BugReportResolver.name);
 
-  constructor(
-    private readonly bugReportService: BugReportService,
-    private readonly bugReportAttachmentsService: BugReportAttachmentsService,
-    private readonly triageNotifier: BugTriageNotifier
-  ) {}
+  constructor(private readonly bugReportService: BugReportService, private readonly bugReportAttachmentsService: BugReportAttachmentsService, private readonly triageNotifier: BugTriageNotifier) {}
 
   @Query(() => BugReportsResult, {
     description: 'List all bug reports, optionally filtered by search text and reporter.'

@@ -42,6 +42,14 @@ interface ServiceParameterDefinition {
 
 export type CustomerCategory = 'INTERNAL_CUSTOMERS' | 'EXTERNAL_CUSTOMER_ACADEMIC' | 'EXTERNAL_CUSTOMER_MARKET' | 'EXTERNAL_CUSTOMER_NO_SALARY';
 
+/**
+ * Id of the universal run count. The UI injects it into formData for every service
+ * rather than adding it to each service's stored parameters, so it will not appear
+ * in service.parameters and has to be read straight from formData.
+ * Must stay in sync with RUN_COUNT_PARAM_ID in damplab-ui/src/utils/servicePricing.ts.
+ */
+export const RUN_COUNT_PARAM_ID = '__runCount';
+
 function normalizePrice(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
@@ -93,107 +101,62 @@ function resolveCategoryPrice(
   return normalizePrice(pricing?.legacy ?? input.price);
 }
 
-function calculateParameterCost(parameters: unknown, rawFormData: unknown): number {
-  if (!Array.isArray(parameters)) return 0;
-
-  const paramsById = new Map<string, ServiceParameterDefinition>();
-  for (const param of parameters as ServiceParameterDefinition[]) {
-    if (!param || typeof param !== 'object') continue;
-    const id = typeof param.id === 'string' ? param.id : undefined;
-    if (!id) continue;
-    paramsById.set(id, param);
+function resolveQty(rawValue: unknown): number | undefined {
+  if (Array.isArray(rawValue)) {
+    let sum = 0;
+    let hasAny = false;
+    for (const v of rawValue) {
+      const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+      if (!Number.isFinite(n)) continue;
+      hasAny = true;
+      sum += n;
+    }
+    return hasAny ? sum : undefined;
   }
-
-  const multiValueParamIds = getMultiValueParamIds(parameters);
-  const formData = normalizeFormDataToArray(rawFormData, multiValueParamIds);
-  const formDataMap = new Map(formData.map((entry) => [entry.id, entry.value]));
-
-  let total = 0;
-
-  paramsById.forEach((param, id) => {
-    const rawValue = formDataMap.get(id);
-    const isMulti = multiValueParamIds.has(id) || Array.isArray(rawValue);
-
-    const options = Array.isArray(param.options) ? param.options : undefined;
-    const hasOptionPricing =
-      typeof param.type === 'string' && (param.type === 'dropdown' || param.type === 'enum') && !!options && options.some((opt) => resolveCategoryPrice(opt, undefined) !== undefined);
-
-    // When dropdown options have prices, use option-level pricing.
-    if (hasOptionPricing && options) {
-      const valuesArray = Array.isArray(rawValue) ? rawValue : rawValue != null ? [rawValue] : [];
-
-      for (const v of valuesArray) {
-        if (v === null || v === undefined || v === '') continue;
-        const optId = String(v);
-        const opt = options.find((o) => typeof o.id === 'string' && o.id === optId);
-        if (!opt) continue;
-        const price = resolveCategoryPrice(opt, undefined);
-        if (price === undefined) continue;
-        total += price;
-      }
-
-      return;
-    }
-
-    // Fallback: parameter-level pricing using per-parameter price and count of values.
-    const unitPrice = resolveCategoryPrice(param, undefined);
-    if (unitPrice === undefined) return;
-
-    let quantity = 0;
-    if (isMulti) {
-      if (Array.isArray(rawValue)) quantity = rawValue.length;
-      else if (rawValue !== null && rawValue !== undefined) quantity = 1;
-    } else if (rawValue !== null && rawValue !== undefined) {
-      quantity = 1;
-    }
-    if (quantity === 0) return;
-
-    total += unitPrice * quantity;
-  });
-
-  return total;
+  const n = typeof rawValue === 'number' ? rawValue : typeof rawValue === 'string' && rawValue.trim() !== '' ? Number(rawValue) : NaN;
+  return Number.isFinite(n) ? n : undefined;
 }
 
 function getMultiplier(parameters: unknown, rawFormData: unknown): number {
-  if (!Array.isArray(parameters)) return 1;
-
   const multiValueParamIds = getMultiValueParamIds(parameters);
   const formData = normalizeFormDataToArray(rawFormData, multiValueParamIds);
   const formDataMap = new Map(formData.map((entry) => [entry.id, entry.value]));
 
   let multiplier = 1;
 
-  for (const param of parameters as ServiceParameterDefinition[]) {
-    if (!param || typeof param !== 'object') continue;
-    if (param.isPriceMultiplier !== true) continue;
-    const id = typeof param.id === 'string' ? param.id : undefined;
-    if (!id) continue;
+  // Universal run count, read straight from formData: the UI injects it for every
+  // service, so it is absent from service.parameters and the loop below cannot see it.
+  const runCountQty = resolveQty(formDataMap.get(RUN_COUNT_PARAM_ID));
+  if (runCountQty !== undefined) multiplier *= runCountQty;
 
-    const rawValue = formDataMap.get(id);
-    if (rawValue === null || rawValue === undefined) continue;
+  // Any further multiplier parameters the service declares for itself. The run count
+  // is skipped here so a service that also declares it is not counted twice.
+  if (Array.isArray(parameters)) {
+    for (const param of parameters as ServiceParameterDefinition[]) {
+      if (!param || typeof param !== 'object') continue;
+      if (param.isPriceMultiplier !== true) continue;
+      const id = typeof param.id === 'string' ? param.id : undefined;
+      if (!id || id === RUN_COUNT_PARAM_ID) continue;
 
-    let qty: number | undefined;
-
-    if (Array.isArray(rawValue)) {
-      let sum = 0;
-      let hasAny = false;
-      for (const v of rawValue) {
-        const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
-        if (!Number.isFinite(n)) continue;
-        hasAny = true;
-        sum += n;
-      }
-      qty = hasAny ? sum : undefined;
-    } else {
-      const n = typeof rawValue === 'number' ? rawValue : typeof rawValue === 'string' && rawValue.trim() !== '' ? Number(rawValue) : NaN;
-      qty = Number.isFinite(n) ? n : undefined;
+      const qty = resolveQty(formDataMap.get(id));
+      if (qty === undefined) continue;
+      multiplier *= qty;
     }
-
-    if (qty === undefined) continue;
-    multiplier *= qty;
   }
 
   return multiplier;
+}
+
+/**
+ * The universal run-count value for a node, if any — the same figure
+ * getMultiplier folds into cost. Exposed separately so the Fee Schedule editor
+ * can show staff what multiplier is baked into a line's total, since the
+ * total itself doesn't say.
+ */
+export function extractRunCount(rawFormData: unknown): number | undefined {
+  const formData = normalizeFormDataToArray(rawFormData, new Set());
+  const entry = formData.find((e) => e.id === RUN_COUNT_PARAM_ID);
+  return entry ? resolveQty(entry.value) : undefined;
 }
 
 export function calculateServiceCost(service: DampLabService, rawFormData: unknown, fallbackCost?: number, customerCategory?: CustomerCategory): number {

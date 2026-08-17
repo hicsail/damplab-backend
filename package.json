@@ -21,7 +21,8 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --forceExit --detectOpenHandles",
-    "initdb": "cd ./scripts; npm install; npm run build; node --env-file=../.env ./bin/dev load all"
+    "initdb": "cd ./scripts; npm install; npm run build; node --env-file=../.env ./bin/dev load all",
+    "migrate:sows": "node --env-file=.env dist/src/sow/migrate-sows.js"
   },
   "dependencies": {
     "@apollo/server": "^5.2.0",

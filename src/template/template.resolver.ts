@@ -3,7 +3,6 @@ import { Template } from './template.model';
 import { TemplateService } from './template.service';
 import { CreateTemplateInput } from './dto/create-template.input';
 import { UpdateTemplateInput } from './dto/update-template.input';
-import { NotFoundException } from '@nestjs/common';
 
 @Resolver(() => Template)
 export class TemplateResolver {
