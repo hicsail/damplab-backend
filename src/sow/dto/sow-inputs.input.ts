@@ -56,8 +56,14 @@ export class SowInputsInput {
   @Field({ nullable: true, defaultValue: '' })
   projectManager?: string;
 
+  @Field({ nullable: true, description: 'Keycloak sub of the project manager' })
+  projectManagerId?: string;
+
   @Field({ nullable: true, defaultValue: '' })
   projectLead?: string;
+
+  @Field({ nullable: true, description: 'Keycloak sub of the project lead' })
+  projectLeadId?: string;
 
   @Field(() => [SowPeriodInput], { nullable: true, defaultValue: [] })
   periods?: SowPeriodInput[];

@@ -71,9 +71,17 @@ export class SOWResources {
   @Field({ description: 'Project manager assigned to the project' })
   projectManager: string;
 
+  @Prop({ required: false })
+  @Field({ description: 'Keycloak sub of the project manager', nullable: true })
+  projectManagerId?: string;
+
   @Prop({ required: true })
   @Field({ description: 'Project lead assigned to the project' })
   projectLead: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'Keycloak sub of the project lead', nullable: true })
+  projectLeadId?: string;
 }
 
 @Schema()
