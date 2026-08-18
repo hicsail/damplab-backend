@@ -165,9 +165,17 @@ export class SowVersionInputs {
   @Field({ defaultValue: '' })
   projectManager: string;
 
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Keycloak sub of the project manager' })
+  projectManagerId?: string;
+
   @Prop({ required: true, default: '' })
   @Field({ defaultValue: '' })
   projectLead: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Keycloak sub of the project lead' })
+  projectLeadId?: string;
 
   @Prop({ type: [mongoose.Schema.Types.Mixed], default: [] })
   @Field(() => [SowPeriod])

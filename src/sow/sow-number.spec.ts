@@ -10,7 +10,7 @@ function serviceWith(sowNumbers: string[]): SOWService {
   const model: any = {
     find: () => ({ lean: () => ({ exec: async () => sowNumbers.map((sowNumber) => ({ sowNumber })) }) })
   };
-  return new SOWService(model, {} as any, {} as any, {} as any);
+  return new SOWService(model, {} as any, {} as any, {} as any, {} as any, {} as any);
 }
 
 describe('parseSowNumber', () => {

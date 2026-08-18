@@ -31,7 +31,7 @@ function harness(opts: { existingSow?: unknown; job?: unknown; deliverablesById?
     findById: async () => (opts.job === undefined ? { _id: 'job1', name: 'Job', username: 'jdoe', email: 'j@bu.edu', institute: 'BU' } : opts.job)
   };
 
-  const service = new SOWService(sowModel, dampLabServices, jobService, {} as any);
+  const service = new SOWService(sowModel, dampLabServices, jobService, {} as any, {} as any, {} as any);
   // `create` is covered by its own tests; here we only care what it is handed.
   (service as any).create = async (input: CreateSOWInput): Promise<unknown> => {
     created.push(input);

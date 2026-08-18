@@ -136,7 +136,8 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
 
   const sowService: any = {
     applyDocumentBilling: async () => sow,
-    getJobForSow: async () => ({ customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', jobId: '04217', sub: 'sub-owner', email: 'client@lab.org' })
+    getJobForSow: async () => ({ customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', jobId: '04217', sub: 'sub-owner', email: 'client@lab.org' }),
+    autoAssignProjectLead: async () => undefined
   };
 
   return { service: new SowVersionService(versionModel, sowModel, sowService), sow, versions };

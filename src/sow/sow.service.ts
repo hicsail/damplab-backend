@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { SOW, SOWDocument, SOWStatus, SOWSignature, SOWSignatureRole } from './sow.model';
@@ -12,9 +12,13 @@ import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCost, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
+import { WorkflowService } from '../workflow/workflow.service';
+import { WorkflowNodeService } from '../workflow/services/node.service';
 
 @Injectable()
 export class SOWService {
+  private readonly logger = new Logger(SOWService.name);
+
   constructor(
     @InjectModel(SOW.name) private readonly sowModel: Model<SOWDocument>,
     private readonly dampLabServices: DampLabServices,
@@ -23,7 +27,11 @@ export class SOWService {
     // Circular by design: SOWService creates version 1, and SowVersionService
     // writes billing changes back through SOWService. Both sides need forwardRef.
     @Inject(forwardRef(() => SowVersionService))
-    private readonly sowVersionService: SowVersionService
+    private readonly sowVersionService: SowVersionService,
+    @Inject(forwardRef(() => WorkflowService))
+    private readonly workflowService: WorkflowService,
+    @Inject(forwardRef(() => WorkflowNodeService))
+    private readonly workflowNodeService: WorkflowNodeService
   ) {}
 
   /**
@@ -627,7 +635,9 @@ export class SOWService {
    */
   async upsertForJob(jobId: string, createSOWInput: CreateSOWInput): Promise<SOW> {
     const existingSOW = await this.findByJobId(jobId);
+    const previousLeadId = existingSOW?.resources?.projectLeadId;
 
+    let result: SOW;
     if (existingSOW) {
       // Update existing SOW (do not pass sowNumber — it stays server-assigned)
       const updateInput: UpdateSOWInput = {
@@ -647,10 +657,48 @@ export class SOWService {
         additionalInformation: createSOWInput.additionalInformation,
         status: createSOWInput.status
       };
-      return this.update(existingSOW._id, updateInput);
+      result = await this.update(existingSOW._id, updateInput);
     } else {
       // Create new SOW
-      return this.create(createSOWInput);
+      result = await this.create(createSOWInput);
+    }
+
+    // Auto-assign the Project Lead to unassigned workflow nodes
+    await this.autoAssignProjectLead(jobId, createSOWInput.resources?.projectLeadId, createSOWInput.resources?.projectLead, previousLeadId);
+
+    return result;
+  }
+
+  /**
+   * Auto-assign the Project Lead to workflow nodes on a job.
+   * Only assigns nodes that have no assignee or that were assigned to the previous lead.
+   */
+  async autoAssignProjectLead(jobId: string, projectLeadId?: string, projectLeadName?: string, previousLeadId?: string): Promise<void> {
+    if (!projectLeadId || !projectLeadName) return;
+
+    try {
+      const job = await this.jobService.findById(jobId);
+      if (!job?.workflows?.length) return;
+
+      for (const workflowId of job.workflows) {
+        const workflow = await this.workflowService.findById(String(workflowId));
+        if (!workflow?.nodes?.length) continue;
+
+        const nodeIds = workflow.nodes.map((n: any) => String(n));
+        const nodes = await this.workflowNodeService.getByIDs(nodeIds);
+
+        for (const node of nodes) {
+          const currentAssignee = node.assigneeId;
+          // Assign if: no assignee, or previously assigned to the old lead
+          if (!currentAssignee || (previousLeadId && currentAssignee === previousLeadId)) {
+            await this.workflowNodeService.updateAssignee(node, projectLeadId, projectLeadName);
+          }
+        }
+      }
+
+      this.logger.log(`Auto-assigned Project Lead "${projectLeadName}" to unassigned nodes on job ${jobId}`);
+    } catch (err) {
+      this.logger.warn(`Failed to auto-assign Project Lead for job ${jobId}: ${err?.message ?? err}`);
     }
   }
 }

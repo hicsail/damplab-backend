@@ -402,7 +402,9 @@ export class SowVersionService {
     const inputs: SowVersionInputs = {
       ...derived,
       projectManager: input.inputs.projectManager ?? '',
+      projectManagerId: input.inputs.projectManagerId ?? undefined,
       projectLead: input.inputs.projectLead ?? '',
+      projectLeadId: input.inputs.projectLeadId ?? undefined,
       periods: (input.inputs.periods ?? []).map((p) => ({ startDate: new Date(p.startDate), durationDays: p.durationDays, label: p.label })),
       sowTitle: input.inputs.sowTitle ?? '',
       scopeOfWork: input.inputs.scopeOfWork ?? [],
@@ -436,6 +438,10 @@ export class SowVersionService {
     });
 
     await this.sowModel.findByIdAndUpdate(sowId, { $set: { currentVersionNumber: versionNumber, documentStale: false, updatedAt: new Date() } }).exec();
+
+    // Auto-assign Project Lead to unassigned workflow nodes
+    const previousLeadId = current?.inputs?.projectLeadId;
+    await this.sowService.autoAssignProjectLead(fresh.jobId, input.inputs.projectLeadId, input.inputs.projectLead, previousLeadId);
 
     return created;
   }

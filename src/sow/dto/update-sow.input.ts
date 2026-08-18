@@ -19,8 +19,14 @@ export class UpdateSOWResourcesInput {
   @Field({ description: 'Project manager assigned to the project', nullable: true })
   projectManager?: string;
 
+  @Field({ description: 'Keycloak sub of the project manager', nullable: true })
+  projectManagerId?: string;
+
   @Field({ description: 'Project lead assigned to the project', nullable: true })
   projectLead?: string;
+
+  @Field({ description: 'Keycloak sub of the project lead', nullable: true })
+  projectLeadId?: string;
 }
 
 @InputType()
