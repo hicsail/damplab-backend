@@ -29,13 +29,49 @@ export interface SowDocumentContext {
 
 const DEFAULT_SOW_TITLE = 'Agreement to Perform Research Operations';
 
+/** The lab's timezone. Every instant in the document reads in DAMP Lab local
+ *  time, so a SOW says the same thing to a reader in Boston and one in Auckland. */
+const LAB_TIME_ZONE = 'America/New_York';
+
+/**
+ * A period date is a *calendar day*, not an instant: it is stored as that day's
+ * UTC midnight and must be read back the same way. Formatting it in the lab's
+ * zone would slip it to the previous day — the whole point of the UTC anchor.
+ * Matches sowDateToPickerValue/formatSOWDate in damplab-ui.
+ */
 function formatDate(value: Date | string | undefined): string {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return '';
-  // Matches formatSOWDate in damplab-ui: month name, day, full year, in UTC so a
-  // date-only value does not slip a day for readers west of Greenwich.
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+}
+
+/**
+ * The lab's calendar day for an instant, encoded the way every period date is:
+ * that day's UTC midnight. Use this whenever a real moment has to become a
+ * calendar day — `new Date()` straight into a period start makes a SOW created
+ * at 8pm in Boston claim it starts tomorrow.
+ */
+export function labCalendarDay(instant: Date = new Date()): Date {
+  // en-CA formats as YYYY-MM-DD, which is exactly the anchor we need.
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: LAB_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant);
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+/**
+ * An instant — when something actually happened, e.g. the agreement date. Read
+ * in the lab's zone, since that is the day it happened *here*.
+ */
+function formatInstant(value: Date | string | undefined): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: LAB_TIME_ZONE });
+}
+
+/** "1 day", not "1 days". */
+function days(n: number): string {
+  return `${n} ${n === 1 ? 'day' : 'days'}`;
 }
 
 function formatCurrency(amount: number): string {
@@ -104,18 +140,20 @@ function buildTitle(inputs: SowVersionInputs, ctx: SowDocumentContext): string {
 
 function buildParties(ctx: SowDocumentContext): string {
   const lines = [
-    `Date of Agreement: ${formatDate(ctx.date)}`,
+    `Date of Agreement: ${formatInstant(ctx.date)}`,
     '',
     'Operations Performed By:',
-    'Trustees of Boston University',
-    'DAMP Lab of Boston University',
+    'DAMP Lab',
     '610 Commonwealth Avenue',
     'Boston, MA 02215',
     '',
     `Operations Performed For: ${ctx.clientName ?? ''}`
   ];
   if (ctx.clientInstitution) lines.push(ctx.clientInstitution);
-  if (ctx.clientAddress) lines.push(ctx.clientAddress);
+  // A job carries an institute but no separate address, so older SOWs stored the
+  // institute in both fields. Printing it twice is never what was meant.
+  const sameAsInstitution = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+  if (ctx.clientAddress && !sameAsInstitution(ctx.clientAddress, ctx.clientInstitution ?? '')) lines.push(ctx.clientAddress);
   return lines.join('\n');
 }
 
@@ -123,9 +161,14 @@ function buildPeriodOfPerformance(inputs: SowVersionInputs): string {
   const periods = (inputs.periods ?? []).filter((p) => p && p.startDate);
   if (periods.length === 0) return '';
 
+  // A one-day period starts and ends on the same date, so a range would name
+  // that date twice. Say it once instead — here and in the bullets below.
   if (periods.length === 1) {
     const p = periods[0];
-    return `The total turn-around time is estimated to be within ${p.durationDays} days from the start date. Therefore, the services herewith mentioned shall commence on ${formatDate(
+    if ((p.durationDays ?? 0) <= 1) {
+      return `The total turn-around time is estimated to be a single day. Therefore, the services herewith mentioned shall be performed on ${formatDate(p.startDate)}.`;
+    }
+    return `The total turn-around time is estimated to be within ${days(p.durationDays)} from the start date. Therefore, the services herewith mentioned shall commence on ${formatDate(
       p.startDate
     )} and continue until ${formatDate(periodEndDate(p))}.`;
   }
@@ -135,10 +178,15 @@ function buildPeriodOfPerformance(inputs: SowVersionInputs): string {
   // to the latest end, not the sum of each period's working days.
   const rows = periods.map((p, i) => {
     const label = (p.label || '').trim() || `Period ${i + 1}`;
-    return `${label}: ${p.durationDays} days, from ${formatDate(p.startDate)} through ${formatDate(periodEndDate(p))}`;
+    if ((p.durationDays ?? 0) <= 1) return `${label}: 1 day, on ${formatDate(p.startDate)}`;
+    return `${label}: ${days(p.durationDays)}, from ${formatDate(p.startDate)} through ${formatDate(periodEndDate(p))}`;
   });
   const span = periodOfPerformanceSpan(periods);
-  const summary = span ? `The overall period of performance is estimated to be ${span.days} days, from ${formatDate(span.start)} through ${formatDate(span.end)}.` : '';
+  const summary = span
+    ? span.days <= 1
+      ? `The overall period of performance is estimated to be a single day, on ${formatDate(span.start)}.`
+      : `The overall period of performance is estimated to be ${days(span.days)}, from ${formatDate(span.start)} through ${formatDate(span.end)}.`
+    : '';
   return ['The Operations shall be performed over the following periods:', bulletList(rows), summary].join('\n');
 }
 
