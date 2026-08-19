@@ -160,6 +160,34 @@ describe('fee schedule text', () => {
     expect(v).toContain('Total: $350.00');
   });
 
+  it('shows the base price and multiplier behind a multiplied line', () => {
+    const v = calculateFieldValues(inputs({ services: [{ serviceId: 's1', name: 'Next-gen sequencing', description: '', cost: 350, unitCost: 5, multiplier: 70 }] }), ctx).feeSchedule;
+    expect(v).toContain('- Next-gen sequencing — $5.00 x 70 = $350.00');
+  });
+
+  it('quotes one figure when nothing multiplies the line', () => {
+    const v = calculateFieldValues(inputs({ services: [{ serviceId: 's1', name: 'Next-gen sequencing', description: '', cost: 350, unitCost: 350, multiplier: 1 }] }), ctx).feeSchedule;
+    expect(v).toContain('- Next-gen sequencing — $350.00');
+  });
+
+  it('writes a fractional multiplier without a spurious .00', () => {
+    const v = calculateFieldValues(inputs({ services: [{ serviceId: 's1', name: 'Next-gen sequencing', description: '', cost: 12.5, unitCost: 5, multiplier: 2.5 }] }), ctx).feeSchedule;
+    expect(v).toContain('- Next-gen sequencing — $5.00 x 2.5 = $12.50');
+  });
+
+  /**
+   * mergeCalculatedFields regenerates this text on every load, including on a
+   * version that is already sent, signed or finalized — and Fee Schedule has no
+   * text override to fall back on. A line stored before unit prices existed must
+   * therefore render exactly as it always did, never with a base recovered by
+   * dividing the total.
+   */
+  it('leaves a line stored before unit prices existed exactly as it was', () => {
+    const v = calculateFieldValues(inputs({ services: [{ serviceId: 's1', name: 'Next-gen sequencing', description: '', cost: 350, runCount: 70 } as any] }), ctx).feeSchedule;
+    expect(v).toContain('- Next-gen sequencing — $350.00');
+    expect(v).not.toContain('x 70');
+  });
+
   it('shows a discount as negative and an additional cost as positive', () => {
     const v = calculateFieldValues(
       inputs({

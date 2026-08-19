@@ -158,15 +158,23 @@ export class SOWService {
   description: string;
 
   @Prop({ required: true })
-  @Field(() => Float, { description: 'Cost of the service' })
+  @Field(() => Float, { description: 'What this line bills: unitCost x multiplier' })
   cost: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Price of a single run, before the multiplier. Absent on lines written before unit prices were recorded.' })
+  unitCost?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Everything baked into cost on top of unitCost — the run count and any other multiplier parameter.' })
+  multiplier?: number;
 
   @Prop({ required: true })
   @Field({ description: 'Category of the service' })
   category: string;
 
   @Prop({ required: false })
-  @Field(() => Float, { nullable: true, description: 'The run-count multiplier baked into cost, if the underlying node has one. Informational — cost is the figure invoices read.' })
+  @Field(() => Float, { nullable: true, description: 'The run count alone. Superseded by multiplier for display; kept because existing documents carry it.' })
   runCount?: number;
 }
 

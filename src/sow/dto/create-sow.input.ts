@@ -79,8 +79,11 @@ export class SOWServiceInput {
   @Field({ description: 'Description of the service' })
   description: string;
 
-  @Field(() => Float, { description: 'Cost of the service', nullable: true })
+  @Field(() => Float, { description: 'Cost of the service. Used only as a fallback when the service record carries no price of its own.', nullable: true })
   cost?: number;
+
+  @Field(() => Float, { description: 'Price of a single run, preferred over cost as the fallback: cost is already multiplied.', nullable: true })
+  unitCost?: number;
 
   @Field(() => JSON, { description: 'Parameter values for pricing', nullable: true })
   formData?: any;

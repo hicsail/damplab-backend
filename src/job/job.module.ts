@@ -13,6 +13,7 @@ import { JobAttachmentsService } from './job-attachments.service';
 import { JobFeedStatusEntity, JobFeedStatusEntitySchema } from './job-feed-status.model';
 import { ActivityModule } from '../activity/activity.module';
 import { JobVersionModule } from '../job-version/job-version.module';
+import { KeycloakModule } from '../keycloak/keycloak.module';
 
 @Module({
   imports: [
@@ -25,7 +26,8 @@ import { JobVersionModule } from '../job-version/job-version.module';
     forwardRef(() => CommentModule),
     forwardRef(() => SOWModule),
     ActivityModule,
-    JobVersionModule
+    JobVersionModule,
+    KeycloakModule
   ],
   providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService],
   exports: [JobService, JobAttachmentsService]

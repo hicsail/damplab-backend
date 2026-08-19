@@ -45,6 +45,12 @@ function formatCurrency(amount: number): string {
   return `${n < 0 ? '-' : ''}$${magnitude}`;
 }
 
+/** A multiplier reads as "10", not "10.00" — but it is not always a whole
+ *  number, so a fixed precision is wrong in the other direction too. */
+function formatMultiplier(value: number): string {
+  return String(Number(value.toFixed(4)));
+}
+
 export function periodEndDate(period: SowPeriod): Date {
   const start = period.startDate instanceof Date ? period.startDate : new Date(period.startDate);
   const end = new Date(start.getTime());
@@ -152,7 +158,18 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
     ''
   ];
 
-  const serviceRows = (inputs.services ?? []).map((s) => `${s.name} — ${formatCurrency(s.cost)}`);
+  const serviceRows = (inputs.services ?? []).map((s) => {
+    const multiplier = Number(s.multiplier);
+    // A line written before unit prices were recorded has only its total to
+    // quote. Deriving a base by dividing the total would rewrite the figures on
+    // documents that are already sent, signed or finalized — every load
+    // regenerates this text (see mergeCalculatedFields) and Fee Schedule has no
+    // text override to fall back on.
+    if (s.unitCost == null || !Number.isFinite(multiplier) || multiplier === 1) {
+      return `${s.name} — ${formatCurrency(s.cost)}`;
+    }
+    return `${s.name} — ${formatCurrency(s.unitCost)} x ${formatMultiplier(multiplier)} = ${formatCurrency(s.cost)}`;
+  });
   lines.push(...(serviceRows.length ? [bulletList(serviceRows)] : ['- No services listed']));
 
   const adjustments = inputs.adjustments ?? [];

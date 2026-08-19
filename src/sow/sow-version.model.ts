@@ -125,11 +125,19 @@ export class SowVersionService {
   description: string;
 
   @Prop({ required: true })
-  @Field(() => Float)
+  @Field(() => Float, { description: 'What this line bills: unitCost x multiplier' })
   cost: number;
 
   @Prop({ required: false })
-  @Field(() => Float, { nullable: true, description: 'The run-count multiplier baked into cost, if the underlying node has one. Informational only — Fee Schedule has no control to edit it.' })
+  @Field(() => Float, { nullable: true, description: 'Price of a single run, before the multiplier. This is what the Fee Schedule editor edits; cost follows from it.' })
+  unitCost?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Everything baked into cost on top of unitCost. Read-only — it comes from the workflow, not the document.' })
+  multiplier?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'The run count alone. Superseded by multiplier for display; kept because existing versions carry it.' })
   runCount?: number;
 }
 

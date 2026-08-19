@@ -10,10 +10,13 @@ import { Job } from '../job/job.model';
 import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
-import { calculateServiceCost, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
+import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
+
+/** Money, kept to cents: a unit price times a multiplier is prone to binary drift. */
+const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 @Injectable()
 export class SOWService {
@@ -158,7 +161,9 @@ export class SOWService {
         if (!serviceRecord || serviceRecord.isDeleted === true) {
           throw new NotFoundException(`Service with ID ${service.id} not found`);
         }
-        const cost = calculateServiceCost(serviceRecord, service.formData, service.cost, customerCategory);
+        // The fallback is a *unit* price, so prefer an incoming unitCost: passing a
+        // line total here would see it multiplied a second time.
+        const { unitCost, multiplier, cost } = calculateServiceCostBreakdown(serviceRecord, service.formData, service.unitCost ?? service.cost, customerCategory);
         const runCount = extractRunCount(service.formData);
         return {
           _id: service.id,
@@ -166,6 +171,8 @@ export class SOWService {
           name: service.name,
           description: service.description,
           cost,
+          unitCost,
+          multiplier,
           category: service.category,
           runCount
         };
@@ -248,7 +255,10 @@ export class SOWService {
    * onto the wrong service — that's what "applied only to lines that already
    * exist" means in practice.
    */
-  async applyDocumentBilling(sowId: string, changes: { serviceCosts?: Array<{ serviceId: string; cost: number }>; adjustments?: CreateSOWInput['pricing']['adjustments'] }): Promise<SOW> {
+  async applyDocumentBilling(
+    sowId: string,
+    changes: { serviceCosts?: Array<{ serviceId: string; unitCost?: number; cost?: number }>; adjustments?: CreateSOWInput['pricing']['adjustments'] }
+  ): Promise<SOW> {
     const sow = await this.sowModel.findById(sowId).exec();
     if (!sow) throw new NotFoundException(`SOW with ID ${sowId} not found`);
 
@@ -259,6 +269,19 @@ export class SOWService {
       if (!sameLength) return service;
       const line = incoming[i];
       if (String(line.serviceId) !== String(service.serviceId ?? service._id)) return service;
+      // Staff edit the unit price; the line total follows from it and the
+      // multiplier the workflow baked in, which the document cannot edit.
+      // `!= null` before Number(): the editor sends an explicit null for a line
+      // that has no unit price yet, and Number(null) is a finite 0 — which would
+      // zero out the line instead of falling through to the cost path below.
+      const unit = line.unitCost == null ? NaN : Number(line.unitCost);
+      const multiplier = Number.isFinite(Number(service.multiplier)) && Number(service.multiplier) > 0 ? Number(service.multiplier) : 1;
+      if (Number.isFinite(unit) && unit >= 0) {
+        return { ...service, unitCost: unit, multiplier, cost: round2(unit * multiplier) };
+      }
+
+      // A caller with no unit price to send — a document saved before unit
+      // prices were recorded — still writes the total through as it always did.
       const override = Number(line.cost);
       if (!Number.isFinite(override) || override < 0) return service;
       return { ...service, cost: override };

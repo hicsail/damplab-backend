@@ -17,9 +17,9 @@ interface Harness {
   sowDoc: any;
 }
 
-function harness(services: Array<{ serviceId: string; name?: string; cost: number }>): Harness {
+function harness(services: Array<{ serviceId: string; name?: string; cost: number; unitCost?: number; multiplier?: number }>): Harness {
   const sowDoc: any = {
-    services: services.map((s) => ({ serviceId: s.serviceId, name: s.name ?? s.serviceId, description: '', cost: s.cost })),
+    services: services.map((s) => ({ serviceId: s.serviceId, name: s.name ?? s.serviceId, description: '', cost: s.cost, unitCost: s.unitCost, multiplier: s.multiplier })),
     pricing: { adjustments: [] }
   };
 
@@ -112,5 +112,52 @@ describe('applyDocumentBilling', () => {
 
     expect(updated.pricing.baseCost).toBe(355);
     expect(updated.pricing.totalCost).toBe(355);
+  });
+
+  /**
+   * The Fee Schedule box holds the base price, not the line total, so the
+   * multiplier the workflow baked in has to be re-applied here — the document
+   * has no control that could have changed it.
+   */
+  it('derives the line total from an edited unit price and the stored multiplier', async () => {
+    const { service, sowDoc } = harness([{ serviceId: 'pcr', cost: 350, unitCost: 5, multiplier: 70 }]);
+
+    await service.applyDocumentBilling('sow-1', { serviceCosts: [{ serviceId: 'pcr', unitCost: 6, cost: 350 }] });
+
+    expect(sowDoc.services[0].unitCost).toBe(6);
+    expect(sowDoc.services[0].cost).toBe(420);
+  });
+
+  it('keeps the total to the cent when the unit price does not divide evenly', async () => {
+    const { service, sowDoc } = harness([{ serviceId: 'pcr', cost: 9.9, unitCost: 3.3, multiplier: 3 }]);
+
+    await service.applyDocumentBilling('sow-1', { serviceCosts: [{ serviceId: 'pcr', unitCost: 3.3, cost: 9.9 }] });
+
+    expect(sowDoc.services[0].cost).toBe(9.9);
+  });
+
+  it('treats a line with no multiplier as multiplying by one', async () => {
+    const { service, sowDoc } = harness([{ serviceId: 'gel', cost: 20 }]);
+
+    await service.applyDocumentBilling('sow-1', { serviceCosts: [{ serviceId: 'gel', unitCost: 25, cost: 20 }] });
+
+    expect(sowDoc.services[0].cost).toBe(25);
+  });
+
+  it('does not read an explicit null unit price as a free line', async () => {
+    const { service, sowDoc } = harness([{ serviceId: 'pcr', cost: 350 }]);
+
+    await service.applyDocumentBilling('sow-1', { serviceCosts: [{ serviceId: 'pcr', unitCost: null as any, cost: 275 }] });
+
+    expect(sowDoc.services[0].cost).toBe(275);
+  });
+
+  it('still writes a bare cost through for a caller that sends no unit price', async () => {
+    const { service, sowDoc } = harness([{ serviceId: 'pcr', cost: 350, unitCost: 5, multiplier: 70 }]);
+
+    await service.applyDocumentBilling('sow-1', { serviceCosts: [{ serviceId: 'pcr', cost: 275 }] });
+
+    expect(sowDoc.services[0].cost).toBe(275);
+    expect(sowDoc.services[0].unitCost).toBe(5);
   });
 });

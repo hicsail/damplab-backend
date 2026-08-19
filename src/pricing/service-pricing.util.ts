@@ -159,7 +159,22 @@ export function extractRunCount(rawFormData: unknown): number | undefined {
   return entry ? resolveQty(entry.value) : undefined;
 }
 
-export function calculateServiceCost(service: DampLabService, rawFormData: unknown, fallbackCost?: number, customerCategory?: CustomerCategory): number {
+export interface ServiceCostBreakdown {
+  /** What one run of the service costs, before any multiplier parameter. */
+  unitCost: number;
+  /** What the multiplier parameters (the universal run count included) scale that by. */
+  multiplier: number;
+  /** What the line bills: unitCost x multiplier. */
+  cost: number;
+}
+
+/**
+ * The same figure `calculateServiceCost` returns, with the two numbers it was
+ * built from. The Fee Schedule quotes all three ("$3.00 x 10 = $30.00"), and the
+ * SOW editor edits the unit price rather than the total, so both have to be
+ * stored rather than recovered by dividing — a unit price of 0 is legitimate.
+ */
+export function calculateServiceCostBreakdown(service: DampLabService, rawFormData: unknown, fallbackCost?: number, customerCategory?: CustomerCategory): ServiceCostBreakdown {
   const pricingMode = service.pricingMode ?? ServicePricingMode.SERVICE;
   let baseCost = 0;
 
@@ -185,8 +200,13 @@ export function calculateServiceCost(service: DampLabService, rawFormData: unkno
     }
   }
 
-  const multiplier = getMultiplier(service.parameters, rawFormData);
-  return baseCost * (Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1);
+  const raw = getMultiplier(service.parameters, rawFormData);
+  const multiplier = Number.isFinite(raw) && raw > 0 ? raw : 1;
+  return { unitCost: baseCost, multiplier, cost: baseCost * multiplier };
+}
+
+export function calculateServiceCost(service: DampLabService, rawFormData: unknown, fallbackCost?: number, customerCategory?: CustomerCategory): number {
+  return calculateServiceCostBreakdown(service, rawFormData, fallbackCost, customerCategory).cost;
 }
 
 function calculateParameterCostWithCategory(parameters: unknown, rawFormData: unknown, customerCategory?: CustomerCategory): number {

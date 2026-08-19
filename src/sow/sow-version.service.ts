@@ -17,7 +17,7 @@ import { User } from '../auth/user.interface';
  * controls have been touched.
  */
 export type SowInputsLike = Partial<Omit<SowVersionInputs, 'services' | 'periods'>> & {
-  services?: Array<{ serviceId: string; name: string; description?: string; cost: number }>;
+  services?: Array<{ serviceId: string; name: string; description?: string; cost: number; unitCost?: number }>;
   periods?: Array<{ startDate: Date; durationDays: number; label?: string }>;
 };
 
@@ -83,6 +83,8 @@ export class SowVersionService {
         name: s.name ?? 'Service',
         description: s.description ?? '',
         cost: Number(s.cost ?? 0),
+        unitCost: s.unitCost,
+        multiplier: s.multiplier,
         runCount: s.runCount
       })),
       adjustments: (sow.pricing?.adjustments ?? [])
@@ -113,7 +115,9 @@ export class SowVersionService {
    * document has fallen behind the billing core.
    */
   static billingFingerprint(inputs: Pick<SowVersionInputs, 'services' | 'adjustments' | 'baseCost' | 'totalCost' | 'customerCategory'>): string {
-    const services = (inputs.services ?? []).map((s) => `${s.serviceId}:${s.name}:${Number(s.cost).toFixed(2)}`).join('|');
+    const services = (inputs.services ?? [])
+      .map((s) => `${s.serviceId}:${s.name}:${Number(s.cost).toFixed(2)}:${s.unitCost == null ? '' : Number(s.unitCost).toFixed(2)}:${s.multiplier ?? ''}`)
+      .join('|');
     const adjustments = (inputs.adjustments ?? []).map((a) => `${a.type}:${a.description}:${Number(a.amount).toFixed(2)}`).join('|');
     return [services, adjustments, Number(inputs.baseCost ?? 0).toFixed(2), Number(inputs.totalCost ?? 0).toFixed(2), inputs.customerCategory ?? ''].join('#');
   }
@@ -336,7 +340,14 @@ export class SowVersionService {
       // mismatch would.
       services: (stored.services ?? []).map((s, i) => {
         const edited = inputs.services?.[i];
-        return edited && String(edited.serviceId) === String(s.serviceId) && Number.isFinite(edited.cost) && edited.cost >= 0 ? { ...s, cost: edited.cost } : s;
+        if (!edited || String(edited.serviceId) !== String(s.serviceId)) return s;
+        // A unit-price edit has to carry the total with it, or the preview would
+        // quote a new base beside the stored line total it no longer produces.
+        if (edited.unitCost != null && Number.isFinite(edited.unitCost) && edited.unitCost >= 0) {
+          const multiplier = Number.isFinite(Number(s.multiplier)) && Number(s.multiplier) > 0 ? Number(s.multiplier) : 1;
+          return { ...s, unitCost: edited.unitCost, multiplier, cost: Math.round(edited.unitCost * multiplier * 100) / 100 };
+        }
+        return Number.isFinite(edited.cost) && edited.cost >= 0 ? { ...s, cost: edited.cost } : s;
       }),
       adjustments: (inputs.adjustments ?? stored.adjustments ?? []).filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)
     };
@@ -387,7 +398,7 @@ export class SowVersionService {
     const hasBillingEdits = (input.inputs.services ?? []).length > 0 || input.inputs.adjustments !== undefined;
     if (hasBillingEdits) {
       await this.sowService.applyDocumentBilling(sowId, {
-        serviceCosts: (input.inputs.services ?? []).map((s) => ({ serviceId: s.serviceId, cost: s.cost })),
+        serviceCosts: (input.inputs.services ?? []).map((s) => ({ serviceId: s.serviceId, unitCost: s.unitCost, cost: s.cost })),
         adjustments: (input.inputs.adjustments ?? []).map((a) => ({ type: a.type, description: a.description, amount: a.amount, reason: a.reason })) as any
       });
     }
