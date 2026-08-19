@@ -34,7 +34,7 @@ function harness(services: Array<{ serviceId: string; name?: string; cost: numbe
     })
   };
 
-  const service = new SOWService(sowModel, {} as any, {} as any, {} as any);
+  const service = new SOWService(sowModel, {} as any, {} as any, {} as any, {} as any, {} as any);
   return { service, sowDoc };
 }
 
