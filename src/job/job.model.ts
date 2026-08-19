@@ -99,8 +99,7 @@ export class Job {
   @Prop({ required: false })
   @Field(() => CustomerCategory, {
     nullable: true,
-    description:
-      'Customer pricing category for this job. Set from Keycloak at submission; staff may update it (and the owner account / other jobs) via changeJobCustomerCategory.'
+    description: 'Customer pricing category for this job. Set from Keycloak at submission; staff may update it (and the owner account / other jobs) via changeJobCustomerCategory.'
   })
   customerCategory?: CustomerCategory;
 
