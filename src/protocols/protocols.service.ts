@@ -139,7 +139,7 @@ export class ProtocolsService {
           // the checklist skipped numbers.
           .filter((s: ProtocolStep & { _idx: number }) => s.id)
           .sort((a: any, b: any) => compareStepNumbers(a.number, b.number) || a._idx - b._idx)
-          .map(({ _idx, ...s }: any) => s as ProtocolStep);
+          .map((s: ProtocolStep & { _idx: number }) => ({ id: s.id, number: s.number, html: s.html }));
       } catch (err: any) {
         // Steps are best-effort: still return metadata + the deep link if steps fail.
         this.logger.warn(`protocols.io steps fetch failed for ${numericId}: ${err?.message}`);
