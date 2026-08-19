@@ -1,6 +1,6 @@
 import { SowField, SowFieldKind, SowVersionInputs, SowPeriod } from './sow-version.model';
 import { SOWAdjustmentType } from './sow.model';
-import { CUSTOM_FIELD_ORDER_BASE, SOW_FIELD_CATALOG, SOW_PROSE_DEFAULTS, customerCategoryLabel, findFieldDefinition, isCustomFieldKey } from './sow-field-defaults';
+import { CUSTOM_FIELD_ORDER_BASE, SOW_FIELD_CATALOG, SOW_PROSE_DEFAULTS, SowFieldDefinition, customerCategoryLabel, findFieldDefinition, isCustomFieldKey } from './sow-field-defaults';
 
 /**
  * Generates the SOW document text from structured inputs.
@@ -25,6 +25,13 @@ export interface SowDocumentContext {
   clientEmail?: string;
   clientInstitution?: string;
   clientAddress?: string;
+  /**
+   * Default text for each prose section, taken from the top-ranked block in that
+   * section's library (see SowTextPresetService.defaultTextByKey). Absent for
+   * callers with no database to hand — the migration, and every unit test — which
+   * fall back to the SOW_PROSE_DEFAULTS baked in below.
+   */
+  prosePresetText?: Record<string, string>;
 }
 
 const DEFAULT_SOW_TITLE = 'Agreement to Perform Research Operations';
@@ -258,8 +265,30 @@ function calculatedValueFor(key: string, inputs: SowVersionInputs, ctx: SowDocum
     case 'feeSchedule':
       return buildFeeSchedule(inputs);
     default:
-      return SOW_PROSE_DEFAULTS[key] ?? '';
+      return ctx.prosePresetText?.[key] ?? SOW_PROSE_DEFAULTS[key] ?? '';
   }
+}
+
+/**
+ * The baseline a field is measured against — what "Recalculate" returns to, and
+ * what `isOverridden` compares the visible text with.
+ *
+ * Calculated sections recompute every time: the Fee Schedule has to follow the
+ * billing core, and the Period of Performance has to follow the dates.
+ *
+ * Prose sections do not. Their text comes from a staff-managed block, and a
+ * block gets edited. Recomputing would mean that editing a block in the Catalog
+ * Editor silently rewrote every SOW that had ever used it, and stamped each one
+ * "Edited" on its next save for a change no one made. So a prose section keeps
+ * the value it was generated with, for the life of that SOW: the block is a
+ * source the document copied from once, not a live link.
+ *
+ * A section with no previous value — a brand new SOW, or a section added to the
+ * catalogue after this SOW existed — takes today's block.
+ */
+function baselineValue(def: SowFieldDefinition, generated: string, previous?: SowField): string {
+  if (def.kind !== SowFieldKind.PROSE) return generated;
+  return previous?.calculatedValue ?? generated;
 }
 
 // ---------------------------------------------------------------------------
@@ -317,7 +346,7 @@ export function mergeCalculatedFields(previous: SowField[], inputs: SowVersionIn
 
   for (const def of SOW_FIELD_CATALOG) {
     const prev = byKey.get(def.key);
-    const calculated = values[def.key] ?? '';
+    const calculated = baselineValue(def, values[def.key] ?? '', prev);
 
     if (!prev) {
       // A section added to the catalogue after this version was written.
@@ -405,13 +434,13 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
     const def = findFieldDefinition(field.key);
     if (!def) continue; // unknown key: not in the catalogue and not custom
 
-    const calculated = values[def.key] ?? '';
+    const prev = prevByKey.get(def.key);
+    const calculated = baselineValue(def, values[def.key] ?? '', prev);
     const isOverridden = def.allowsTextOverride && (field.value ?? '') !== calculated;
 
     // A required field the client sent as hidden gets shown again if it was
     // hidden only for lack of content and now has some — see mergeCalculatedFields
     // for why this doesn't resurrect a field staff hid deliberately.
-    const prev = prevByKey.get(def.key);
     const wasEmptyAndRequired = def.allowsEmpty === false && (prev?.calculatedValue ?? '').trim() === '';
     const justPopulated = wasEmptyAndRequired && calculated.trim() !== '';
 
@@ -434,7 +463,7 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
   // disabled, so a partial request cannot silently drop a section of the contract.
   for (const def of SOW_FIELD_CATALOG) {
     if (seen.has(def.key)) continue;
-    const calculated = values[def.key] ?? '';
+    const calculated = baselineValue(def, values[def.key] ?? '', prevByKey.get(def.key));
     out.push({
       key: def.key,
       label: def.label,

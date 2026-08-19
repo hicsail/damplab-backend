@@ -5,11 +5,12 @@ import mongoose from 'mongoose';
 import { SOW, SOWDocument, SOWStatus, SOWAdjustmentType } from './sow.model';
 import { SowVersion, SowVersionDocument, SowVersionInputs, SowField, SowFieldKind, SowPeriod, SowConsent } from './sow-version.model';
 import { buildCalculatedFields, calculateFieldValues, normalizeIncomingFields, SowDocumentContext } from './sow-field-calculator';
-import { SOW_FIELD_CATALOG } from './sow-field-defaults';
+import { SOW_FIELD_CATALOG, findFieldDefinition } from './sow-field-defaults';
 import { SOWService } from './sow.service';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
 import { SignSowInput } from './dto/sign-sow.input';
 import { User } from '../auth/user.interface';
+import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
 
 /**
  * Inputs as they arrive from the editor: the same shape as SowVersionInputs but
@@ -37,8 +38,19 @@ export class SowVersionService {
   constructor(
     @InjectModel(SowVersion.name) private readonly versionModel: Model<SowVersionDocument>,
     @InjectModel(SOW.name) private readonly sowModel: Model<SOWDocument>,
-    @Inject(forwardRef(() => SOWService)) private readonly sowService: SOWService
+    @Inject(forwardRef(() => SOWService)) private readonly sowService: SOWService,
+    private readonly presetService: SowTextPresetService
   ) {}
+
+  /**
+   * buildContext plus the prose blocks a fresh section is generated from.
+   *
+   * Kept separate from the static buildContext, which the migration calls with no
+   * Nest container around it and which must stay synchronous.
+   */
+  private async contextWithPresets(sow: SOW, job?: { jobId?: string; name?: string } | null): Promise<SowDocumentContext> {
+    return { ...SowVersionService.buildContext(sow, job), prosePresetText: await this.presetService.defaultTextByKey() };
+  }
 
   /**
    * Parses the free-text duration the old flow stored ("14 days", "5 weeks") into
@@ -216,7 +228,7 @@ export class SowVersionService {
     if (existing) return existing;
 
     const inputs = SowVersionService.deriveInputs(sow, job);
-    const ctx = SowVersionService.buildContext(sow, job);
+    const ctx = await this.contextWithPresets(sow, job);
     const fields = opts.fields ?? buildCalculatedFields(inputs, ctx);
     const status = opts.status ?? SOWStatus.DRAFT;
     const visibleToCustomer = opts.visibleToCustomer ?? status !== SOWStatus.DRAFT;
@@ -358,9 +370,22 @@ export class SowVersionService {
       merged.baseCost
     );
 
-    const ctx = SowVersionService.buildContext(sow, job);
+    const ctx = await this.contextWithPresets(sow, job);
     const values = calculateFieldValues(merged, ctx);
-    return Object.entries(values).map(([key, calculatedValue]) => ({ key, calculatedValue }));
+
+    // Prose sections answer with the snapshot they were generated from, not with
+    // today's block — the same rule the calculator applies on save (see
+    // baselineValue). Without it the editor would quietly adopt an edited block
+    // on open, for every section the staff member had not overridden, and the
+    // next save would stamp them all "Edited".
+    const current = await this.getCurrentVersion(String((sow as any)._id));
+    const previousByKey = new Map((current?.fields ?? []).map((f) => [f.key, f]));
+
+    return Object.entries(values).map(([key, calculatedValue]) => {
+      const def = findFieldDefinition(key);
+      if (def?.kind !== SowFieldKind.PROSE) return { key, calculatedValue };
+      return { key, calculatedValue: previousByKey.get(key)?.calculatedValue ?? calculatedValue };
+    });
   }
 
   /** The version the customer is bound by, or null before anything is issued. */
@@ -422,7 +447,7 @@ export class SowVersionService {
       deliverables: input.inputs.deliverables ?? []
     };
 
-    const ctx = SowVersionService.buildContext(fresh, job);
+    const ctx = await this.contextWithPresets(fresh, job);
     const fields = normalizeIncomingFields(
       (input.fields ?? []).map((f) => ({ key: f.key, label: f.label ?? '', value: f.value ?? '', isEnabled: f.isEnabled !== false, requiresInitials: f.requiresInitials === true } as SowField)),
       inputs,

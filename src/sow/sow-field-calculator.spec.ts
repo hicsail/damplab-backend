@@ -459,3 +459,95 @@ describe('labCalendarDay', () => {
     expect(labCalendarDay(new Date('2026-08-19T16:00:00.000Z')).toISOString()).toBe('2026-08-19T00:00:00.000Z');
   });
 });
+
+/**
+ * A prose section's text comes from a staff-managed block in the Catalog Editor.
+ * Blocks get edited, and when one does, no SOW that already quoted it may change:
+ * the document copied the words once, it does not hold a live link to them.
+ *
+ * The mechanism is that a prose section's calculatedValue — the baseline that
+ * "Recalculate" returns to and that isOverridden is measured against — is
+ * whatever the SOW was generated with, forever after.
+ */
+describe('prose blocks', () => {
+  const withPresets = (text: Record<string, string>): SowDocumentContext => ({ ...ctx, prosePresetText: text });
+
+  it('generates a new document from the section default rather than the hardcoded prose', () => {
+    const fields = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Pay within 30 days.' }));
+    const f = fieldByKey(fields, 'invoiceProcedures');
+
+    expect(f.value).toBe('Pay within 30 days.');
+    expect(f.calculatedValue).toBe('Pay within 30 days.');
+    // Nobody typed this; it must not arrive wearing the "Edited" marker.
+    expect(f.isOverridden).toBe(false);
+  });
+
+  it('falls back to the hardcoded prose for a section with no blocks', () => {
+    const fields = buildCalculatedFields(inputs(), withPresets({ completionCriteria: 'Custom.' }));
+    expect(fieldByKey(fields, 'invoiceProcedures').value).toBe(SOW_PROSE_DEFAULTS.invoiceProcedures);
+  });
+
+  it('does not rewrite an existing document when the block behind it is edited', () => {
+    const v1 = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Original wording.' }));
+
+    const merged = mergeCalculatedFields(v1, inputs(), withPresets({ invoiceProcedures: 'Rewritten wording.' }));
+    const f = fieldByKey(merged, 'invoiceProcedures');
+
+    expect(f.value).toBe('Original wording.');
+    expect(f.calculatedValue).toBe('Original wording.');
+    expect(f.isOverridden).toBe(false);
+  });
+
+  it('does not stamp a section "Edited" on save because its block moved on', () => {
+    const v1 = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Original wording.' }));
+
+    // The editor sends back exactly what it was given; only the library changed.
+    const saved = normalizeIncomingFields(v1, inputs(), withPresets({ invoiceProcedures: 'Rewritten wording.' }), v1);
+    const f = fieldByKey(saved, 'invoiceProcedures');
+
+    expect(f.isOverridden).toBe(false);
+    expect(f.value).toBe('Original wording.');
+  });
+
+  it('still marks a section overridden when staff pick a different block', () => {
+    const v1 = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Original wording.' }));
+    const chosen = v1.map((f) => (f.key === 'invoiceProcedures' ? { ...f, value: 'Net 30 wording.' } : f));
+
+    const saved = normalizeIncomingFields(chosen, inputs(), withPresets({ invoiceProcedures: 'Original wording.' }), v1);
+    const f = fieldByKey(saved, 'invoiceProcedures');
+
+    expect(f.isOverridden).toBe(true);
+    expect(f.value).toBe('Net 30 wording.');
+    // Recalculate goes back to what this SOW was generated with.
+    expect(f.calculatedValue).toBe('Original wording.');
+  });
+
+  it('keeps a section the client omitted at its snapshot, not at the current block', () => {
+    const v1 = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Original wording.' }));
+    const withoutIt = v1.filter((f) => f.key !== 'invoiceProcedures');
+
+    const saved = normalizeIncomingFields(withoutIt, inputs(), withPresets({ invoiceProcedures: 'Rewritten wording.' }), v1);
+
+    expect(fieldByKey(saved, 'invoiceProcedures').value).toBe('Original wording.');
+  });
+
+  /**
+   * Stickiness is for prose only. The Fee Schedule and the Period of Performance
+   * describe figures and dates another system bills and schedules from; freezing
+   * those would let the document quietly disagree with the job.
+   */
+  it('leaves calculated sections recomputing', () => {
+    const v1 = buildCalculatedFields(inputs(), ctx);
+    const merged = mergeCalculatedFields(v1, inputs({ projectManager: 'New Manager' }), ctx);
+
+    expect(fieldByKey(merged, 'engagementResources').calculatedValue).toContain('New Manager');
+  });
+
+  it('takes the current block for a prose section added to the catalogue after the SOW existed', () => {
+    const v1 = buildCalculatedFields(inputs(), ctx).filter((f) => f.key !== 'invoiceProcedures');
+
+    const merged = mergeCalculatedFields(v1, inputs(), withPresets({ invoiceProcedures: 'Fresh wording.' }));
+
+    expect(fieldByKey(merged, 'invoiceProcedures').value).toBe('Fresh wording.');
+  });
+});

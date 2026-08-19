@@ -9,6 +9,7 @@ import { SowVersionFieldsResolver } from './sow-version-fields.resolver';
 import { JobModule } from '../job/job.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { DampLabServicesModule } from '../services/damplab-services.module';
+import { SowPresetModule } from '../sow-preset/sow-preset.module';
 
 @Module({
   imports: [
@@ -18,7 +19,8 @@ import { DampLabServicesModule } from '../services/damplab-services.module';
     ]),
     forwardRef(() => JobModule),
     forwardRef(() => WorkflowModule),
-    DampLabServicesModule
+    DampLabServicesModule,
+    SowPresetModule
   ],
   providers: [SOWService, SowVersionService, SOWResolver, SowVersionFieldsResolver],
   exports: [SOWService, SowVersionService]
