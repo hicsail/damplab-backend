@@ -125,6 +125,13 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { customerCategory } }, { new: true }).exec();
   }
 
+  /** Set pricing category on every job owned by this Keycloak subject. */
+  async updateCustomerCategoryForSub(sub: string, customerCategory: CustomerCategory): Promise<Job[]> {
+    if (!sub) return [];
+    await this.jobModel.updateMany({ sub }, { $set: { customerCategory } }).exec();
+    return this.jobModel.find({ sub }).exec();
+  }
+
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {
     this.logger.log(`addAttachments called for jobId=${jobId} with ${attachments.length} attachment(s)`);
     this.logger.debug(`Attachments payload: ${JSON.stringify(attachments)}`);

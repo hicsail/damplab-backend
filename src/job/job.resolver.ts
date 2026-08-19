@@ -1,4 +1,4 @@
-import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
@@ -26,6 +26,7 @@ import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '..
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
 import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
+import { KeycloakService } from '../keycloak/keycloak.service';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -74,6 +75,10 @@ export class JobResolver {
         id: serviceId,
         name: existing?.name ?? node.label ?? 'Service',
         description: existing?.description ?? node.label ?? 'Service',
+        // A unit price, not a line total: transformServices multiplies whatever
+        // arrives here by the node's multiplier when the service record carries
+        // no price of its own.
+        unitCost: existing?.unitCost ?? node.price ?? 0,
         cost: existing?.cost ?? node.price ?? 0,
         category: existing?.category ?? 'molecular-biology',
         formData: node.formData ?? []
@@ -112,7 +117,8 @@ export class JobResolver {
     @Inject(forwardRef(() => SowVersionService))
     private readonly sowVersionService: SowVersionService,
     private readonly jobAttachmentsService: JobAttachmentsService,
-    private readonly jobVersionService: JobVersionService
+    private readonly jobVersionService: JobVersionService,
+    private readonly keycloakService: KeycloakService
   ) {}
 
   /**
@@ -321,7 +327,8 @@ export class JobResolver {
   }
 
   @Mutation(() => Job, {
-    description: 'Change a submitted job customer category and reprice the existing SOW.'
+    description:
+      'Change pricing category for a job owner: updates their Keycloak pricing group, every job under that account, and reprices SOW billing cores (documents stay stale until staff refresh).'
   })
   async changeJobCustomerCategory(
     @Args('jobId', { type: () => ID }) jobId: string,
@@ -340,10 +347,31 @@ export class JobResolver {
       throw new ForbiddenException('You do not have permission to change customer category for this job');
     }
 
-    const updatedJob = await this.jobService.updateCustomerCategory(jobId, customerCategory);
+    // Account-wide: Keycloak group first (staff path / when Admin API is available), then all jobs for this sub.
+    if (job.sub && this.keycloakService.isConfigured()) {
+      try {
+        await this.keycloakService.setUserCustomerCategory(job.sub, customerCategory);
+      } catch (err) {
+        this.logger.error(`Failed to update Keycloak pricing category for sub=${job.sub}`, err instanceof Error ? err.stack : err);
+        throw new BadRequestException('Could not update the customer pricing category in Keycloak. Job categories were not changed.');
+      }
+    } else if (job.sub && !this.keycloakService.isConfigured()) {
+      this.logger.warn(`Keycloak Admin API not configured; updating job categories for sub=${job.sub} without Keycloak sync`);
+    }
 
-    await this.syncSowServicesFromJobWorkflows(jobId);
+    let updatedJobs: Job[];
+    if (job.sub) {
+      updatedJobs = await this.jobService.updateCustomerCategoryForSub(job.sub, customerCategory);
+    } else {
+      const single = await this.jobService.updateCustomerCategory(jobId, customerCategory);
+      updatedJobs = single ? [single] : [];
+    }
 
+    for (const j of updatedJobs) {
+      await this.syncSowServicesFromJobWorkflows(String(j._id));
+    }
+
+    const updatedJob = updatedJobs.find((j) => String(j._id) === String(jobId)) ?? (await this.jobService.findById(jobId));
     return updatedJob ?? job;
   }
 

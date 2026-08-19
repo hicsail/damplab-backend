@@ -1,5 +1,5 @@
 import { DampLabService, ServicePricingMode } from '../services/models/damplab-service.model';
-import { calculateServiceCost, extractRunCount, RUN_COUNT_PARAM_ID } from './service-pricing.util';
+import { calculateServiceCost, calculateServiceCostBreakdown, extractRunCount, RUN_COUNT_PARAM_ID } from './service-pricing.util';
 
 /**
  * The universal run count is injected into formData client-side under a synthetic
@@ -84,5 +84,39 @@ describe('extractRunCount', () => {
 
   it('reads the legacy object-keyed formData shape too', () => {
     expect(extractRunCount({ [RUN_COUNT_PARAM_ID]: 70 })).toBe(70);
+  });
+});
+
+/**
+ * The Fee Schedule quotes "$5.00 x 70 = $350.00" and the SOW editor edits the
+ * $5.00, so the two figures behind the total have to come back out of the
+ * calculation rather than be recovered from it — a unit price of 0 is legal, so
+ * dividing the total by the multiplier is not an option.
+ */
+describe('calculateServiceCostBreakdown', () => {
+  it('returns the unit price and multiplier behind the total', () => {
+    expect(calculateServiceCostBreakdown(service(), [{ id: RUN_COUNT_PARAM_ID, value: 70 }])).toEqual({ unitCost: 5, multiplier: 70, cost: 350 });
+  });
+
+  it('reports a multiplier of 1 when nothing multiplies the line', () => {
+    expect(calculateServiceCostBreakdown(service(), [])).toEqual({ unitCost: 5, multiplier: 1, cost: 5 });
+  });
+
+  it('folds every multiplier parameter into the one figure', () => {
+    const svc = service({ parameters: [{ id: 'plates', isPriceMultiplier: true }] } as Partial<DampLabService>);
+    const formData = [
+      { id: 'plates', value: 3 },
+      { id: RUN_COUNT_PARAM_ID, value: 70 }
+    ];
+    expect(calculateServiceCostBreakdown(svc, formData)).toEqual({ unitCost: 5, multiplier: 210, cost: 1050 });
+  });
+
+  it('normalises a zero or unusable multiplier to 1, as the total already does', () => {
+    expect(calculateServiceCostBreakdown(service(), [{ id: RUN_COUNT_PARAM_ID, value: 0 }])).toEqual({ unitCost: 5, multiplier: 1, cost: 5 });
+  });
+
+  it('keeps a free service free rather than making its unit price unrecoverable', () => {
+    const free = service({ price: 0 });
+    expect(calculateServiceCostBreakdown(free, [{ id: RUN_COUNT_PARAM_ID, value: 70 }])).toEqual({ unitCost: 0, multiplier: 70, cost: 0 });
   });
 });
