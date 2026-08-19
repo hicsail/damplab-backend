@@ -159,3 +159,61 @@ describe('version number encoding', () => {
     expect(SowVersionService.displayVersionLabel(1002)).toBe('1.2');
   });
 });
+
+/**
+ * The preview query is the third place a calculated value is produced, and the
+ * one that fires every time the editor opens. SowEditorModal applies what it
+ * returns to any section the staff member has not overridden by hand — so if it
+ * answered with today's block, opening a draft would silently adopt an edited
+ * block across the whole document, and the next save would stamp every one of
+ * those sections "Edited" for a change nobody made.
+ */
+describe('previewCalculatedValues — prose blocks', () => {
+  function harness(storedFields: Array<{ key: string; calculatedValue: string }>, blocks: Record<string, string>): SowVersionService {
+    const stored = sow();
+    (stored as any)._id = 'sow-1';
+
+    const versionModel: any = {
+      findOne: () => ({
+        sort: () => ({
+          exec: async () => ({
+            versionNumber: 1,
+            fields: storedFields.map((f) => ({ ...f, value: f.calculatedValue, isOverridden: false, isEnabled: true }))
+          })
+        })
+      })
+    };
+    const sowModel: any = { findById: () => ({ exec: async () => stored }) };
+    const sowService: any = { getJobForSow: async () => ({ customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', jobId: '1234' }) };
+    const presetService: any = { defaultTextByKey: async () => blocks };
+
+    return new SowVersionService(versionModel, sowModel, sowService, presetService);
+  }
+
+  const valueFor = (rows: Array<{ key: string; calculatedValue: string }>, key: string): string | undefined => rows.find((r) => r.key === key)?.calculatedValue;
+
+  it('answers with the snapshot the SOW was generated from, not the edited block', async () => {
+    const service = harness([{ key: 'invoiceProcedures', calculatedValue: 'Original wording.' }], { invoiceProcedures: 'Rewritten wording.' });
+
+    const rows = await service.previewCalculatedValues('sow-1', {});
+
+    expect(valueFor(rows, 'invoiceProcedures')).toBe('Original wording.');
+  });
+
+  it('uses the current block for a prose section the stored version has never had', async () => {
+    const service = harness([], { invoiceProcedures: 'Fresh wording.' });
+
+    const rows = await service.previewCalculatedValues('sow-1', {});
+
+    expect(valueFor(rows, 'invoiceProcedures')).toBe('Fresh wording.');
+  });
+
+  it('keeps recomputing the calculated sections', async () => {
+    const service = harness([{ key: 'engagementResources', calculatedValue: 'stale text' }], {});
+
+    const rows = await service.previewCalculatedValues('sow-1', { projectManager: 'New Manager', projectLead: 'Kristen Sheldon' });
+
+    expect(valueFor(rows, 'engagementResources')).toContain('New Manager');
+    expect(valueFor(rows, 'feeSchedule')).toContain('$350.00');
+  });
+});

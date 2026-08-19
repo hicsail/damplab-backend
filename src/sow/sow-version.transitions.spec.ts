@@ -140,7 +140,11 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
     autoAssignProjectLead: async () => undefined
   };
 
-  return { service: new SowVersionService(versionModel, sowModel, sowService), sow, versions };
+  // No blocks: prose falls back to SOW_PROSE_DEFAULTS, which is what these
+  // transition tests assert against.
+  const presetService: any = { defaultTextByKey: async () => ({}) };
+
+  return { service: new SowVersionService(versionModel, sowModel, sowService, presetService), sow, versions };
 }
 
 const staff = { sub: 'sub-staff', name: 'tech' };

@@ -12,6 +12,7 @@ import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
+import { labCalendarDay } from './sow-field-calculator';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 
@@ -376,9 +377,12 @@ export class SOWService {
       throw new BadRequestException('This job has no services yet, so there is nothing to put in a Statement of Work. Add a workflow to the job first.');
     }
 
-    const startDate = new Date();
+    // A calendar day, not the moment of creation: this seeds period 1, and a
+    // raw instant would put a SOW created in the Boston evening on tomorrow's
+    // date in its own Period of Performance.
+    const startDate = labCalendarDay();
     const endDate = new Date(startDate);
-    endDate.setDate(endDate.getDate() + SOWService.DEFAULT_DURATION_DAYS);
+    endDate.setUTCDate(endDate.getUTCDate() + SOWService.DEFAULT_DURATION_DAYS);
 
     return this.create({
       jobId,
@@ -388,7 +392,9 @@ export class SOWService {
       clientName: (job as any).clientDisplayName || job.username || job.name || 'Client',
       clientEmail: job.email,
       clientInstitution: job.institute,
-      clientAddress: job.institute,
+      // Deliberately not job.institute: a job has no address field, and copying
+      // the institute here printed it twice in the parties block.
+      clientAddress: undefined,
       scopeOfWork: SOWService.buildScopeOfWork(services),
       deliverables: await this.buildDeliverables(services),
       services,

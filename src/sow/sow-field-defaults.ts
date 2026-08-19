@@ -38,7 +38,7 @@ export interface SowFieldDefinition {
 
 export const SOW_PROSE_DEFAULTS: Record<string, string> = {
   statementOfWork: [
-    'This Statement of Work (SOW) contains price and time information as per the discussions between the Trustees of Boston University on behalf of the DAMP Lab at Boston University (hereinafter, "DAMP") and the potential client, to be officially reviewed and assigned by both parties. It contains the description of the services to be performed by DAMP, with relevant costs and terms, including scope of work, deliverables, and responsibilities of DAMP.',
+    'This Statement of Work (SOW) contains price and time information as per the discussions between the DAMP Lab at Boston University (hereinafter, "DAMP") and the potential client, to be officially reviewed and assigned by both parties. It contains the description of the services to be performed by DAMP, with relevant costs and terms, including scope of work, deliverables, and responsibilities of DAMP.',
     '',
     'This SOW is entered into by and between DAMP and the Client and is subject to the terms and conditions specified below. The Exhibit(s) to this SOW, if any, shall be deemed to be a part hereof. In the event of any inconsistency between the terms of the body of this SOW and the terms of the Exhibit(s) hereto, the terms of the body of this SOW shall prevail.'
   ].join('\n'),

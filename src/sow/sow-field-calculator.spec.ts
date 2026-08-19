@@ -1,4 +1,13 @@
-import { buildCalculatedFields, calculateFieldValues, mergeCalculatedFields, normalizeIncomingFields, periodEndDate, totalDurationDays, SowDocumentContext } from './sow-field-calculator';
+import {
+  buildCalculatedFields,
+  calculateFieldValues,
+  labCalendarDay,
+  mergeCalculatedFields,
+  normalizeIncomingFields,
+  periodEndDate,
+  totalDurationDays,
+  SowDocumentContext
+} from './sow-field-calculator';
 import { SowField, SowFieldKind, SowVersionInputs } from './sow-version.model';
 import { SOW_FIELD_CATALOG, SOW_PROSE_DEFAULTS } from './sow-field-defaults';
 import { SOWAdjustmentType } from './sow.model';
@@ -93,6 +102,31 @@ describe('period of performance text', () => {
     expect(v).toContain('March 3, 2026');
     expect(v).toContain('March 16, 2026');
     expect(v).not.toContain('- ');
+  });
+
+  it('names the date once for a one-day period rather than opening and closing on it', () => {
+    const v = calculateFieldValues(inputs({ periods: [{ startDate: new Date('2026-03-03T00:00:00Z'), durationDays: 1 }] }), ctx).periodOfPerformance;
+    expect(v).toContain('shall be performed on March 3, 2026.');
+    expect(v).not.toContain('through');
+    expect(v).not.toContain('continue until');
+    // "1 days" is the phrasing this replaced.
+    expect(v).not.toContain('1 days');
+  });
+
+  it('states a one-day period in a list as a single date', () => {
+    const v = calculateFieldValues(
+      inputs({
+        periods: [
+          { startDate: new Date('2026-03-03T00:00:00Z'), durationDays: 1, label: 'Kickoff' },
+          { startDate: new Date('2026-03-10T00:00:00Z'), durationDays: 5, label: 'Phase 2' }
+        ]
+      }),
+      ctx
+    ).periodOfPerformance;
+    expect(v).toContain('- Kickoff: 1 day, on March 3, 2026');
+    expect(v).toContain('- Phase 2: 5 days, from March 10, 2026 through March 14, 2026');
+    expect(v).not.toContain('1 days');
+    expect(v).not.toContain('on March 3, 2026 through');
   });
 
   it('lists each period and gives the true period of performance — earliest start to latest end, not summed durations', () => {
@@ -366,5 +400,154 @@ describe('normalizeIncomingFields', () => {
     const out = normalizeIncomingFields([], inputs(), ctx);
     expect(fieldByKey(out, 'engagementResources').allowsEmpty).toBe(false);
     expect(fieldByKey(out, 'clientResponsibilities').allowsEmpty).toBe(true);
+  });
+});
+
+describe('parties block', () => {
+  it('names DAMP Lab as the performing party, once', () => {
+    const v = calculateFieldValues(inputs(), ctx).parties;
+    expect(v).toContain('Operations Performed By:\nDAMP Lab\n610 Commonwealth Avenue');
+    expect(v).not.toContain('Trustees');
+  });
+
+  it('dates the agreement in the lab’s timezone, not UTC', () => {
+    // 2026-03-01T00:00:00Z is still the evening of Feb 28 in Boston, which is
+    // the day the agreement was actually made here.
+    const v = calculateFieldValues(inputs(), { ...ctx, date: new Date('2026-03-01T00:00:00Z') }).parties;
+    expect(v).toContain('Date of Agreement: February 28, 2026');
+  });
+
+  it('names the client organisation once when the job supplied no separate address', () => {
+    const v = calculateFieldValues(inputs(), { ...ctx, clientInstitution: 'Example University', clientAddress: 'Example University' }).parties;
+    expect(v.match(/Example University/g)).toHaveLength(1);
+  });
+
+  it('treats a differently-cased duplicate as the same organisation', () => {
+    const v = calculateFieldValues(inputs(), { ...ctx, clientInstitution: 'Boston University', clientAddress: 'boston university ' }).parties;
+    expect(v.match(/[Bb]oston [Uu]niversity/g)).toHaveLength(1);
+  });
+
+  it('still prints a real address alongside the institution', () => {
+    const v = calculateFieldValues(inputs(), { ...ctx, clientInstitution: 'Example University', clientAddress: '1 Main St, Boston, MA' }).parties;
+    expect(v).toContain('Example University');
+    expect(v).toContain('1 Main St, Boston, MA');
+  });
+
+  it('leaves period dates alone — they are calendar days, not instants', () => {
+    // The same UTC-midnight value read as a period start must stay March 3,
+    // even though as an instant it would be the evening of March 2 in Boston.
+    const v = calculateFieldValues(inputs({ periods: [{ startDate: new Date('2026-03-03T00:00:00Z'), durationDays: 1 }] }), ctx).periodOfPerformance;
+    expect(v).toContain('March 3, 2026');
+    expect(v).not.toContain('March 2, 2026');
+  });
+});
+
+describe('labCalendarDay', () => {
+  it('anchors the lab’s calendar day at UTC midnight, so it can seed a period', () => {
+    // 8:30pm in Boston on Aug 19 — already Aug 20 in UTC. A SOW created then
+    // must still start on the 19th.
+    expect(labCalendarDay(new Date('2026-08-20T00:30:00.000Z')).toISOString()).toBe('2026-08-19T00:00:00.000Z');
+  });
+
+  it('round-trips through the document formatter as the same day', () => {
+    const seeded = labCalendarDay(new Date('2026-08-20T00:30:00.000Z'));
+    const v = calculateFieldValues(inputs({ periods: [{ startDate: seeded, durationDays: 1 }] }), ctx).periodOfPerformance;
+    expect(v).toContain('August 19, 2026');
+  });
+
+  it('leaves a midday instant on its own day', () => {
+    expect(labCalendarDay(new Date('2026-08-19T16:00:00.000Z')).toISOString()).toBe('2026-08-19T00:00:00.000Z');
+  });
+});
+
+/**
+ * A prose section's text comes from a staff-managed block in the Catalog Editor.
+ * Blocks get edited, and when one does, no SOW that already quoted it may change:
+ * the document copied the words once, it does not hold a live link to them.
+ *
+ * The mechanism is that a prose section's calculatedValue — the baseline that
+ * "Recalculate" returns to and that isOverridden is measured against — is
+ * whatever the SOW was generated with, forever after.
+ */
+describe('prose blocks', () => {
+  const withPresets = (text: Record<string, string>): SowDocumentContext => ({ ...ctx, prosePresetText: text });
+
+  it('generates a new document from the section default rather than the hardcoded prose', () => {
+    const fields = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Pay within 30 days.' }));
+    const f = fieldByKey(fields, 'invoiceProcedures');
+
+    expect(f.value).toBe('Pay within 30 days.');
+    expect(f.calculatedValue).toBe('Pay within 30 days.');
+    // Nobody typed this; it must not arrive wearing the "Edited" marker.
+    expect(f.isOverridden).toBe(false);
+  });
+
+  it('falls back to the hardcoded prose for a section with no blocks', () => {
+    const fields = buildCalculatedFields(inputs(), withPresets({ completionCriteria: 'Custom.' }));
+    expect(fieldByKey(fields, 'invoiceProcedures').value).toBe(SOW_PROSE_DEFAULTS.invoiceProcedures);
+  });
+
+  it('does not rewrite an existing document when the block behind it is edited', () => {
+    const v1 = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Original wording.' }));
+
+    const merged = mergeCalculatedFields(v1, inputs(), withPresets({ invoiceProcedures: 'Rewritten wording.' }));
+    const f = fieldByKey(merged, 'invoiceProcedures');
+
+    expect(f.value).toBe('Original wording.');
+    expect(f.calculatedValue).toBe('Original wording.');
+    expect(f.isOverridden).toBe(false);
+  });
+
+  it('does not stamp a section "Edited" on save because its block moved on', () => {
+    const v1 = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Original wording.' }));
+
+    // The editor sends back exactly what it was given; only the library changed.
+    const saved = normalizeIncomingFields(v1, inputs(), withPresets({ invoiceProcedures: 'Rewritten wording.' }), v1);
+    const f = fieldByKey(saved, 'invoiceProcedures');
+
+    expect(f.isOverridden).toBe(false);
+    expect(f.value).toBe('Original wording.');
+  });
+
+  it('still marks a section overridden when staff pick a different block', () => {
+    const v1 = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Original wording.' }));
+    const chosen = v1.map((f) => (f.key === 'invoiceProcedures' ? { ...f, value: 'Net 30 wording.' } : f));
+
+    const saved = normalizeIncomingFields(chosen, inputs(), withPresets({ invoiceProcedures: 'Original wording.' }), v1);
+    const f = fieldByKey(saved, 'invoiceProcedures');
+
+    expect(f.isOverridden).toBe(true);
+    expect(f.value).toBe('Net 30 wording.');
+    // Recalculate goes back to what this SOW was generated with.
+    expect(f.calculatedValue).toBe('Original wording.');
+  });
+
+  it('keeps a section the client omitted at its snapshot, not at the current block', () => {
+    const v1 = buildCalculatedFields(inputs(), withPresets({ invoiceProcedures: 'Original wording.' }));
+    const withoutIt = v1.filter((f) => f.key !== 'invoiceProcedures');
+
+    const saved = normalizeIncomingFields(withoutIt, inputs(), withPresets({ invoiceProcedures: 'Rewritten wording.' }), v1);
+
+    expect(fieldByKey(saved, 'invoiceProcedures').value).toBe('Original wording.');
+  });
+
+  /**
+   * Stickiness is for prose only. The Fee Schedule and the Period of Performance
+   * describe figures and dates another system bills and schedules from; freezing
+   * those would let the document quietly disagree with the job.
+   */
+  it('leaves calculated sections recomputing', () => {
+    const v1 = buildCalculatedFields(inputs(), ctx);
+    const merged = mergeCalculatedFields(v1, inputs({ projectManager: 'New Manager' }), ctx);
+
+    expect(fieldByKey(merged, 'engagementResources').calculatedValue).toContain('New Manager');
+  });
+
+  it('takes the current block for a prose section added to the catalogue after the SOW existed', () => {
+    const v1 = buildCalculatedFields(inputs(), ctx).filter((f) => f.key !== 'invoiceProcedures');
+
+    const merged = mergeCalculatedFields(v1, inputs(), withPresets({ invoiceProcedures: 'Fresh wording.' }));
+
+    expect(fieldByKey(merged, 'invoiceProcedures').value).toBe('Fresh wording.');
   });
 });

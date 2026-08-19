@@ -1,6 +1,6 @@
 import { SowField, SowFieldKind, SowVersionInputs, SowPeriod } from './sow-version.model';
 import { SOWAdjustmentType } from './sow.model';
-import { CUSTOM_FIELD_ORDER_BASE, SOW_FIELD_CATALOG, SOW_PROSE_DEFAULTS, customerCategoryLabel, findFieldDefinition, isCustomFieldKey } from './sow-field-defaults';
+import { CUSTOM_FIELD_ORDER_BASE, SOW_FIELD_CATALOG, SOW_PROSE_DEFAULTS, SowFieldDefinition, customerCategoryLabel, findFieldDefinition, isCustomFieldKey } from './sow-field-defaults';
 
 /**
  * Generates the SOW document text from structured inputs.
@@ -25,17 +25,60 @@ export interface SowDocumentContext {
   clientEmail?: string;
   clientInstitution?: string;
   clientAddress?: string;
+  /**
+   * Default text for each prose section, taken from the top-ranked block in that
+   * section's library (see SowTextPresetService.defaultTextByKey). Absent for
+   * callers with no database to hand — the migration, and every unit test — which
+   * fall back to the SOW_PROSE_DEFAULTS baked in below.
+   */
+  prosePresetText?: Record<string, string>;
 }
 
 const DEFAULT_SOW_TITLE = 'Agreement to Perform Research Operations';
 
+/** The lab's timezone. Every instant in the document reads in DAMP Lab local
+ *  time, so a SOW says the same thing to a reader in Boston and one in Auckland. */
+const LAB_TIME_ZONE = 'America/New_York';
+
+/**
+ * A period date is a *calendar day*, not an instant: it is stored as that day's
+ * UTC midnight and must be read back the same way. Formatting it in the lab's
+ * zone would slip it to the previous day — the whole point of the UTC anchor.
+ * Matches sowDateToPickerValue/formatSOWDate in damplab-ui.
+ */
 function formatDate(value: Date | string | undefined): string {
   if (!value) return '';
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return '';
-  // Matches formatSOWDate in damplab-ui: month name, day, full year, in UTC so a
-  // date-only value does not slip a day for readers west of Greenwich.
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' });
+}
+
+/**
+ * The lab's calendar day for an instant, encoded the way every period date is:
+ * that day's UTC midnight. Use this whenever a real moment has to become a
+ * calendar day — `new Date()` straight into a period start makes a SOW created
+ * at 8pm in Boston claim it starts tomorrow.
+ */
+export function labCalendarDay(instant: Date = new Date()): Date {
+  // en-CA formats as YYYY-MM-DD, which is exactly the anchor we need.
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: LAB_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(instant);
+  return new Date(`${day}T00:00:00.000Z`);
+}
+
+/**
+ * An instant — when something actually happened, e.g. the agreement date. Read
+ * in the lab's zone, since that is the day it happened *here*.
+ */
+function formatInstant(value: Date | string | undefined): string {
+  if (!value) return '';
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: LAB_TIME_ZONE });
+}
+
+/** "1 day", not "1 days". */
+function days(n: number): string {
+  return `${n} ${n === 1 ? 'day' : 'days'}`;
 }
 
 function formatCurrency(amount: number): string {
@@ -104,18 +147,20 @@ function buildTitle(inputs: SowVersionInputs, ctx: SowDocumentContext): string {
 
 function buildParties(ctx: SowDocumentContext): string {
   const lines = [
-    `Date of Agreement: ${formatDate(ctx.date)}`,
+    `Date of Agreement: ${formatInstant(ctx.date)}`,
     '',
     'Operations Performed By:',
-    'Trustees of Boston University',
-    'DAMP Lab of Boston University',
+    'DAMP Lab',
     '610 Commonwealth Avenue',
     'Boston, MA 02215',
     '',
     `Operations Performed For: ${ctx.clientName ?? ''}`
   ];
   if (ctx.clientInstitution) lines.push(ctx.clientInstitution);
-  if (ctx.clientAddress) lines.push(ctx.clientAddress);
+  // A job carries an institute but no separate address, so older SOWs stored the
+  // institute in both fields. Printing it twice is never what was meant.
+  const sameAsInstitution = (a: string, b: string): boolean => a.trim().toLowerCase() === b.trim().toLowerCase();
+  if (ctx.clientAddress && !sameAsInstitution(ctx.clientAddress, ctx.clientInstitution ?? '')) lines.push(ctx.clientAddress);
   return lines.join('\n');
 }
 
@@ -123,9 +168,14 @@ function buildPeriodOfPerformance(inputs: SowVersionInputs): string {
   const periods = (inputs.periods ?? []).filter((p) => p && p.startDate);
   if (periods.length === 0) return '';
 
+  // A one-day period starts and ends on the same date, so a range would name
+  // that date twice. Say it once instead — here and in the bullets below.
   if (periods.length === 1) {
     const p = periods[0];
-    return `The total turn-around time is estimated to be within ${p.durationDays} days from the start date. Therefore, the services herewith mentioned shall commence on ${formatDate(
+    if ((p.durationDays ?? 0) <= 1) {
+      return `The total turn-around time is estimated to be a single day. Therefore, the services herewith mentioned shall be performed on ${formatDate(p.startDate)}.`;
+    }
+    return `The total turn-around time is estimated to be within ${days(p.durationDays)} from the start date. Therefore, the services herewith mentioned shall commence on ${formatDate(
       p.startDate
     )} and continue until ${formatDate(periodEndDate(p))}.`;
   }
@@ -135,10 +185,15 @@ function buildPeriodOfPerformance(inputs: SowVersionInputs): string {
   // to the latest end, not the sum of each period's working days.
   const rows = periods.map((p, i) => {
     const label = (p.label || '').trim() || `Period ${i + 1}`;
-    return `${label}: ${p.durationDays} days, from ${formatDate(p.startDate)} through ${formatDate(periodEndDate(p))}`;
+    if ((p.durationDays ?? 0) <= 1) return `${label}: 1 day, on ${formatDate(p.startDate)}`;
+    return `${label}: ${days(p.durationDays)}, from ${formatDate(p.startDate)} through ${formatDate(periodEndDate(p))}`;
   });
   const span = periodOfPerformanceSpan(periods);
-  const summary = span ? `The overall period of performance is estimated to be ${span.days} days, from ${formatDate(span.start)} through ${formatDate(span.end)}.` : '';
+  const summary = span
+    ? span.days <= 1
+      ? `The overall period of performance is estimated to be a single day, on ${formatDate(span.start)}.`
+      : `The overall period of performance is estimated to be ${days(span.days)}, from ${formatDate(span.start)} through ${formatDate(span.end)}.`
+    : '';
   return ['The Operations shall be performed over the following periods:', bulletList(rows), summary].join('\n');
 }
 
@@ -210,8 +265,30 @@ function calculatedValueFor(key: string, inputs: SowVersionInputs, ctx: SowDocum
     case 'feeSchedule':
       return buildFeeSchedule(inputs);
     default:
-      return SOW_PROSE_DEFAULTS[key] ?? '';
+      return ctx.prosePresetText?.[key] ?? SOW_PROSE_DEFAULTS[key] ?? '';
   }
+}
+
+/**
+ * The baseline a field is measured against — what "Recalculate" returns to, and
+ * what `isOverridden` compares the visible text with.
+ *
+ * Calculated sections recompute every time: the Fee Schedule has to follow the
+ * billing core, and the Period of Performance has to follow the dates.
+ *
+ * Prose sections do not. Their text comes from a staff-managed block, and a
+ * block gets edited. Recomputing would mean that editing a block in the Catalog
+ * Editor silently rewrote every SOW that had ever used it, and stamped each one
+ * "Edited" on its next save for a change no one made. So a prose section keeps
+ * the value it was generated with, for the life of that SOW: the block is a
+ * source the document copied from once, not a live link.
+ *
+ * A section with no previous value — a brand new SOW, or a section added to the
+ * catalogue after this SOW existed — takes today's block.
+ */
+function baselineValue(def: SowFieldDefinition, generated: string, previous?: SowField): string {
+  if (def.kind !== SowFieldKind.PROSE) return generated;
+  return previous?.calculatedValue ?? generated;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,7 +346,7 @@ export function mergeCalculatedFields(previous: SowField[], inputs: SowVersionIn
 
   for (const def of SOW_FIELD_CATALOG) {
     const prev = byKey.get(def.key);
-    const calculated = values[def.key] ?? '';
+    const calculated = baselineValue(def, values[def.key] ?? '', prev);
 
     if (!prev) {
       // A section added to the catalogue after this version was written.
@@ -357,13 +434,13 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
     const def = findFieldDefinition(field.key);
     if (!def) continue; // unknown key: not in the catalogue and not custom
 
-    const calculated = values[def.key] ?? '';
+    const prev = prevByKey.get(def.key);
+    const calculated = baselineValue(def, values[def.key] ?? '', prev);
     const isOverridden = def.allowsTextOverride && (field.value ?? '') !== calculated;
 
     // A required field the client sent as hidden gets shown again if it was
     // hidden only for lack of content and now has some — see mergeCalculatedFields
     // for why this doesn't resurrect a field staff hid deliberately.
-    const prev = prevByKey.get(def.key);
     const wasEmptyAndRequired = def.allowsEmpty === false && (prev?.calculatedValue ?? '').trim() === '';
     const justPopulated = wasEmptyAndRequired && calculated.trim() !== '';
 
@@ -386,7 +463,7 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
   // disabled, so a partial request cannot silently drop a section of the contract.
   for (const def of SOW_FIELD_CATALOG) {
     if (seen.has(def.key)) continue;
-    const calculated = values[def.key] ?? '';
+    const calculated = baselineValue(def, values[def.key] ?? '', prevByKey.get(def.key));
     out.push({
       key: def.key,
       label: def.label,

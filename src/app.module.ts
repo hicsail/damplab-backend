@@ -14,6 +14,7 @@ import { CategoriesModule } from './categories/categories.module';
 import { BundlesModule } from './bundles/bundles.module';
 import { JobModule } from './job/job.module';
 import { SOWModule } from './sow/sow.module';
+import { SowPresetModule } from './sow-preset/sow-preset.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
 import { AnnouncementModule } from './announcements/announcement.module';
@@ -57,6 +58,7 @@ import { ClickUpModule } from './clickup/clickup.module';
     BundlesModule,
     JobModule,
     SOWModule,
+    SowPresetModule,
 
     // NOTE: The Reset module is for development purposes only and will
     // be removed in future version
