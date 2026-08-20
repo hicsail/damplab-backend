@@ -1,4 +1,6 @@
 import {
+  adjustmentAmount,
+  adjustmentMultiplier,
   buildCalculatedFields,
   calculateFieldValues,
   labCalendarDay,
@@ -10,7 +12,7 @@ import {
 } from './sow-field-calculator';
 import { SowField, SowFieldKind, SowVersionInputs } from './sow-version.model';
 import { SOW_FIELD_CATALOG, SOW_PROSE_DEFAULTS } from './sow-field-defaults';
-import { SOWAdjustmentType } from './sow.model';
+import { SOWAdjustmentType, SOWAdjustmentCategory } from './sow.model';
 
 function inputs(overrides: Partial<SowVersionInputs> = {}): SowVersionInputs {
   return {
@@ -236,6 +238,59 @@ describe('fee schedule text', () => {
     expect(v).toContain('- Academic discount — grant: -$47.00');
     expect(v).toContain('- Rush handling: $120.00');
     expect(v).toContain('Total: $423.00');
+  });
+
+  it('quotes the breakdown for an adjustment charged per unit', () => {
+    const v = calculateFieldValues(
+      inputs({
+        adjustments: [{ type: SOWAdjustmentType.ADDITIONAL_COST, description: 'Staff time', amount: 1680, unitAmount: 120, multiplier: 14, category: SOWAdjustmentCategory.DAYS }],
+        totalCost: 2030
+      }),
+      ctx
+    ).feeSchedule;
+    expect(v).toContain('- Staff time: $120.00 x 14 = $1,680.00');
+  });
+
+  it('keeps a per-unit discount negative on both figures', () => {
+    const v = calculateFieldValues(
+      inputs({
+        adjustments: [{ type: SOWAdjustmentType.DISCOUNT, description: 'Bulk', amount: 250, unitAmount: 50, multiplier: 5, category: SOWAdjustmentCategory.CONSUMABLE }],
+        totalCost: 100
+      }),
+      ctx
+    ).feeSchedule;
+    expect(v).toContain('- Bulk: -$50.00 x 5 = -$250.00');
+  });
+
+  /** Same reasoning as the service line above: this text is regenerated on every
+   *  load, so an adjustment written before unit amounts existed must still read
+   *  as the single figure it always did. */
+  it('leaves an adjustment stored before unit amounts existed exactly as it was', () => {
+    const v = calculateFieldValues(inputs({ adjustments: [{ type: SOWAdjustmentType.ADDITIONAL_COST, description: 'Rush handling', amount: 120 }], totalCost: 470 }), ctx).feeSchedule;
+    expect(v).toContain('- Rush handling: $120.00');
+    expect(v).not.toContain('x 1');
+  });
+});
+
+describe('adjustmentAmount', () => {
+  it('derives the figure from the unit amount and multiplier', () => {
+    expect(adjustmentAmount({ amount: 0, unitAmount: 120, multiplier: 14 })).toBe(1680);
+  });
+
+  it('rounds to the cent rather than carrying float noise', () => {
+    expect(adjustmentAmount({ amount: 0, unitAmount: 3.3, multiplier: 3 })).toBe(9.9);
+  });
+
+  it('falls back to the stored figure on an adjustment with no unit amount', () => {
+    expect(adjustmentAmount({ amount: 500 })).toBe(500);
+    expect(adjustmentAmount({ amount: 500, unitAmount: null })).toBe(500);
+  });
+
+  it('treats an absent, zero or negative multiplier as 1', () => {
+    expect(adjustmentAmount({ amount: 0, unitAmount: 120 })).toBe(120);
+    expect(adjustmentMultiplier({ multiplier: 0 })).toBe(1);
+    expect(adjustmentMultiplier({ multiplier: -2 })).toBe(1);
+    expect(adjustmentMultiplier({ multiplier: 14 })).toBe(14);
   });
 });
 

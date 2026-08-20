@@ -4,7 +4,7 @@ import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { SOW, SOWDocument, SOWStatus, SOWAdjustmentType } from './sow.model';
 import { SowVersion, SowVersionDocument, SowVersionInputs, SowField, SowFieldKind, SowPeriod, SowConsent } from './sow-version.model';
-import { buildCalculatedFields, calculateFieldValues, normalizeIncomingFields, SowDocumentContext } from './sow-field-calculator';
+import { adjustmentAmount, adjustmentMultiplier, buildCalculatedFields, calculateFieldValues, normalizeIncomingFields, SowDocumentContext } from './sow-field-calculator';
 import { SOW_FIELD_CATALOG, findFieldDefinition } from './sow-field-defaults';
 import { SOWService } from './sow.service';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
@@ -101,7 +101,15 @@ export class SowVersionService {
       })),
       adjustments: (sow.pricing?.adjustments ?? [])
         .filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)
-        .map((a) => ({ type: a.type, description: a.description ?? '', amount: Number(a.amount ?? 0), reason: a.reason })),
+        .map((a) => ({
+          type: a.type,
+          description: a.description ?? '',
+          amount: Number(a.amount ?? 0),
+          unitAmount: a.unitAmount,
+          multiplier: a.multiplier,
+          category: a.category,
+          reason: a.reason
+        })),
       baseCost: Number(sow.pricing?.baseCost ?? 0),
       totalCost: Number(sow.pricing?.totalCost ?? 0),
       customerCategory: job?.customerCategory
@@ -361,7 +369,12 @@ export class SowVersionService {
         }
         return Number.isFinite(edited.cost) && edited.cost >= 0 ? { ...s, cost: edited.cost } : s;
       }),
-      adjustments: (inputs.adjustments ?? stored.adjustments ?? []).filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)
+      // Unsaved adjustment edits are previewed from the same derivation the save
+      // path applies, so the preview quotes the figure the save would store
+      // rather than whatever total the client happened to send with it.
+      adjustments: (inputs.adjustments ?? stored.adjustments ?? [])
+        .filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)
+        .map((a) => ({ ...a, amount: adjustmentAmount(a), multiplier: a.unitAmount == null ? a.multiplier : adjustmentMultiplier(a) }))
     };
 
     merged.baseCost = (merged.services ?? []).reduce((sum, s) => sum + (Number(s.cost) || 0), 0);
@@ -424,7 +437,15 @@ export class SowVersionService {
     if (hasBillingEdits) {
       await this.sowService.applyDocumentBilling(sowId, {
         serviceCosts: (input.inputs.services ?? []).map((s) => ({ serviceId: s.serviceId, unitCost: s.unitCost, cost: s.cost })),
-        adjustments: (input.inputs.adjustments ?? []).map((a) => ({ type: a.type, description: a.description, amount: a.amount, reason: a.reason })) as any
+        adjustments: (input.inputs.adjustments ?? []).map((a) => ({
+          type: a.type,
+          description: a.description,
+          amount: a.amount,
+          unitAmount: a.unitAmount,
+          multiplier: a.multiplier,
+          category: a.category,
+          reason: a.reason
+        })) as any
       });
     }
 

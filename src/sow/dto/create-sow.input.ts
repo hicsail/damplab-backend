@@ -1,6 +1,6 @@
 import { InputType, Field, Float } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
-import { SOWStatus, SOWAdjustmentType } from '../sow.model';
+import { SOWStatus, SOWAdjustmentType, SOWAdjustmentCategory } from '../sow.model';
 
 @InputType()
 export class SOWTimelineInput {
@@ -37,8 +37,17 @@ export class SOWPricingAdjustmentInput {
   @Field({ description: 'Description of the adjustment' })
   description: string;
 
-  @Field(() => Float, { description: 'Amount of the adjustment' })
+  @Field(() => Float, { description: 'What this adjustment moves. Ignored when unitAmount is sent — the figure is derived there.' })
   amount: number;
+
+  @Field(() => Float, { nullable: true, description: 'Amount for a single unit. When sent, the adjustment becomes unitAmount x multiplier.' })
+  unitAmount?: number;
+
+  @Field(() => Float, { nullable: true, description: 'How many units the unit amount is charged for. Omitted means 1.' })
+  multiplier?: number;
+
+  @Field(() => SOWAdjustmentCategory, { nullable: true, description: 'What the adjustment is charging for.' })
+  category?: SOWAdjustmentCategory;
 
   @Field({ description: 'Reason for the adjustment', nullable: true })
   reason?: string;

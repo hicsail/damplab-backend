@@ -160,4 +160,45 @@ describe('applyDocumentBilling', () => {
     expect(sowDoc.services[0].cost).toBe(275);
     expect(sowDoc.services[0].unitCost).toBe(5);
   });
+
+  /**
+   * Adjustments follow the same rule as service lines: the client's `amount` is
+   * never trusted where it can be derived, because that figure is what invoices
+   * bill from (invoice.service.ts prorates it) long after the document is saved.
+   */
+  describe('adjustments', () => {
+    it('derives the figure from the unit amount and multiplier, ignoring the amount sent with them', async () => {
+      const { service, sowDoc } = harness([{ serviceId: 'pcr', cost: 350 }]);
+
+      await service.applyDocumentBilling('sow-1', {
+        adjustments: [{ type: 'ADDITIONAL_COST', description: 'Staff time', amount: 1, unitAmount: 120, multiplier: 14, category: 'DAYS' }] as any
+      });
+
+      expect(sowDoc.pricing.adjustments[0]).toMatchObject({ amount: 1680, unitAmount: 120, multiplier: 14, category: 'DAYS' });
+      expect(sowDoc.pricing.totalCost).toBe(2030);
+    });
+
+    it('treats an adjustment with no multiplier as multiplying by one', async () => {
+      const { service, sowDoc } = harness([{ serviceId: 'pcr', cost: 350 }]);
+
+      await service.applyDocumentBilling('sow-1', {
+        adjustments: [{ type: 'DISCOUNT', description: 'Academic', amount: 0, unitAmount: 75, category: 'SERVICE' }] as any
+      });
+
+      expect(sowDoc.pricing.adjustments[0].amount).toBe(75);
+      expect(sowDoc.pricing.totalCost).toBe(275);
+    });
+
+    it('writes a bare amount through for an adjustment that carries no unit amount', async () => {
+      const { service, sowDoc } = harness([{ serviceId: 'pcr', cost: 350 }]);
+
+      await service.applyDocumentBilling('sow-1', {
+        adjustments: [{ type: 'ADDITIONAL_COST', description: 'Rush', amount: 120 }] as any
+      });
+
+      expect(sowDoc.pricing.adjustments[0].amount).toBe(120);
+      expect(sowDoc.pricing.adjustments[0].unitAmount).toBeUndefined();
+      expect(sowDoc.pricing.totalCost).toBe(470);
+    });
+  });
 });

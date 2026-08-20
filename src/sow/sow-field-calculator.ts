@@ -102,6 +102,27 @@ export function periodEndDate(period: SowPeriod): Date {
   return end;
 }
 
+/** The multiplier an adjustment applies, defaulting to 1 on anything unset or nonsensical. Mirrors the service-line rule. */
+export function adjustmentMultiplier(a: { multiplier?: number | null }): number {
+  const m = Number(a.multiplier);
+  return Number.isFinite(m) && m > 0 ? m : 1;
+}
+
+/**
+ * What an adjustment actually moves.
+ *
+ * `unitAmount` x `multiplier` when a unit amount was recorded, and the stored
+ * `amount` otherwise. The `== null` check matters: an adjustment written before
+ * unit amounts existed carries null, and `Number(null)` is a perfectly finite 0
+ * — which would silently zero out every legacy adjustment.
+ */
+export function adjustmentAmount(a: { amount: number; unitAmount?: number | null; multiplier?: number | null }): number {
+  if (a.unitAmount == null) return Number(a.amount) || 0;
+  const unit = Number(a.unitAmount);
+  if (!Number.isFinite(unit)) return Number(a.amount) || 0;
+  return Math.round(unit * adjustmentMultiplier(a) * 100) / 100;
+}
+
 export function totalDurationDays(periods: SowPeriod[]): number {
   return (periods ?? []).reduce((sum, p) => sum + (Number.isFinite(p.durationDays) ? p.durationDays : 0), 0);
 }
@@ -233,8 +254,14 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
       const desc = (a.description || '').trim() || (a.type === SOWAdjustmentType.DISCOUNT ? 'Discount' : 'Additional cost');
       const reason = (a.reason || '').trim();
       const label = reason ? `${desc} — ${reason}` : desc;
-      const signed = a.type === SOWAdjustmentType.DISCOUNT ? -Math.abs(a.amount) : Math.abs(a.amount);
-      return `${label}: ${formatCurrency(signed)}`;
+      const total = adjustmentAmount(a);
+      const signed = a.type === SOWAdjustmentType.DISCOUNT ? -Math.abs(total) : Math.abs(total);
+      const multiplier = adjustmentMultiplier(a);
+      // Same rule the service rows follow: quote the breakdown only where there
+      // is one, so a plain one-off adjustment still reads as a single figure.
+      if (a.unitAmount == null || multiplier === 1) return `${label}: ${formatCurrency(signed)}`;
+      const unit = a.type === SOWAdjustmentType.DISCOUNT ? -Math.abs(Number(a.unitAmount)) : Math.abs(Number(a.unitAmount));
+      return `${label}: ${formatCurrency(unit)} x ${formatMultiplier(multiplier)} = ${formatCurrency(signed)}`;
     });
     lines.push(bulletList(adjRows));
   }

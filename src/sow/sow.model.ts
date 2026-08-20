@@ -20,6 +20,22 @@ export enum SOWAdjustmentType {
 }
 registerEnumType(SOWAdjustmentType, { name: 'SOWAdjustmentType' });
 
+/**
+ * What an adjustment is charging for. Staff pick it alongside the amount; it is
+ * what lets the Fee Schedule group and present adjustments by the kind of cost
+ * they represent rather than as one undifferentiated list.
+ *
+ * Absent on adjustments written before this existed — read it with a fallback.
+ */
+export enum SOWAdjustmentCategory {
+  SERVICE = 'SERVICE',
+  CONSUMABLE = 'CONSUMABLE',
+  STAFF = 'STAFF',
+  DAYS = 'DAYS',
+  SAMPLES = 'SAMPLES'
+}
+registerEnumType(SOWAdjustmentCategory, { name: 'SOWAdjustmentCategory' });
+
 export enum SOWSignatureRole {
   CLIENT = 'CLIENT',
   TECHNICIAN = 'TECHNICIAN'
@@ -99,8 +115,23 @@ export class SOWPricingAdjustment {
   description: string;
 
   @Prop({ required: true })
-  @Field(() => Float, { description: 'Amount of the adjustment' })
+  @Field(() => Float, { description: 'What this adjustment moves: unitAmount x multiplier. Invoices read this.' })
   amount: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'Amount for a single unit, before the multiplier. Absent on adjustments written before unit amounts existed — treat amount as the whole story there.'
+  })
+  unitAmount?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'How many units the unit amount is charged for. Absent (or unset) means 1.' })
+  multiplier?: number;
+
+  @Prop({ required: false })
+  @Field(() => SOWAdjustmentCategory, { nullable: true, description: 'What the adjustment is charging for. Absent on adjustments written before categories existed.' })
+  category?: SOWAdjustmentCategory;
 
   @Prop({ required: false })
   @Field({ description: 'Reason for the adjustment', nullable: true })

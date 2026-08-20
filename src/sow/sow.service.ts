@@ -12,7 +12,7 @@ import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
-import { labCalendarDay } from './sow-field-calculator';
+import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-field-calculator';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 
@@ -218,7 +218,13 @@ export class SOWService {
       _id: adj.type + '-' + Date.now() + '-' + Math.random(),
       type: adj.type,
       description: adj.description,
-      amount: adj.amount,
+      // The client's `amount` is never trusted where it can be derived: a caller
+      // that sends a unit amount gets the product, computed here, the same way
+      // a service line's total is derived from its unit price above.
+      amount: adjustmentAmount(adj),
+      unitAmount: adj.unitAmount == null ? undefined : Number(adj.unitAmount),
+      multiplier: adj.unitAmount == null ? undefined : adjustmentMultiplier(adj),
+      category: adj.category,
       reason: adj.reason
     }));
   }
