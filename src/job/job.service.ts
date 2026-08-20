@@ -121,6 +121,14 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: job._id }, { $set: { state: newState } }, { new: true }).exec();
   }
 
+  /**
+   * Records the spec staff just accepted. Re-accepting overwrites, which is how
+   * a send re-locked by a later job edit gets released.
+   */
+  async recordAcceptance(jobId: string, fingerprint: string, acceptedBy?: string): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { acceptedBillingFingerprint: fingerprint, acceptedAt: new Date(), acceptedBy: acceptedBy ?? null } }, { new: true }).exec();
+  }
+
   async updateCustomerCategory(jobId: string, customerCategory: CustomerCategory): Promise<Job | null> {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { customerCategory } }, { new: true }).exec();
   }

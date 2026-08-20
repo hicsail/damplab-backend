@@ -30,12 +30,12 @@ export class SowVersionServiceInput {
   @Field({ nullable: true, defaultValue: '' })
   description?: string;
 
-  @Field(() => Float, { description: 'What this line bills. Ignored when unitCost is sent — the total is derived there. Kept for callers written before unit prices existed.' })
+  @Field(() => Float, { description: 'Deprecated and ignored. Service line figures come from the job spec; the document cannot set them.' })
   cost: number;
 
   @Field(() => Float, {
     nullable: true,
-    description: 'Price of a single run. A staff override here writes through to the billing core invoices read; the line total becomes unitCost x the multiplier the workflow baked in.'
+    description: 'Deprecated and ignored. Retained so an older browser bundle does not fail validation; service prices are owned by the job spec.'
   })
   unitCost?: number;
 }
@@ -97,4 +97,7 @@ export class SowInputsInput {
 
   @Field(() => [SowVersionAdjustmentInput], { nullable: true, defaultValue: [] })
   adjustments?: SowVersionAdjustmentInput[];
+
+  @Field({ nullable: true, defaultValue: false, description: 'Preview the refreshed Fee Schedule figures rather than the ones carried forward from the current version.' })
+  refreshFeeSchedule?: boolean;
 }

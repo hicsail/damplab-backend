@@ -5,6 +5,7 @@ import { Invoice, InvoiceDocument } from './invoice.model';
 import { CreateInvoiceInput } from './dto/create-invoice.input';
 import { JobService } from '../job/job.service';
 import { SOWService } from '../sow/sow.service';
+import { SowVersionService } from '../sow/sow-version.service';
 import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
 
@@ -19,7 +20,12 @@ function round2(n: number): number {
 
 @Injectable()
 export class InvoiceService {
-  constructor(@InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>, private readonly jobService: JobService, private readonly sowService: SOWService) {}
+  constructor(
+    @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
+    private readonly jobService: JobService,
+    private readonly sowService: SOWService,
+    private readonly sowVersionService: SowVersionService
+  ) {}
 
   async findByJobId(jobId: string): Promise<Invoice[]> {
     return this.invoiceModel.find({ jobId }).sort({ createdAt: -1 }).exec();
@@ -47,7 +53,14 @@ export class InvoiceService {
       throw new BadRequestException('serviceIds must be a non-empty list');
     }
 
-    const sowServices = sow.services ?? [];
+    // Bill the version in force with the customer, not the job's current
+    // figures. `sow.services` tracks the job — the workflow sync overwrites it
+    // whenever the spec changes — so invoicing from it would bill a price no
+    // signed document ever stated. The active version is the thing the customer
+    // agreed to. A SOW with no active version at all (legacy, pre-versioning)
+    // falls back to the billing core, which is the only record it has.
+    const active = await this.sowVersionService.getActiveVersion(String((sow as any)._id));
+    const sowServices: any[] = active?.inputs?.services?.length ? active.inputs.services : sow.services ?? [];
     const serviceById = new Map(sowServices.map((s: any) => [String(s.serviceId ?? s._id ?? ''), s]));
 
     const selected = serviceIds.map((sid) => serviceById.get(String(sid))).filter(Boolean) as any[];
@@ -71,7 +84,9 @@ export class InvoiceService {
     const sowBaseCost = round2(sowServices.reduce((sum: number, s: any) => sum + (Number(s.cost) || 0), 0));
     const prorationFactor = sowBaseCost > 0 ? Math.min(1, subtotal / sowBaseCost) : 0;
 
-    const rawAdjustments = Array.isArray((sow as any).pricing?.adjustments) ? (sow as any).pricing.adjustments : [];
+    // Same rule as the service lines: the adjustments that were in force with
+    // the customer, not whatever the document holds today.
+    const rawAdjustments: any[] = active?.inputs?.adjustments ?? (Array.isArray((sow as any).pricing?.adjustments) ? (sow as any).pricing.adjustments : []);
     const adjustments = rawAdjustments.map((adj: any) => {
       const type = String(adj?.type ?? '');
       const amount = Number(adj?.amount) || 0;

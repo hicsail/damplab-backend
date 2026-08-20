@@ -217,3 +217,107 @@ describe('previewCalculatedValues — prose blocks', () => {
     expect(valueFor(rows, 'feeSchedule')).toContain('$350.00');
   });
 });
+
+/**
+ * The job-owned half of the billing core — what the accept-before-send gate
+ * compares. Adjustments are excluded on purpose: staff author those on the
+ * document and must be able to change them without re-opening the customer's
+ * agreement to the spec.
+ */
+describe('jobBillingFingerprint', () => {
+  const services = [{ serviceId: 's1', name: 'PCR', cost: 350, unitCost: 5, multiplier: 70 }];
+
+  it('is stable for the same services and category', () => {
+    expect(SowVersionService.jobBillingFingerprint(services, 'INTERNAL_CUSTOMERS')).toBe(SowVersionService.jobBillingFingerprint([{ ...services[0] }], 'INTERNAL_CUSTOMERS'));
+  });
+
+  it('moves when a unit price moves', () => {
+    expect(SowVersionService.jobBillingFingerprint([{ ...services[0], unitCost: 6, cost: 420 }], 'INTERNAL_CUSTOMERS')).not.toBe(
+      SowVersionService.jobBillingFingerprint(services, 'INTERNAL_CUSTOMERS')
+    );
+  });
+
+  it('moves when the multiplier moves, even though the line total is unchanged', () => {
+    expect(SowVersionService.jobBillingFingerprint([{ ...services[0], unitCost: 10, multiplier: 35 }], 'INTERNAL_CUSTOMERS')).not.toBe(
+      SowVersionService.jobBillingFingerprint(services, 'INTERNAL_CUSTOMERS')
+    );
+  });
+
+  it('moves when the pricing category moves', () => {
+    expect(SowVersionService.jobBillingFingerprint(services, 'EXTERNAL_CUSTOMER_MARKET')).not.toBe(SowVersionService.jobBillingFingerprint(services, 'INTERNAL_CUSTOMERS'));
+  });
+
+  it('computes for a job with no service lines at all — acceptance routinely precedes the SOW', () => {
+    expect(() => SowVersionService.jobBillingFingerprint(null, null)).not.toThrow();
+    expect(SowVersionService.jobBillingFingerprint(null, null)).toBe(SowVersionService.jobBillingFingerprint([], null));
+  });
+
+  it('is not tripped by an adjustment, which billingFingerprint does notice', () => {
+    const base = { services, adjustments: [], baseCost: 350, totalCost: 350, customerCategory: 'INTERNAL_CUSTOMERS' } as any;
+    const withAdjustment = { ...base, adjustments: [{ type: 'DISCOUNT', description: 'Academic', amount: 50 }], totalCost: 300 } as any;
+
+    expect(SowVersionService.jobBillingFingerprint(withAdjustment.services, withAdjustment.customerCategory)).toBe(SowVersionService.jobBillingFingerprint(base.services, base.customerCategory));
+    expect(SowVersionService.billingFingerprint(withAdjustment)).not.toBe(SowVersionService.billingFingerprint(base));
+  });
+});
+
+/**
+ * A SOW version is a static record. Its Fee Schedule figures carry forward
+ * untouched — a staff member editing prose must not silently reprice the
+ * document — and move only when staff explicitly refresh them.
+ */
+describe('feeScheduleInputs', () => {
+  const live: any = {
+    services: [{ serviceId: 's1', name: 'PCR', cost: 420, unitCost: 6, multiplier: 70 }],
+    adjustments: [],
+    customerCategory: 'EXTERNAL_CUSTOMER_MARKET'
+  };
+  const previous: any = {
+    services: [{ serviceId: 's1', name: 'PCR', cost: 350, unitCost: 5, multiplier: 70 }],
+    adjustments: [],
+    customerCategory: 'INTERNAL_CUSTOMERS'
+  };
+
+  it('carries the previous version forward when staff did not refresh', () => {
+    const out = SowVersionService.feeScheduleInputs(live, previous, false);
+
+    expect(out.services).toEqual(previous.services);
+    expect(out.customerCategory).toBe('INTERNAL_CUSTOMERS');
+    expect(out.baseCost).toBe(350);
+  });
+
+  it('takes the job figures when staff refreshed', () => {
+    const out = SowVersionService.feeScheduleInputs(live, previous, true);
+
+    expect(out.services).toEqual(live.services);
+    expect(out.customerCategory).toBe('EXTERNAL_CUSTOMER_MARKET');
+    expect(out.baseCost).toBe(420);
+  });
+
+  it('takes the job figures for a first version, which has nothing to carry', () => {
+    expect(SowVersionService.feeScheduleInputs(live, null, false).services).toEqual(live.services);
+  });
+
+  it('takes the job figures when the previous version has no lines — a migrated record, not a free job', () => {
+    expect(SowVersionService.feeScheduleInputs(live, { ...previous, services: [] }, false).services).toEqual(live.services);
+    expect(SowVersionService.feeScheduleInputs(live, { ...previous, services: undefined }, false).services).toEqual(live.services);
+  });
+
+  it('recomputes the total from the carried base and the document’s current adjustments', () => {
+    const withDiscount = { ...live, adjustments: [{ type: 'DISCOUNT', amount: 50 }] } as any;
+    const out = SowVersionService.feeScheduleInputs(withDiscount, previous, false);
+
+    // Base is the carried-forward 350, not the job's 420; the discount is current.
+    expect(out.baseCost).toBe(350);
+    expect(out.totalCost).toBe(300);
+  });
+
+  it('leaves the carried figures alone when only an adjustment changed', () => {
+    const before = SowVersionService.feeScheduleInputs(live, previous, false);
+    const after = SowVersionService.feeScheduleInputs({ ...live, adjustments: [{ type: 'ADDITIONAL_COST', amount: 25 }] } as any, previous, false);
+
+    expect(after.services).toEqual(before.services);
+    expect(after.baseCost).toBe(before.baseCost);
+    expect(after.totalCost).toBe(375);
+  });
+});

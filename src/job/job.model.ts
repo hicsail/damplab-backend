@@ -119,6 +119,28 @@ export class Job {
   @Field(() => JobState, { description: 'Where in the Job life cycle this Job is' })
   state: JobState;
 
+  /**
+   * The job's billing figures as they stood when staff accepted it — see
+   * SowVersionService.jobBillingFingerprint.
+   *
+   * A SOW may only be sent to the customer while this still matches the job's
+   * current figures. Editing the spec afterwards therefore re-locks the send
+   * until staff re-accept, which is what stops a price the customer never agreed
+   * to from reaching them. Absent on jobs accepted before this existed, which
+   * read as "never accepted" and need one re-accept to unlock.
+   */
+  @Prop({ required: false })
+  @Field({ description: 'Billing fingerprint of the job spec at the moment staff accepted it.', nullable: true })
+  acceptedBillingFingerprint?: string;
+
+  @Prop({ required: false })
+  @Field({ description: 'When staff last accepted this job as specified', nullable: true })
+  acceptedAt?: Date;
+
+  @Prop({ required: false })
+  @Field({ description: 'Keycloak sub of the staff member who last accepted this job', nullable: true })
+  acceptedBy?: string;
+
   @Prop({
     type: [
       {

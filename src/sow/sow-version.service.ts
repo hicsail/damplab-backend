@@ -2,14 +2,15 @@ import { Injectable, Logger, Inject, forwardRef, BadRequestException, ConflictEx
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
-import { SOW, SOWDocument, SOWStatus, SOWAdjustmentType } from './sow.model';
-import { SowVersion, SowVersionDocument, SowVersionInputs, SowField, SowFieldKind, SowPeriod, SowConsent } from './sow-version.model';
+import { SOW, SOWDocument, SOWStatus, SOWAdjustmentType, DocumentBlocker, SowActionGate } from './sow.model';
+import { SowVersion, SowVersionDocument, SowVersionInputs, SowVersionService as SowVersionServiceLine, SowField, SowFieldKind, SowPeriod, SowConsent } from './sow-version.model';
 import { adjustmentAmount, adjustmentMultiplier, buildCalculatedFields, calculateFieldValues, normalizeIncomingFields, SowDocumentContext } from './sow-field-calculator';
 import { SOW_FIELD_CATALOG, findFieldDefinition } from './sow-field-defaults';
 import { SOWService } from './sow.service';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
 import { SignSowInput } from './dto/sign-sow.input';
 import { User } from '../auth/user.interface';
+import { JobState } from '../job/job.model';
 import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
 
 /**
@@ -20,6 +21,8 @@ import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
 export type SowInputsLike = Partial<Omit<SowVersionInputs, 'services' | 'periods'>> & {
   services?: Array<{ serviceId: string; name: string; description?: string; cost: number; unitCost?: number }>;
   periods?: Array<{ startDate: Date; durationDays: number; label?: string }>;
+  /** Mirrors SaveSowVersionInput: preview the refreshed figures rather than the carried-forward ones. */
+  refreshFeeSchedule?: boolean;
 };
 
 /**
@@ -116,6 +119,39 @@ export class SowVersionService {
     };
   }
 
+  /**
+   * The Fee Schedule half of a version's inputs: service lines, pricing category,
+   * and the totals that follow from them.
+   *
+   * A SOW version is a static record. Its figures therefore carry forward from
+   * the previous version unchanged — a staff member fixing a typo in the prose
+   * must not silently reprice the document — and move only when staff explicitly
+   * refresh the Fee Schedule, which is what `refresh` means here.
+   *
+   * `live` is job truth (deriveInputs off the current billing core). Note the
+   * client never names a figure either way: refreshing is a boolean intent, and
+   * the numbers always come from the server's own derivation.
+   */
+  static feeScheduleInputs(
+    live: SowVersionInputs,
+    previous: SowVersionInputs | null | undefined,
+    refresh: boolean
+  ): Pick<SowVersionInputs, 'services' | 'customerCategory' | 'baseCost' | 'totalCost'> {
+    // A previous version with no lines at all is a migrated or pre-versioning
+    // record, not a document that genuinely bills nothing. Carrying it forward
+    // would silently zero the fee schedule, so fall back to job truth.
+    const canCarry = previous != null && (previous.services ?? []).length > 0;
+    const source = refresh || !canCarry ? live : (previous as SowVersionInputs);
+    const services = source.services ?? [];
+    const baseCost = services.reduce((sum, svc) => sum + (Number(svc.cost) || 0), 0);
+
+    // Adjustments are document-owned and always current, so the total is the
+    // carried-forward base plus whatever the document says today.
+    const totalCost = (live.adjustments ?? []).reduce((sum, a) => sum + (a.type === SOWAdjustmentType.DISCOUNT ? -Math.abs(Number(a.amount) || 0) : Math.abs(Number(a.amount) || 0)), baseCost);
+
+    return { services, customerCategory: source.customerCategory, baseCost: Math.round(baseCost * 100) / 100, totalCost: Math.round(totalCost * 100) / 100 };
+  }
+
   static buildContext(sow: SOW, job?: { jobId?: string; name?: string } | null): SowDocumentContext {
     return {
       sowNumber: sow.sowNumber,
@@ -130,16 +166,32 @@ export class SowVersionService {
   }
 
   /**
+   * The half of the billing core the *job* owns: service lines and the pricing
+   * category. Adjustments and totals are deliberately excluded — those are
+   * staff-authored on the document, and staff are free to change them without
+   * re-opening the customer's agreement to the spec.
+   *
+   * This is what the accept-before-send gate compares: a job whose fingerprint
+   * still matches the one stamped at acceptance is a job the lab has agreed to
+   * as it currently stands.
+   */
+  static jobBillingFingerprint(services: Array<Pick<SowVersionServiceLine, 'serviceId' | 'name' | 'cost' | 'unitCost' | 'multiplier'>> | null | undefined, customerCategory?: string | null): string {
+    const lines = (services ?? []).map((s) => `${s.serviceId}:${s.name}:${Number(s.cost).toFixed(2)}:${s.unitCost == null ? '' : Number(s.unitCost).toFixed(2)}:${s.multiplier ?? ''}`).join('|');
+    return [lines, customerCategory ?? ''].join('#');
+  }
+
+  /**
    * What the Fee Schedule depends on. Two versions with the same fingerprint
    * would render the same figures, so a change here — and only here — means the
    * document has fallen behind the billing core.
+   *
+   * Delegates the job-owned half to jobBillingFingerprint so the two can never
+   * drift into disagreeing about what a service line's identity is.
    */
   static billingFingerprint(inputs: Pick<SowVersionInputs, 'services' | 'adjustments' | 'baseCost' | 'totalCost' | 'customerCategory'>): string {
-    const services = (inputs.services ?? [])
-      .map((s) => `${s.serviceId}:${s.name}:${Number(s.cost).toFixed(2)}:${s.unitCost == null ? '' : Number(s.unitCost).toFixed(2)}:${s.multiplier ?? ''}`)
-      .join('|');
+    const jobHalf = SowVersionService.jobBillingFingerprint(inputs.services, inputs.customerCategory);
     const adjustments = (inputs.adjustments ?? []).map((a) => `${a.type}:${a.description}:${Number(a.amount).toFixed(2)}`).join('|');
-    return [services, adjustments, Number(inputs.baseCost ?? 0).toFixed(2), Number(inputs.totalCost ?? 0).toFixed(2), inputs.customerCategory ?? ''].join('#');
+    return [jobHalf, adjustments, Number(inputs.baseCost ?? 0).toFixed(2), Number(inputs.totalCost ?? 0).toFixed(2)].join('#');
   }
 
   /**
@@ -337,6 +389,7 @@ export class SowVersionService {
     const sow = await this.requireSow(sowId);
     const job = await this.sowService.getJobForSow(sow);
     const stored = SowVersionService.deriveInputs(sow, job);
+    const currentVersion = await this.getCurrentVersion(String((sow as any)._id));
 
     const merged: SowVersionInputs = {
       ...stored,
@@ -346,29 +399,10 @@ export class SowVersionService {
       sowTitle: inputs.sowTitle ?? stored.sowTitle,
       scopeOfWork: inputs.scopeOfWork ?? stored.scopeOfWork,
       deliverables: inputs.deliverables ?? stored.deliverables,
-      // Unsaved billing edits still need to show in the preview, but only as
-      // costs applied to lines the SOW already has — a preview cannot invent one.
-      // Matched by position, not serviceId: the same catalogue service can appear
-      // on more than one line (different run counts), and a serviceId lookup
-      // would apply the first matching line's edit to every line sharing that id
-      // — see the identical reasoning on SOWService.applyDocumentBilling. Unlike
-      // that save path, there's no length gate here: a preview must keep showing
-      // whatever edits it safely can rather than dropping all of them the moment
-      // the arrays are transiently out of step (e.g. mid-render while inputs are
-      // still loading) — a line whose position no longer matches its own
-      // serviceId just falls through to the stored value, same as a genuine
-      // mismatch would.
-      services: (stored.services ?? []).map((s, i) => {
-        const edited = inputs.services?.[i];
-        if (!edited || String(edited.serviceId) !== String(s.serviceId)) return s;
-        // A unit-price edit has to carry the total with it, or the preview would
-        // quote a new base beside the stored line total it no longer produces.
-        if (edited.unitCost != null && Number.isFinite(edited.unitCost) && edited.unitCost >= 0) {
-          const multiplier = Number.isFinite(Number(s.multiplier)) && Number(s.multiplier) > 0 ? Number(s.multiplier) : 1;
-          return { ...s, unitCost: edited.unitCost, multiplier, cost: Math.round(edited.unitCost * multiplier * 100) / 100 };
-        }
-        return Number.isFinite(edited.cost) && edited.cost >= 0 ? { ...s, cost: edited.cost } : s;
-      }),
+      // The same choice the save path makes, so the preview quotes the figures a
+      // save would actually store: carried forward from the current version
+      // unless staff have hit Recalculate.
+      ...SowVersionService.feeScheduleInputs(stored, currentVersion?.inputs, inputs.refreshFeeSchedule === true),
       // Unsaved adjustment edits are previewed from the same derivation the save
       // path applies, so the preview quotes the figure the save would store
       // rather than whatever total the client happened to send with it.
@@ -430,13 +464,16 @@ export class SowVersionService {
     const note = input.note?.trim();
     if (!note) throw new BadRequestException('Describe what you changed before saving.');
 
-    // Billing figures first: the fee schedule text is generated from the billing
-    // core, so it has to be written before the document is composed or the saved
-    // text would describe the previous prices.
-    const hasBillingEdits = (input.inputs.services ?? []).length > 0 || input.inputs.adjustments !== undefined;
+    // Adjustments first: the fee schedule text is generated from the billing
+    // core, so they have to be written before the document is composed or the
+    // saved text would describe the previous totals.
+    //
+    // Service lines are not sent — they come from the job spec via the workflow
+    // sync, and `deriveInputs` below reads them back off the SOW. That is what
+    // makes a plain Save the way a document catches up with a changed job.
+    const hasBillingEdits = input.inputs.adjustments !== undefined;
     if (hasBillingEdits) {
       await this.sowService.applyDocumentBilling(sowId, {
-        serviceCosts: (input.inputs.services ?? []).map((s) => ({ serviceId: s.serviceId, unitCost: s.unitCost, cost: s.cost })),
         adjustments: (input.inputs.adjustments ?? []).map((a) => ({
           type: a.type,
           description: a.description,
@@ -456,8 +493,13 @@ export class SowVersionService {
     // the SOW after the write above, so the version records what was actually
     // stored rather than what the client claimed.
     const derived = SowVersionService.deriveInputs(fresh, job);
+    // Fee Schedule figures are a static record: they carry forward from the
+    // previous version unless staff explicitly refreshed them. See
+    // feeScheduleInputs for why this is a flag rather than figures on the wire.
+    const feeSchedule = SowVersionService.feeScheduleInputs(derived, current?.inputs, input.refreshFeeSchedule === true);
     const inputs: SowVersionInputs = {
       ...derived,
+      ...feeSchedule,
       projectManager: input.inputs.projectManager ?? '',
       projectManagerId: input.inputs.projectManagerId ?? undefined,
       projectLead: input.inputs.projectLead ?? '',
@@ -549,6 +591,92 @@ export class SowVersionService {
       .map((def) => def.label);
   }
 
+  /** One sentence naming the first thing standing in the way, and how to clear it. */
+  static blockerMessage(blockers: DocumentBlocker[], missingFields: string[] = []): string {
+    switch (blockers[0]) {
+      case DocumentBlocker.NOT_ACCEPTED:
+        return 'Accept this job before sending its Statement of Work — the customer needs to have agreed to the spec the prices come from.';
+      case DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE:
+        return 'This job changed after it was accepted. Re-accept it, then recalculate and save the document, before sending.';
+      case DocumentBlocker.DOCUMENT_STALE:
+        return "This document still bills the job's earlier figures. Recalculate the Fee Schedule and save before sending.";
+      case DocumentBlocker.DRAFT_INCOMPLETE:
+        return missingFields.length > 0 ? `Complete the following before sending to the customer: ${missingFields.join(', ')}.` : 'This SOW has no document to send.';
+      case DocumentBlocker.NO_DRAFT_TO_SEND:
+        return 'This version has already been issued. Edit the document to start a new draft before sending again.';
+      case DocumentBlocker.UNSENT_DRAFT:
+        return 'A newer draft sits above the version the customer signed. Send it and have them sign it before countersigning.';
+      case DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE:
+        return 'The customer has not signed the version in force yet.';
+      default:
+        return 'This SOW cannot move to its next stage yet.';
+    }
+  }
+
+  /**
+   * Which lifecycle actions this SOW currently permits.
+   *
+   * One rule for the whole lifecycle: the job spec must be agreed (accepted, and
+   * unchanged since) and the document must match it. Signing is not a branch —
+   * a signed version is immutable, so a later job change simply runs the same
+   * rule again and the customer re-signs. Countersigning adds two conditions of
+   * its own, both of which say the same thing: you may only countersign the
+   * exact document the customer signed, and only while it is still current.
+   *
+   * DOCUMENT_STALE blocks both actions rather than warning, because
+   * appendVersion copies a version's fields verbatim: without it, staff could
+   * issue — or finalize — prose whose Fee Schedule contradicts the figures
+   * invoices bill from.
+   */
+  async actionGate(sowId: string): Promise<SowActionGate> {
+    const sow = await this.requireSow(sowId);
+    const current = await this.getCurrentVersion(sowId);
+    const active = await this.getActiveVersion(sowId);
+    const job = await this.sowService.getJobForSow(sow);
+
+    // Shared by both actions: the spec has to be agreed, and the document has to
+    // reflect it.
+    const specBlockers: DocumentBlocker[] = [];
+    const accepted = (job as any)?.acceptedBillingFingerprint;
+    if (!job || (job as any).state !== JobState.ACCEPTED || !accepted) {
+      specBlockers.push(DocumentBlocker.NOT_ACCEPTED);
+    } else if ((await this.sowService.jobBillingFingerprint(job as any)) !== accepted) {
+      specBlockers.push(DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE);
+    }
+    if (sow.documentStale) specBlockers.push(DocumentBlocker.DOCUMENT_STALE);
+
+    const missingFields = SowVersionService.missingRequiredFields(current?.fields ?? []);
+    const sendBlockers = [...specBlockers];
+    // Mutually exclusive, and in this order: no document at all, a document that
+    // has already gone out, then a draft with gaps in it. The second is what
+    // sendToCustomer's own `current.status !== DRAFT` check enforces — the gate
+    // has to agree with it or it would promise a send the server refuses.
+    if (!current) {
+      sendBlockers.push(DocumentBlocker.DRAFT_INCOMPLETE);
+    } else if (current.status !== SOWStatus.DRAFT) {
+      sendBlockers.push(DocumentBlocker.NO_DRAFT_TO_SEND);
+    } else if (missingFields.length > 0) {
+      sendBlockers.push(DocumentBlocker.DRAFT_INCOMPLETE);
+    }
+
+    const countersignBlockers = [...specBlockers];
+    if (!active || active.status !== SOWStatus.SIGNED) {
+      countersignBlockers.push(DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE);
+    } else if (sow.currentVersionNumber > sow.activeVersionNumber) {
+      // Staff have revised the document since the customer signed. Countersigning
+      // now would finalize a version the lab has already moved on from.
+      countersignBlockers.push(DocumentBlocker.UNSENT_DRAFT);
+    }
+
+    return {
+      canSend: sendBlockers.length === 0,
+      sendBlockers,
+      canCountersign: countersignBlockers.length === 0,
+      countersignBlockers,
+      missingFields
+    };
+  }
+
   /** Issues the current draft to the customer. */
   async sendToCustomer(sowId: string, author: { sub: string; name: string }): Promise<SowVersionDocument> {
     const sow = await this.requireSow(sowId);
@@ -556,9 +684,11 @@ export class SowVersionService {
     if (!current) throw new BadRequestException('This SOW has no document to send.');
     if (current.status !== SOWStatus.DRAFT) throw new BadRequestException(`Only a draft can be sent; v${current.versionNumber} is ${current.status}.`);
 
-    const missing = SowVersionService.missingRequiredFields(current.fields ?? []);
-    if (missing.length > 0) {
-      throw new BadRequestException(`Complete the following before sending to the customer: ${missing.join(', ')}.`);
+    // The gate the UI shows, enforced here too: the resolved field is a
+    // convenience for disabling a button, never the thing that decides.
+    const gate = await this.actionGate(sowId);
+    if (!gate.canSend) {
+      throw new BadRequestException(SowVersionService.blockerMessage(gate.sendBlockers, gate.missingFields));
     }
 
     const now = new Date();
@@ -621,6 +751,16 @@ export class SowVersionService {
     if (!active) throw new BadRequestException('This SOW has nothing to finalize.');
     if (active.status !== SOWStatus.SIGNED) throw new BadRequestException(`Only a signed SOW can be finalized; v${active.versionNumber} is ${active.status}.`);
     if (!name?.trim()) throw new BadRequestException('A name is required to countersign.');
+
+    // A countersignature closes the agreement, so it may only land on the exact
+    // document the customer signed, and only while that document still matches
+    // the job. A stale figure or a draft sitting above the signed version both
+    // mean the lab has moved on from what was agreed — the revision has to go
+    // out and come back signed first.
+    const gate = await this.actionGate(sowId);
+    if (!gate.canCountersign) {
+      throw new BadRequestException(SowVersionService.blockerMessage(gate.countersignBlockers, gate.missingFields));
+    }
 
     const signature: SowConsent = {
       name: name.trim(),

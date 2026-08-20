@@ -1,6 +1,5 @@
 import { InputType, Field, Float } from '@nestjs/graphql';
 import { SOWServiceInput, SOWPricingAdjustmentInput, SOWDiscountInput } from './create-sow.input';
-import { SOWStatus } from '../sow.model';
 
 @InputType()
 export class UpdateSOWTimelineInput {
@@ -98,6 +97,8 @@ export class UpdateSOWInput {
   @Field({ description: 'Additional information', nullable: true })
   additionalInformation?: string;
 
-  @Field(() => SOWStatus, { description: 'Status of the SOW', nullable: true })
-  status?: SOWStatus;
+  // `status` is deliberately absent. It used to be writable here with no
+  // transition guard, which let a caller set SENT or SIGNED directly and walk
+  // straight past sendToCustomer's checks. The version state machine
+  // (SowVersionService) owns status now; nothing else may set it.
 }
