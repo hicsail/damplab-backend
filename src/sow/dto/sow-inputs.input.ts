@@ -1,5 +1,5 @@
 import { Field, InputType, Int, Float, ID } from '@nestjs/graphql';
-import { SOWAdjustmentType } from '../sow.model';
+import { SOWAdjustmentType, SOWAdjustmentCategory } from '../sow.model';
 
 /**
  * The structured drivers behind the calculated sections, as sent by the editor.
@@ -50,8 +50,17 @@ export class SowVersionAdjustmentInput {
   @Field()
   description: string;
 
-  @Field(() => Float)
+  @Field(() => Float, { description: 'What this adjustment moves. Ignored when unitAmount is sent — the figure is derived from unitAmount x multiplier.' })
   amount: number;
+
+  @Field(() => Float, { nullable: true, description: 'Amount for a single unit, before the multiplier. This is what the Fee Schedule editor edits; amount follows from it.' })
+  unitAmount?: number;
+
+  @Field(() => Float, { nullable: true, description: 'How many units the unit amount is charged for. Omitted means 1.' })
+  multiplier?: number;
+
+  @Field(() => SOWAdjustmentCategory, { nullable: true, description: 'What the adjustment is charging for.' })
+  category?: SOWAdjustmentCategory;
 
   @Field({ nullable: true })
   reason?: string;

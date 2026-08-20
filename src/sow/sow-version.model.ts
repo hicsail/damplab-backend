@@ -2,7 +2,7 @@ import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, Int, Float, registerEnumType } from '@nestjs/graphql';
-import { SOWStatus, SOWAdjustmentType } from './sow.model';
+import { SOWStatus, SOWAdjustmentType, SOWAdjustmentCategory } from './sow.model';
 
 /**
  * A SOW version is an immutable snapshot of the document. Save, send, sign,
@@ -153,8 +153,20 @@ export class SowVersionAdjustment {
   description: string;
 
   @Prop({ required: true })
-  @Field(() => Float)
+  @Field(() => Float, { description: 'What this adjustment moves: unitAmount x multiplier' })
   amount: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Amount for a single unit, before the multiplier. This is what the Fee Schedule editor edits; amount follows from it.' })
+  unitAmount?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'How many units the unit amount is charged for. Absent (or unset) means 1.' })
+  multiplier?: number;
+
+  @Prop({ required: false })
+  @Field(() => SOWAdjustmentCategory, { nullable: true, description: 'What the adjustment is charging for. Absent on versions written before categories existed.' })
+  category?: SOWAdjustmentCategory;
 
   @Prop({ required: false })
   @Field({ nullable: true })
