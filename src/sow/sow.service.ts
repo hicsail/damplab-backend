@@ -11,14 +11,10 @@ import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
-import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
 import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-field-calculator';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
-
-/** Money, kept to cents: a unit price times a multiplier is prone to binary drift. */
-const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 /** Money, kept to cents: a unit price times a multiplier is prone to binary drift. */
 const round2 = (n: number): number => Math.round(n * 100) / 100;
