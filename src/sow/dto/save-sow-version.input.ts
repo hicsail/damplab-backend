@@ -41,4 +41,12 @@ export class SaveSowVersionInput {
    */
   @Field({ description: 'Note describing what changed, shown in the version history. Required.' })
   note: string;
+
+  @Field({
+    nullable: true,
+    defaultValue: false,
+    description:
+      "True when staff clicked Recalculate on the Fee Schedule. The document's figures are a static record and carry forward untouched otherwise; this is an intent flag, never a price — the server derives the figures itself."
+  })
+  refreshFeeSchedule?: boolean;
 }

@@ -13,6 +13,47 @@ export enum SOWStatus {
 }
 registerEnumType(SOWStatus, { name: 'SOWStatus' });
 
+/**
+ * Why a SOW cannot move to its next lifecycle stage yet, in the order staff
+ * should resolve them. The list is ordered so the UI can render one repair
+ * sequence rather than several competing alarms.
+ */
+export enum DocumentBlocker {
+  /** The lab has not accepted this job's spec. */
+  NOT_ACCEPTED = 'NOT_ACCEPTED',
+  /** The spec moved after it was accepted, so the acceptance no longer covers it. */
+  JOB_CHANGED_SINCE_ACCEPTANCE = 'JOB_CHANGED_SINCE_ACCEPTANCE',
+  /** The document still bills the job's earlier figures; Recalculate then save. */
+  DOCUMENT_STALE = 'DOCUMENT_STALE',
+  /** A required section is missing or empty. */
+  DRAFT_INCOMPLETE = 'DRAFT_INCOMPLETE',
+  /** The current version has already been issued; editing starts a fresh draft. */
+  NO_DRAFT_TO_SEND = 'NO_DRAFT_TO_SEND',
+  /** A draft sits above the version the customer holds; it has to go out and be signed first. */
+  UNSENT_DRAFT = 'UNSENT_DRAFT',
+  /** The version in force has not been signed by the customer yet. */
+  AWAITING_CUSTOMER_SIGNATURE = 'AWAITING_CUSTOMER_SIGNATURE'
+}
+registerEnumType(DocumentBlocker, { name: 'DocumentBlocker' });
+
+@ObjectType({ description: 'Which lifecycle actions this SOW currently permits, and what is in the way of each.' })
+export class SowActionGate {
+  @Field({ description: 'True when nothing blocks issuing the current draft to the customer.' })
+  canSend: boolean;
+
+  @Field(() => [DocumentBlocker], { description: 'What stands between the current draft and a send, in repair order.' })
+  sendBlockers: DocumentBlocker[];
+
+  @Field({ description: 'True when nothing blocks countersigning the signed version in force.' })
+  canCountersign: boolean;
+
+  @Field(() => [DocumentBlocker], { description: 'What stands between the signed version and a countersignature, in repair order.' })
+  countersignBlockers: DocumentBlocker[];
+
+  @Field(() => [String], { description: 'Human-readable labels for the required sections still missing, when DRAFT_INCOMPLETE is present.' })
+  missingFields: string[];
+}
+
 export enum SOWAdjustmentType {
   DISCOUNT = 'DISCOUNT',
   ADDITIONAL_COST = 'ADDITIONAL_COST',

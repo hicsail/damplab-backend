@@ -2,7 +2,8 @@ import { BadRequestException, ConflictException } from '@nestjs/common';
 import mongoose from 'mongoose';
 import { SowVersionService } from './sow-version.service';
 import { SowFieldKind } from './sow-version.model';
-import { SOWStatus } from './sow.model';
+import { SOWStatus, DocumentBlocker } from './sow.model';
+import { JobState } from '../job/job.model';
 import { User } from '../auth/user.interface';
 
 /**
@@ -36,7 +37,7 @@ function matches(doc: any, query: Record<string, any>): boolean {
   return Object.entries(query).every(([k, v]) => String(doc[k]) === String(v));
 }
 
-function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { service: SowVersionService; sow: any; versions: FakeVersion[] } {
+function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; liveFingerprint?: string } = {}): { service: SowVersionService; sow: any; versions: FakeVersion[]; job: any } {
   const versions: FakeVersion[] = [
     {
       _id: 'v1',
@@ -134,9 +135,22 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
     })
   };
 
+  // Accepted, and unchanged since — the state a job has to be in for a send to
+  // be allowed at all. Tests that care about the gate override it.
+  const job: any = {
+    customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC',
+    jobId: '04217',
+    sub: 'sub-owner',
+    email: 'client@lab.org',
+    state: JobState.ACCEPTED,
+    acceptedBillingFingerprint: 'fp-accepted',
+    ...(initial.job ?? {})
+  };
+
   const sowService: any = {
     applyDocumentBilling: async () => sow,
-    getJobForSow: async () => ({ customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', jobId: '04217', sub: 'sub-owner', email: 'client@lab.org' }),
+    getJobForSow: async () => job,
+    jobBillingFingerprint: async () => initial.liveFingerprint ?? 'fp-accepted',
     autoAssignProjectLead: async () => undefined
   };
 
@@ -144,7 +158,7 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[] } = {}): { se
   // transition tests assert against.
   const presetService: any = { defaultTextByKey: async () => ({}) };
 
-  return { service: new SowVersionService(versionModel, sowModel, sowService, presetService), sow, versions };
+  return { service: new SowVersionService(versionModel, sowModel, sowService, presetService), sow, versions, job };
 }
 
 const staff = { sub: 'sub-staff', name: 'tech' };
@@ -452,26 +466,290 @@ describe('discardDraft', () => {
 });
 
 describe('previewCalculatedValues', () => {
-  it('keeps each line at its own edited cost when the same service appears twice', async () => {
-    const { service, sow } = makeHarness();
-    sow.services = [
-      { serviceId: 'pcr', name: 'PCR', description: '', cost: 350 }, // 70 runs
-      { serviceId: 'pcr', name: 'PCR', description: '', cost: 5 } // 1 run
-    ];
+  /** A job can legitimately use the same catalogue service twice at different run counts. */
+  const twoPcrLines = [
+    { serviceId: 'pcr', name: 'PCR', description: '', cost: 350 }, // 70 runs
+    { serviceId: 'pcr', name: 'PCR', description: '', cost: 5 } // 1 run
+  ];
 
-    const preview = await service.previewCalculatedValues(SOW_ID, {
-      services: [
-        { serviceId: 'pcr', name: 'PCR', description: '', cost: 350 },
-        { serviceId: 'pcr', name: 'PCR', description: '', cost: 5 }
-      ]
-    } as any);
+  it("quotes the figures the document carries, not the job's current ones", async () => {
+    const { service, sow, versions } = makeHarness();
+    versions[0].inputs.services = twoPcrLines;
+    // The job has since been repriced; the preview must not show this.
+    sow.services = [{ serviceId: 'pcr', name: 'PCR', description: '', cost: 999 }];
 
+    const preview = await service.previewCalculatedValues(SOW_ID, {} as any);
     const feeSchedule = preview.find((f) => f.key === 'feeSchedule')?.calculatedValue ?? '';
-    // Both lines' costs must survive distinctly; a serviceId-keyed lookup would
-    // have applied the first line's edit ($350) to both, showing $700 total
-    // instead of $355 and losing the second line's true cost entirely.
+
+    // Both lines' costs survive distinctly; a serviceId-keyed lookup would have
+    // collapsed them onto one figure and lost the second line's true cost.
     expect(feeSchedule).toContain('$350.00');
     expect(feeSchedule).toContain('$5.00');
     expect(feeSchedule).toContain('Total: $355.00');
+    expect(feeSchedule).not.toContain('$999.00');
+  });
+
+  it('quotes the job figures once staff have hit Recalculate', async () => {
+    const { service, sow, versions } = makeHarness();
+    versions[0].inputs.services = twoPcrLines;
+    sow.services = [{ serviceId: 'pcr', name: 'PCR', description: '', cost: 999 }];
+
+    const preview = await service.previewCalculatedValues(SOW_ID, { refreshFeeSchedule: true } as any);
+    const feeSchedule = preview.find((f) => f.key === 'feeSchedule')?.calculatedValue ?? '';
+
+    expect(feeSchedule).toContain('$999.00');
+    expect(feeSchedule).toContain('Total: $999.00');
+  });
+
+  it('ignores service figures a client sends, whatever they are', async () => {
+    const { service, versions } = makeHarness();
+    versions[0].inputs.services = twoPcrLines;
+
+    const preview = await service.previewCalculatedValues(SOW_ID, {
+      services: [{ serviceId: 'pcr', name: 'PCR', description: '', cost: 1 }]
+    } as any);
+    const feeSchedule = preview.find((f) => f.key === 'feeSchedule')?.calculatedValue ?? '';
+
+    expect(feeSchedule).toContain('Total: $355.00');
+  });
+});
+
+/**
+ * The send gate.
+ *
+ * One rule for the whole lifecycle: the spec must be agreed (accepted, and
+ * unchanged since) and the document must match it. The signed-SOW block at the
+ * end runs the same table a second time and is the guard against a
+ * post-signature special case creeping back in.
+ */
+describe('actionGate — sending', () => {
+  it('allows a send when the job is accepted, unchanged, and the draft is complete', async () => {
+    const { service } = makeHarness();
+    const gate = await service.actionGate(SOW_ID);
+
+    expect(gate).toMatchObject({ canSend: true, sendBlockers: [] });
+  });
+
+  it('blocks a job that was never accepted', async () => {
+    const { service } = makeHarness({ job: { state: JobState.SUBMITTED, acceptedBillingFingerprint: undefined } });
+
+    expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([DocumentBlocker.NOT_ACCEPTED]);
+  });
+
+  it('blocks a job accepted before acceptance was recorded, so one re-accept unlocks it', async () => {
+    const { service } = makeHarness({ job: { state: JobState.ACCEPTED, acceptedBillingFingerprint: undefined } });
+
+    expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([DocumentBlocker.NOT_ACCEPTED]);
+  });
+
+  it('re-locks when the job spec moved after it was accepted', async () => {
+    const { service } = makeHarness({ liveFingerprint: 'fp-after-edit' });
+
+    expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE]);
+  });
+
+  it('blocks a document whose figures lag the billing core', async () => {
+    const { service, sow } = makeHarness();
+    sow.documentStale = true;
+
+    expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([DocumentBlocker.DOCUMENT_STALE]);
+  });
+
+  it('blocks a draft missing a required section', async () => {
+    const { service } = makeHarness({
+      fields: [{ key: 'billToAddress', label: 'Bill To Address', kind: SowFieldKind.PROSE, order: 110, value: 'x', isOverridden: false, isEnabled: true, allowsTextOverride: true }]
+    });
+    const gate = await service.actionGate(SOW_ID);
+
+    expect(gate.sendBlockers).toEqual([DocumentBlocker.DRAFT_INCOMPLETE]);
+    expect(gate.missingFields).toContain('Engagement Resources');
+  });
+
+  it('reports blockers in the order staff should resolve them', async () => {
+    const { service, sow } = makeHarness({
+      job: { state: JobState.SUBMITTED, acceptedBillingFingerprint: undefined },
+      fields: [{ key: 'billToAddress', label: 'Bill To Address', kind: SowFieldKind.PROSE, order: 110, value: 'x', isOverridden: false, isEnabled: true, allowsTextOverride: true }]
+    });
+    sow.documentStale = true;
+
+    expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([DocumentBlocker.NOT_ACCEPTED, DocumentBlocker.DOCUMENT_STALE, DocumentBlocker.DRAFT_INCOMPLETE]);
+  });
+
+  it('is not re-locked by a staff adjustment, which is the whole point of adjustments surviving decision #2', async () => {
+    const { service, sow } = makeHarness();
+    // An adjustment moves the document's total but not the job's spec, so the
+    // acceptance still covers what the customer agreed to.
+    sow.pricing = { baseCost: 0, adjustments: [{ type: 'DISCOUNT', description: 'Academic', amount: 50 }], totalCost: -50 };
+
+    expect(await service.actionGate(SOW_ID)).toMatchObject({ canSend: true, sendBlockers: [] });
+  });
+
+  it('never reports both acceptance blockers at once — a job that was never accepted cannot also have drifted', async () => {
+    const { service } = makeHarness({ job: { state: JobState.SUBMITTED, acceptedBillingFingerprint: undefined }, liveFingerprint: 'fp-after-edit' });
+
+    expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([DocumentBlocker.NOT_ACCEPTED]);
+  });
+
+  describe('sendToCustomer enforces the gate rather than trusting the resolved field', () => {
+    it('refuses to send an unaccepted job', async () => {
+      const { service } = makeHarness({ job: { state: JobState.SUBMITTED, acceptedBillingFingerprint: undefined } });
+
+      await expect(service.sendToCustomer(SOW_ID, staff)).rejects.toThrow(BadRequestException);
+    });
+
+    it('refuses to send after the job changed, and sends once it is re-accepted', async () => {
+      const { service, job } = makeHarness({ liveFingerprint: 'fp-after-edit' });
+      await expect(service.sendToCustomer(SOW_ID, staff)).rejects.toThrow(/Re-accept/);
+
+      // Re-accepting is exactly re-stamping the fingerprint with the current one.
+      job.acceptedBillingFingerprint = 'fp-after-edit';
+      const sent = await service.sendToCustomer(SOW_ID, staff);
+
+      expect(sent.status).toBe(SOWStatus.SENT);
+    });
+
+    it('refuses to send a document whose figures lag the job', async () => {
+      const { service, sow } = makeHarness();
+      sow.documentStale = true;
+
+      await expect(service.sendToCustomer(SOW_ID, staff)).rejects.toThrow(/Recalculate the Fee Schedule/);
+    });
+  });
+
+  /**
+   * Signing is not a lifecycle branch.
+   *
+   * What must not differ is the *spec* half of the rule — accepted, unchanged
+   * since, document matching the job. Those blockers appear identically whether
+   * the current version is a draft or already signed. (A signed current version
+   * separately reports NO_DRAFT_TO_SEND, because there is no draft to issue
+   * until someone edits it — that is a fact about the document, not a rule about
+   * signatures.)
+   */
+  describe('the spec rule does not change once a SOW has been signed', () => {
+    const specBlockers = (list: DocumentBlocker[]): DocumentBlocker[] => list.filter((b) => b !== DocumentBlocker.NO_DRAFT_TO_SEND && b !== DocumentBlocker.DRAFT_INCOMPLETE);
+
+    const cases: Array<{ name: string; opts: any; expected: DocumentBlocker[] }> = [
+      { name: 'nothing wrong', opts: {}, expected: [] },
+      { name: 'never accepted', opts: { job: { state: JobState.SUBMITTED, acceptedBillingFingerprint: undefined } }, expected: [DocumentBlocker.NOT_ACCEPTED] },
+      { name: 'job changed since acceptance', opts: { liveFingerprint: 'fp-after-edit' }, expected: [DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE] }
+    ];
+
+    it.each(cases)('reports the same spec blockers on a draft and on a signed version: $name', async ({ opts, expected }) => {
+      const draft = makeHarness(opts);
+      const signed = makeHarness({ ...opts, status: SOWStatus.SIGNED });
+
+      expect(specBlockers((await draft.service.actionGate(SOW_ID)).sendBlockers)).toEqual(expected);
+      expect(specBlockers((await signed.service.actionGate(SOW_ID)).sendBlockers)).toEqual(expected);
+    });
+
+    it('reports a stale document identically either way', async () => {
+      const draft = makeHarness();
+      const signed = makeHarness({ status: SOWStatus.SIGNED });
+      draft.sow.documentStale = true;
+      signed.sow.documentStale = true;
+
+      expect(specBlockers((await draft.service.actionGate(SOW_ID)).sendBlockers)).toEqual([DocumentBlocker.DOCUMENT_STALE]);
+      expect(specBlockers((await signed.service.actionGate(SOW_ID)).sendBlockers)).toEqual([DocumentBlocker.DOCUMENT_STALE]);
+    });
+
+    it('reports NO_DRAFT_TO_SEND for an already-issued version, agreeing with sendToCustomer', async () => {
+      const { service } = makeHarness({ status: SOWStatus.SIGNED });
+      const gate = await service.actionGate(SOW_ID);
+
+      expect(gate.canSend).toBe(false);
+      expect(gate.sendBlockers).toEqual([DocumentBlocker.NO_DRAFT_TO_SEND]);
+      await expect(service.sendToCustomer(SOW_ID, staff)).rejects.toThrow();
+    });
+  });
+});
+
+describe('actionGate — countersigning', () => {
+  const signedHarness = (extra: any = {}): ReturnType<typeof makeHarness> => {
+    const h = makeHarness(extra);
+    h.versions[0].status = SOWStatus.SIGNED;
+    h.sow.activeVersionNumber = 1;
+    h.sow.currentVersionNumber = 1;
+    return h;
+  };
+
+  it('allows a countersignature on the signed version in force', async () => {
+    const { service } = signedHarness();
+    const gate = await service.actionGate(SOW_ID);
+
+    expect(gate).toMatchObject({ canCountersign: true, countersignBlockers: [] });
+  });
+
+  it('blocks it while the customer has not signed yet', async () => {
+    const { service, sow, versions } = signedHarness();
+    versions[0].status = SOWStatus.SENT;
+    sow.activeVersionNumber = 1;
+
+    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE]);
+  });
+
+  it('blocks it when staff have revised the document since the signature', async () => {
+    const { service, sow } = signedHarness();
+    sow.currentVersionNumber = 2; // an unsent draft sits above the signed version
+
+    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.UNSENT_DRAFT]);
+  });
+
+  it('blocks it when the document no longer matches the job', async () => {
+    const { service, sow } = signedHarness();
+    sow.documentStale = true;
+
+    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.DOCUMENT_STALE]);
+  });
+
+  it('blocks it when the job changed after it was accepted', async () => {
+    const { service } = signedHarness({ liveFingerprint: 'fp-after-edit' });
+
+    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE]);
+  });
+
+  describe('finalize enforces the gate rather than trusting the resolved field', () => {
+    it('countersigns when nothing is in the way', async () => {
+      const { service } = signedHarness();
+      const v = await service.finalize(SOW_ID, 'Dr Staff', staff);
+
+      expect(v.status).toBe(SOWStatus.FINAL);
+      expect(v.staffSignature?.name).toBe('Dr Staff');
+    });
+
+    it('refuses to finalize a version staff have already revised past', async () => {
+      const { service, sow } = signedHarness();
+      sow.currentVersionNumber = 2;
+
+      await expect(service.finalize(SOW_ID, 'Dr Staff', staff)).rejects.toThrow(/newer draft/);
+    });
+
+    it('refuses to finalize a document whose figures no longer match the job', async () => {
+      const { service, sow } = signedHarness();
+      sow.documentStale = true;
+
+      await expect(service.finalize(SOW_ID, 'Dr Staff', staff)).rejects.toThrow(/Recalculate the Fee Schedule/);
+    });
+
+    it('still refuses a blank name before it even looks at the gate', async () => {
+      const { service, sow } = signedHarness();
+      sow.documentStale = true;
+
+      await expect(service.finalize(SOW_ID, '   ', staff)).rejects.toThrow(/name is required/);
+    });
+  });
+
+  /**
+   * A countersigned document gets no exemption: a price-material job change means
+   * it no longer describes the work, so it goes back through the same loop.
+   */
+  it('blocks a re-countersignature once a FINAL document has gone stale', async () => {
+    const { service, sow, versions } = signedHarness();
+    versions[0].status = SOWStatus.FINAL;
+    sow.documentStale = true;
+
+    const gate = await service.actionGate(SOW_ID);
+    expect(gate.canCountersign).toBe(false);
+    expect(gate.canSend).toBe(false);
   });
 });

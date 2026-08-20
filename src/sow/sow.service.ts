@@ -16,9 +16,6 @@ import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-fi
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 
-/** Money, kept to cents: a unit price times a multiplier is prone to binary drift. */
-const round2 = (n: number): number => Math.round(n * 100) / 100;
-
 @Injectable()
 export class SOWService {
   private readonly logger = new Logger(SOWService.name);
@@ -219,14 +216,92 @@ export class SOWService {
       type: adj.type,
       description: adj.description,
       // The client's `amount` is never trusted where it can be derived: a caller
-      // that sends a unit amount gets the product, computed here, the same way
-      // a service line's total is derived from its unit price above.
+      // that sends a unit amount gets the product, computed here.
       amount: adjustmentAmount(adj),
       unitAmount: adj.unitAmount == null ? undefined : Number(adj.unitAmount),
       multiplier: adj.unitAmount == null ? undefined : adjustmentMultiplier(adj),
       category: adj.category,
       reason: adj.reason
     }));
+  }
+
+  /**
+   * The SOW service lines a job's workflows currently imply, in node order.
+   *
+   * The single source of service-line figures: the workflow sync writes these
+   * onto the SOW, and the accept-before-send gate fingerprints them to decide
+   * whether the spec still matches what staff accepted. Lives here rather than
+   * on JobResolver because both of those callers need it and neither owns it.
+   */
+  async collectSowServiceInputs(job: Job, existingServices: any[] = []): Promise<any[]> {
+    const orderedNodes: any[] = [];
+    for (const workflowId of job.workflows ?? []) {
+      const workflow = await this.workflowService.findById(String(workflowId));
+      if (!workflow) continue;
+
+      const nodeIds = (workflow.nodes ?? []).map((n: any) => String(n));
+      if (!nodeIds.length) continue;
+
+      const nodes = await this.workflowNodeService.getByIDs(nodeIds);
+      const byId = new Map(nodes.map((n: any) => [String(n._id), n]));
+
+      for (const nodeId of nodeIds) {
+        const node = byId.get(nodeId);
+        if (node) orderedNodes.push(node);
+      }
+    }
+
+    return orderedNodes.map((node: any, idx: number) => {
+      const existing = existingServices[idx];
+      const serviceId = String(node.service?._id ?? node.service);
+
+      return {
+        id: serviceId,
+        name: existing?.name ?? node.label ?? 'Service',
+        description: existing?.description ?? node.label ?? 'Service',
+        // A unit price, not a line total: transformServices multiplies whatever
+        // arrives here by the node's multiplier when the service record carries
+        // no price of its own.
+        //
+        // The job's node price always wins. The stored SOW figure used to be
+        // preferred, which was correct while the SOW editor could override a
+        // unit price — but it also meant a workflow edit that should reprice a
+        // line silently didn't, leaving a stale figure on the document forever.
+        // Service lines are no longer document-editable, so there is nothing on
+        // the SOW side worth preserving here.
+        unitCost: node.price ?? 0,
+        cost: node.price ?? 0,
+        category: existing?.category ?? 'molecular-biology',
+        formData: node.formData ?? []
+      };
+    });
+  }
+
+  /**
+   * The job's billing fingerprint: what the accept-before-send gate compares.
+   *
+   * Deliberately derived from the job's own workflows (collectSowServiceInputs)
+   * rather than from sow.services, for two reasons. Acceptance usually happens
+   * before a SOW exists, so there is nothing on the document side to read; and
+   * both sides of the comparison have to be computed the same way or every
+   * check would report drift that isn't there.
+   *
+   * Consequence, intended: an admin catalogue price edit moves what
+   * transformServices writes onto the SOW but moves neither node.price nor the
+   * category, so it does not re-lock the send. The document's own staleness
+   * signal covers that case.
+   */
+  async jobBillingFingerprint(job: Job): Promise<string> {
+    const services = await this.collectSowServiceInputs(job);
+    return SowVersionService.jobBillingFingerprint(
+      // `multiplier` is left out rather than recomputed: node.price is already
+      // unitCost x multiplier (calculateServiceCost returns the breakdown's
+      // `cost`, and the multiplier includes __runCount), so a run-count or
+      // sample-count change moves the figure below on its own. Both sides of the
+      // gate's comparison run through here, so omitting it cannot cause drift.
+      services.map((s) => ({ serviceId: String(s.id), name: s.name, cost: Number(s.cost) || 0, unitCost: s.unitCost, multiplier: undefined })),
+      (job as any).customerCategory ?? null
+    );
   }
 
   /**
@@ -239,69 +314,31 @@ export class SOWService {
   }
 
   /**
-   * Writes the billing figures a staff member changed in the SOW editor back to
-   * the billing core, then recomputes the totals.
+   * Writes the adjustments a staff member changed in the SOW editor back to the
+   * billing core, then recomputes the totals.
    *
-   * Deliberately does not go through transformServices. That helper reprices each
-   * line from the service record plus the node's formData, and the document editor
-   * has no formData to give it — so routing a document save through it would drop
-   * the run-count multiplier and reprice a 70-run job as a 1-run job. Here the
-   * cost the staff member sees is the cost that is stored; only baseCost and
-   * totalCost are derived, and only from values already on the SOW.
+   * Service lines are deliberately NOT writable from the document. Their figures
+   * come from the job spec — the thing the customer proposed and the lab
+   * accepted — via transformServices on the workflow sync path, which is the
+   * single writer. Staff alter what a document bills by adding a DISCOUNT or
+   * ADDITIONAL_COST adjustment, which the customer can see as its own line with
+   * its own reason, rather than by silently rewriting a price the customer
+   * already agreed to.
    *
-   * Costs are matched by position, not serviceId — a job can legitimately use the
-   * same catalogue service more than once (e.g. two PCR steps at different run
-   * counts), so serviceId is not unique per line. A serviceId-keyed override map
-   * would collapse every line sharing that id onto whichever cost came last in
-   * the request, corrupting the other lines' totals. The editor never adds,
-   * removes, or reorders lines — SowFieldSourceControls only edits the cost
-   * already at a given index — so position is the reliable correlation key here,
-   * same as collectSowServiceInputs already assumes elsewhere. If the arrays
-   * have diverged (e.g. a workflow sync changed the billable lines while the
-   * editor was open) a line is left unchanged rather than risk writing its cost
-   * onto the wrong service — that's what "applied only to lines that already
-   * exist" means in practice.
+   * baseCost and totalCost are still derived here, and only from values already
+   * on the SOW.
    */
-  async applyDocumentBilling(
-    sowId: string,
-    changes: { serviceCosts?: Array<{ serviceId: string; unitCost?: number; cost?: number }>; adjustments?: CreateSOWInput['pricing']['adjustments'] }
-  ): Promise<SOW> {
+  async applyDocumentBilling(sowId: string, changes: { adjustments?: CreateSOWInput['pricing']['adjustments'] }): Promise<SOW> {
     const sow = await this.sowModel.findById(sowId).exec();
     if (!sow) throw new NotFoundException(`SOW with ID ${sowId} not found`);
 
-    const incoming = changes.serviceCosts ?? [];
-    const sameLength = incoming.length === (sow.services ?? []).length;
-
-    const services = (sow.services ?? []).map((service, i) => {
-      if (!sameLength) return service;
-      const line = incoming[i];
-      if (String(line.serviceId) !== String(service.serviceId ?? service._id)) return service;
-      // Staff edit the unit price; the line total follows from it and the
-      // multiplier the workflow baked in, which the document cannot edit.
-      // `!= null` before Number(): the editor sends an explicit null for a line
-      // that has no unit price yet, and Number(null) is a finite 0 — which would
-      // zero out the line instead of falling through to the cost path below.
-      const unit = line.unitCost == null ? NaN : Number(line.unitCost);
-      const multiplier = Number.isFinite(Number(service.multiplier)) && Number(service.multiplier) > 0 ? Number(service.multiplier) : 1;
-      if (Number.isFinite(unit) && unit >= 0) {
-        return { ...service, unitCost: unit, multiplier, cost: round2(unit * multiplier) };
-      }
-
-      // A caller with no unit price to send — a document saved before unit
-      // prices were recorded — still writes the total through as it always did.
-      const override = Number(line.cost);
-      if (!Number.isFinite(override) || override < 0) return service;
-      return { ...service, cost: override };
-    });
-
+    const services = sow.services ?? [];
     const adjustments = changes.adjustments ? this.transformPricingAdjustments(changes.adjustments) : sow.pricing?.adjustments ?? [];
 
     const baseCost = this.calculateBaseCost(services);
     const totalCost = this.calculateTotalCost(baseCost, adjustments);
 
-    const updated = await this.sowModel
-      .findByIdAndUpdate(sowId, { $set: { services, pricing: { ...(sow.pricing ?? {}), baseCost, adjustments, totalCost }, updatedAt: new Date() } }, { new: true })
-      .exec();
+    const updated = await this.sowModel.findByIdAndUpdate(sowId, { $set: { pricing: { ...(sow.pricing ?? {}), baseCost, adjustments, totalCost }, updatedAt: new Date() } }, { new: true }).exec();
 
     if (!updated) throw new NotFoundException(`SOW with ID ${sowId} not found`);
     return updated;
@@ -542,7 +579,6 @@ export class SOWService {
     }
     if (updateSOWInput.terms !== undefined) updateData.terms = updateSOWInput.terms;
     if (updateSOWInput.additionalInformation !== undefined) updateData.additionalInformation = updateSOWInput.additionalInformation;
-    if (updateSOWInput.status !== undefined) updateData.status = updateSOWInput.status;
 
     const updatedSOW = await this.sowModel.findByIdAndUpdate(id, { $set: updateData }, { new: true }).exec();
     if (!updatedSOW) {
@@ -689,8 +725,8 @@ export class SOWService {
         resources: createSOWInput.resources,
         pricing: createSOWInput.pricing,
         terms: createSOWInput.terms,
-        additionalInformation: createSOWInput.additionalInformation,
-        status: createSOWInput.status
+        additionalInformation: createSOWInput.additionalInformation
+        // status is not forwarded: the version state machine owns it.
       };
       result = await this.update(existingSOW._id, updateInput);
     } else {

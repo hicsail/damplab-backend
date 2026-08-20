@@ -49,41 +49,17 @@ export class JobResolver {
    * from the service record plus this data, and the run-count multiplier lives
    * inside it.
    */
-  private async collectSowServiceInputs(job: Job, existingServices: any[] = []): Promise<any[]> {
-    const orderedNodes: any[] = [];
-    for (const workflowId of job.workflows ?? []) {
-      const workflow = await this.workflowService.findById(String(workflowId));
-      if (!workflow) continue;
-
-      const nodeIds = (workflow.nodes ?? []).map((n: any) => String(n));
-      if (!nodeIds.length) continue;
-
-      const nodes = await this.workflowNodeService.getByIDs(nodeIds);
-      const byId = new Map(nodes.map((n: any) => [String(n._id), n]));
-
-      for (const nodeId of nodeIds) {
-        const node = byId.get(nodeId);
-        if (node) orderedNodes.push(node);
-      }
-    }
-
-    return orderedNodes.map((node: any, idx: number) => {
-      const existing = existingServices[idx];
-      const serviceId = String(node.service?._id ?? node.service);
-
-      return {
-        id: serviceId,
-        name: existing?.name ?? node.label ?? 'Service',
-        description: existing?.description ?? node.label ?? 'Service',
-        // A unit price, not a line total: transformServices multiplies whatever
-        // arrives here by the node's multiplier when the service record carries
-        // no price of its own.
-        unitCost: existing?.unitCost ?? node.price ?? 0,
-        cost: existing?.cost ?? node.price ?? 0,
-        category: existing?.category ?? 'molecular-biology',
-        formData: node.formData ?? []
-      };
-    });
+  /**
+   * Records the job's billing figures as of now, so a later spec change is
+   * detectable as "no longer the thing that was accepted".
+   *
+   * Read from the job's own workflows rather than from a SOW: acceptance
+   * routinely happens before a SOW exists at all — that is the point of gating
+   * the send on it — so there is nothing on the document side to read yet.
+   */
+  private async stampAcceptance(job: Job, user: User): Promise<void> {
+    const fingerprint = await this.sowService.jobBillingFingerprint(job);
+    await this.jobService.recordAcceptance(String((job as any)._id), fingerprint, user.sub);
   }
 
   private async syncSowServicesFromJobWorkflows(jobId: string): Promise<void> {
@@ -93,7 +69,7 @@ export class JobResolver {
     const existingSow = await this.sowService.findByJobId(jobId);
     if (!existingSow) return;
 
-    const servicesInput = await this.collectSowServiceInputs(job, existingSow.services ?? []);
+    const servicesInput = await this.sowService.collectSowServiceInputs(job, existingSow.services ?? []);
     if (servicesInput.length === 0) return;
 
     const updateInput: UpdateSOWInput = { services: servicesInput } as any;
@@ -326,25 +302,21 @@ export class JobResolver {
     return updated;
   }
 
+  /**
+   * Staff-only. The customer used to be permitted here on the grounds that it is
+   * "their" category, but the blast radius is not job-local: it rewrites their
+   * Keycloak pricing group, every job under the account, and every SOW billing
+   * core — i.e. a customer could reprice their own work.
+   */
   @Mutation(() => Job, {
     description:
-      'Change pricing category for a job owner: updates their Keycloak pricing group, every job under that account, and reprices SOW billing cores (documents stay stale until staff refresh).'
+      'Staff-only. Change pricing category for a job owner: updates their Keycloak pricing group, every job under that account, and reprices SOW billing cores (documents stay stale until staff refresh).'
   })
-  async changeJobCustomerCategory(
-    @Args('jobId', { type: () => ID }) jobId: string,
-    @Args('customerCategory', { type: () => CustomerCategory }) customerCategory: CustomerCategory,
-    @CurrentUser() user: User
-  ): Promise<Job> {
+  @Roles(Role.DamplabStaff)
+  async changeJobCustomerCategory(@Args('jobId', { type: () => ID }) jobId: string, @Args('customerCategory', { type: () => CustomerCategory }) customerCategory: CustomerCategory): Promise<Job> {
     const job = await this.jobService.findById(jobId);
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
-    }
-
-    const roles = user.realm_access?.roles ?? [];
-    const isStaff = roles.includes(Role.DamplabStaff);
-    const isOwner = job.sub === user.sub;
-    if (!isStaff && !isOwner) {
-      throw new ForbiddenException('You do not have permission to change customer category for this job');
     }
 
     // Account-wide: Keycloak group first (staff path / when Admin API is available), then all jobs for this sub.
@@ -385,7 +357,7 @@ export class JobResolver {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
 
-    const services = await this.collectSowServiceInputs(job);
+    const services = await this.sowService.collectSowServiceInputs(job);
     const createdBy = user.email || user.preferred_username || 'unknown';
 
     return this.sowService.createForJob(jobId, services, createdBy);
@@ -478,13 +450,26 @@ export class JobResolver {
     }
 
     const wasResubmission = job.state === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
+    // Re-accepting a job that is already ACCEPTED re-stamps the fingerprint to
+    // release a locked send. It is not a transition, so it gets no history row:
+    // the customer's version list would otherwise fill with repeated "Accepted"
+    // entries during a negotiation. The re-stamp is still audited on the job
+    // itself via acceptedAt / acceptedBy.
+    const isReAcceptance = job.state === JobState.ACCEPTED && newState === JobState.ACCEPTED;
     const updated = (await this.jobService.updateState(job, newState))!;
+
+    // Accepting stamps the spec the lab agreed to. Re-accepting an already
+    // ACCEPTED job re-stamps it, which is how staff release a send that a later
+    // job edit re-locked — see SowVersionService.actionGate.
+    if (newState === JobState.ACCEPTED) {
+      await this.stampAcceptance(updated, user);
+    }
 
     // Recorded after the state actually moved, so a failed transition leaves no
     // entry. A resubmission is called out by name: "Submitted" on the second
     // pass would read as a duplicate of the original submission.
     const note = wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState];
-    if (note) {
+    if (note && !isReAcceptance) {
       await this.jobVersionService.appendStateEvent(updated, newState, { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' }, note);
     }
 

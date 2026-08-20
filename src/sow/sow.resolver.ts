@@ -1,5 +1,5 @@
 import { Resolver, Query, Mutation, Args, ID, Int, ResolveField, Parent } from '@nestjs/graphql';
-import { SOW, SOWStatus } from './sow.model';
+import { SOW, SOWStatus, SowActionGate } from './sow.model';
 import { SOWService } from './sow.service';
 import { SowVersionService } from './sow-version.service';
 import { SowVersion, SowCalculatedValue, SowVersionService as SowVersionServiceLine } from './sow-version.model';
@@ -96,9 +96,19 @@ export class SOWResolver {
     return this.sowService.upsertForJob(jobId, { ...input, jobId, createdBy });
   }
 
+  /**
+   * The pre-versioning signature path. It writes signatures onto the SOW root
+   * and flips status to SIGNED without going through the version state machine,
+   * so it bypasses every check signSow makes — including the send gate. No UI
+   * calls it; staff-gated here so it cannot be driven from a customer token
+   * while it waits to be deleted.
+   *
+   * @deprecated Use signSow / finalizeSow.
+   */
   @Mutation(() => SOW, {
-    description: 'Submit a signature for an SOW (client or technician). Idempotent per role; the service checks job ownership for CLIENT and staff role for TECHNICIAN.'
+    description: 'Deprecated, staff-only. Legacy pre-versioning signature path; use signSow instead.'
   })
+  @Roles(Role.DamplabStaff)
   async submitSOWSignature(@Args('input', { type: () => SubmitSOWSignatureInput }) input: SubmitSOWSignatureInput, @CurrentUser() user: User): Promise<SOW> {
     return this.sowService.submitSignature(input, user);
   }
@@ -110,13 +120,14 @@ export class SOWResolver {
 
   // ---------------------------------------------------------------------------
   // Live Fee Schedule figures — recomputed fresh on every query, independent of
-  // whatever is stored on the SOW or frozen into a version. What the "Stale"
-  // chip and Recalculate button on the Fee Schedule compare local edits against.
+  // whatever is stored on the SOW or frozen into a version. These are what the
+  // Fee Schedule renders: service lines belong to the job spec, and the document
+  // shows them read-only rather than holding an editable copy.
   // ---------------------------------------------------------------------------
 
   @ResolveField(() => [SowVersionServiceLine], {
     description:
-      'The SOW\'s current service lines and their costs, read fresh on every query. Kept in sync with the job\'s services/category by syncSowServicesFromJobWorkflows — this is what the Fee Schedule "Stale" chip and Recalculate compare a local draft against.'
+      "The SOW's current service lines and their costs, read fresh on every query. Kept in sync with the job's services/category by syncSowServicesFromJobWorkflows — this is what the Fee Schedule renders, since service prices belong to the job spec rather than the document."
   })
   async liveServices(@Parent() sow: SOW): Promise<SowVersionServiceLine[]> {
     const job = await this.jobService.findById(sow.jobId);
@@ -127,6 +138,13 @@ export class SOWResolver {
   async liveCustomerCategory(@Parent() sow: SOW): Promise<CustomerCategory | null> {
     const job = await this.jobService.findById(sow.jobId);
     return job?.customerCategory ?? null;
+  }
+
+  @ResolveField(() => SowActionGate, {
+    description: 'Which lifecycle actions this SOW permits and what is in the way of each. Advisory only — sendSowToCustomer and finalizeSow enforce the same rules server-side.'
+  })
+  async actionGate(@Parent() sow: SOW): Promise<SowActionGate> {
+    return this.sowVersionService.actionGate(String((sow as any)._id));
   }
 
   // ---------------------------------------------------------------------------
