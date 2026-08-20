@@ -18,7 +18,9 @@ interface Harness {
 }
 
 function harness(services: Array<{ serviceId: string; name?: string; cost: number; unitCost?: number; multiplier?: number }>): Harness {
+function harness(services: Array<{ serviceId: string; name?: string; cost: number; unitCost?: number; multiplier?: number }>): Harness {
   const sowDoc: any = {
+    services: services.map((s) => ({ serviceId: s.serviceId, name: s.name ?? s.serviceId, description: '', cost: s.cost, unitCost: s.unitCost, multiplier: s.multiplier })),
     services: services.map((s) => ({ serviceId: s.serviceId, name: s.name ?? s.serviceId, description: '', cost: s.cost, unitCost: s.unitCost, multiplier: s.multiplier })),
     pricing: { adjustments: [] }
   };

@@ -11,6 +11,7 @@ import { SaveSowVersionInput } from './dto/save-sow-version.input';
 import { SignSowInput } from './dto/sign-sow.input';
 import { User } from '../auth/user.interface';
 import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
+import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
 
 /**
  * Inputs as they arrive from the editor: the same shape as SowVersionInputs but
@@ -18,6 +19,7 @@ import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
  * controls have been touched.
  */
 export type SowInputsLike = Partial<Omit<SowVersionInputs, 'services' | 'periods'>> & {
+  services?: Array<{ serviceId: string; name: string; description?: string; cost: number; unitCost?: number }>;
   services?: Array<{ serviceId: string; name: string; description?: string; cost: number; unitCost?: number }>;
   periods?: Array<{ startDate: Date; durationDays: number; label?: string }>;
 };
