@@ -129,6 +129,11 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { acceptedBillingFingerprint: fingerprint, acceptedAt: new Date(), acceptedBy: acceptedBy ?? null } }, { new: true }).exec();
   }
 
+  /** Staff-set: whether the job's owner may currently edit its workflow graph. */
+  async setCustomerEditingEnabled(jobId: string, enabled: boolean): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { customerEditingEnabled: enabled } }, { new: true }).exec();
+  }
+
   async updateCustomerCategory(jobId: string, customerCategory: CustomerCategory): Promise<Job | null> {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { customerCategory } }, { new: true }).exec();
   }

@@ -26,6 +26,7 @@ import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '..
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
 import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
+import { customerMayEdit, editingClosedByTransition } from './job-editing';
 import { KeycloakService } from '../keycloak/keycloak.service';
 
 @Resolver(() => Job)
@@ -439,7 +440,12 @@ export class JobResolver {
    * through the lab's pipeline.
    */
   @Mutation(() => Job)
-  async changeJobState(@Args('job', { type: () => ID }, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState, @CurrentUser() user: User): Promise<Job> {
+  async changeJobState(
+    @Args('job', { type: () => ID }, JobPipe) job: Job,
+    @Args('newState', { type: () => JobState }) newState: JobState,
+    @CurrentUser() user: User,
+    @Args('note', { type: () => String, nullable: true }) note?: string
+  ): Promise<Job> {
     const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
     if (!isStaff) {
       const isOwner = job.sub === user.sub;
@@ -456,6 +462,16 @@ export class JobResolver {
     // entries during a negotiation. The re-stamp is still audited on the job
     // itself via acceptedAt / acceptedBy.
     const isReAcceptance = job.state === JobState.ACCEPTED && newState === JobState.ACCEPTED;
+
+    // Handing the job back ends the editing grant that came with holding it.
+    // Written before the state moves, so a failure here cannot leave a job with
+    // the lab that the customer can still rewrite. CHANGES_REQUESTED is left
+    // alone: whoever is sending it to the customer has just set the flag they
+    // meant, and this must not overwrite it.
+    if (editingClosedByTransition(newState)) {
+      await this.jobService.setCustomerEditingEnabled(String((job as any)._id), false);
+    }
+
     const updated = (await this.jobService.updateState(job, newState))!;
 
     // Accepting stamps the spec the lab agreed to. Re-accepting an already
@@ -468,11 +484,34 @@ export class JobResolver {
     // Recorded after the state actually moved, so a failed transition leaves no
     // entry. A resubmission is called out by name: "Submitted" on the second
     // pass would read as a duplicate of the original submission.
-    const note = wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState];
-    if (note && !isReAcceptance) {
-      await this.jobVersionService.appendStateEvent(updated, newState, { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' }, note);
+    // An explicit note wins: CHANGES_REQUESTED now covers both "make these
+    // changes" and "approve the changes we made", and the version list is what
+    // the customer reads to tell one from the other.
+    const historyNote = note?.trim() || (wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState]);
+    if (historyNote && !isReAcceptance) {
+      await this.jobVersionService.appendStateEvent(updated, newState, { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' }, historyNote);
     }
 
+    return updated;
+  }
+
+  /**
+   * Staff-only. Open or close the customer's ability to edit this job's
+   * workflow graph.
+   *
+   * Deliberately separate from changeJobState: who holds the job and whether
+   * they may change it are two decisions, and the Review Job modal now takes
+   * them together but records them apart. Callers should set this *before*
+   * moving the state, so a failure part-way leaves the job where it was rather
+   * than handing over access that was meant to be withheld.
+   */
+  @Mutation(() => Job, { description: "Staff-only. Set whether the job's owner may edit its workflow graph." })
+  @Roles(Role.DamplabStaff)
+  async setJobCustomerEditing(@Args('jobId', { type: () => ID }) jobId: string, @Args('enabled', { type: () => Boolean }) enabled: boolean): Promise<Job> {
+    const updated = await this.jobService.setCustomerEditingEnabled(jobId, enabled);
+    if (!updated) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
     return updated;
   }
 
@@ -481,7 +520,7 @@ export class JobResolver {
    * the result as a new version.
    *
    * Staff may edit any job that is not CLOSED. Customers may edit only their own
-   * job, and only while changes have been requested of them.
+   * job, and only while staff have enabled editing on it.
    */
   @Mutation(() => Job, {
     description: "Replace a job's workflow graph from the workflow editor and record the result as a new job version."
@@ -499,8 +538,11 @@ export class JobResolver {
       }
     } else if (job.sub !== user.sub) {
       throw new ForbiddenException('You do not have permission to edit this job');
-    } else if (job.state !== JobState.CHANGES_REQUESTED) {
-      throw new ForbiddenException('This job can only be edited while changes have been requested');
+    } else if (!customerMayEdit(job)) {
+      // The gate is the flag, not the state — staff can hand a customer the job
+      // for approval without handing them the canvas. The client keys its own
+      // copy off the same two facts; this is the enforcement.
+      throw new ForbiddenException('Editing is not enabled for this job. See the comments on the job for details.');
     }
 
     const updated = await this.jobVersionService.saveWorkflows(input, {
