@@ -61,6 +61,17 @@ export class JobResolver {
   private async stampAcceptance(job: Job, user: User): Promise<void> {
     const fingerprint = await this.sowService.jobBillingFingerprint(job);
     await this.jobService.recordAcceptance(String((job as any)._id), fingerprint, user.sub);
+  /**
+   * Records the job's billing figures as of now, so a later spec change is
+   * detectable as "no longer the thing that was accepted".
+   *
+   * Read from the job's own workflows rather than from a SOW: acceptance
+   * routinely happens before a SOW exists at all — that is the point of gating
+   * the send on it — so there is nothing on the document side to read yet.
+   */
+  private async stampAcceptance(job: Job, user: User): Promise<void> {
+    const fingerprint = await this.sowService.jobBillingFingerprint(job);
+    await this.jobService.recordAcceptance(String((job as any)._id), fingerprint, user.sub);
   }
 
   private async syncSowServicesFromJobWorkflows(jobId: string): Promise<void> {
@@ -473,6 +484,13 @@ export class JobResolver {
     }
 
     const updated = (await this.jobService.updateState(job, newState))!;
+
+    // Accepting stamps the spec the lab agreed to. Re-accepting an already
+    // ACCEPTED job re-stamps it, which is how staff release a send that a later
+    // job edit re-locked — see SowVersionService.actionGate.
+    if (newState === JobState.ACCEPTED) {
+      await this.stampAcceptance(updated, user);
+    }
 
     // Accepting stamps the spec the lab agreed to. Re-accepting an already
     // ACCEPTED job re-stamps it, which is how staff release a send that a later
