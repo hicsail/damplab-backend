@@ -1,13 +1,16 @@
 import { Field, InputType, OmitType } from '@nestjs/graphql';
-import { InventoryItem, StationPlacementInput } from '../inventory.model';
+import { InventoryItem, StationPlacementInput, DimensionInput } from '../inventory.model';
 
 /**
- * `placements` must be re-declared: OmitType reuses the model's field metadata,
- * and the model types it as the @ObjectType `StationPlacement`, which is not a
- * legal GraphQL input. Overriding it here binds the @InputType twin instead.
+ * `placements` and `dimensions` must be re-declared: OmitType reuses the model's
+ * field metadata, and the model types them as @ObjectType classes, which are not
+ * legal GraphQL inputs. Overriding them here binds the @InputType twins instead.
  */
 @InputType()
-export class CreateInventoryItem extends OmitType(InventoryItem, ['id', 'isDeleted', 'placements'] as const, InputType) {
+export class CreateInventoryItem extends OmitType(InventoryItem, ['id', 'isDeleted', 'placements', 'dimensions'] as const, InputType) {
   @Field(() => [StationPlacementInput], { nullable: true })
   placements?: StationPlacementInput[];
+
+  @Field(() => [DimensionInput], { nullable: true })
+  dimensions?: DimensionInput[];
 }
