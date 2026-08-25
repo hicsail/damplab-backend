@@ -1,5 +1,5 @@
 import { UseGuards } from '@nestjs/common';
-import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { InventoryItem } from './inventory.model';
 import { InventoryService } from './inventory.service';
 import { InventoryItemPipe } from './inventory.pipe';
@@ -62,5 +62,12 @@ export class InventoryResolver {
   async deleteInventoryItem(@Args('item', { type: () => ID }, InventoryItemPipe) item: InventoryItem): Promise<boolean> {
     await this.inventoryService.softDelete(item);
     return true;
+  }
+
+  /** Hard-delete all inventory items. Used before a full re-upload. */
+  @Mutation(() => Int, { description: 'Delete all inventory items (hard delete). Returns the number of items deleted.' })
+  @Roles(Role.DamplabStaff)
+  async deleteAllInventoryItems(): Promise<number> {
+    return this.inventoryService.deleteAll();
   }
 }

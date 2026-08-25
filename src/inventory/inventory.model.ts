@@ -143,6 +143,10 @@ export class InventoryItem {
     description: 'Soft-deleted: hidden from pickers but still resolvable for historical nodes.'
   })
   isDeleted?: boolean;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Username or sub of whoever last created or modified this item.' })
+  lastModifiedBy?: string;
 }
 
 export type InventoryItemDocument = InventoryItem & mongoose.Document;

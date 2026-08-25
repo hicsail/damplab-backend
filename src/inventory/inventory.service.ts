@@ -91,4 +91,10 @@ export class InventoryService {
   async softDelete(item: InventoryItem): Promise<void> {
     await this.inventoryModel.updateOne({ _id: (item as any).id ?? (item as any)._id }, { $set: { isDeleted: true } });
   }
+
+  /** Hard-delete every inventory item. Used before a full re-upload. */
+  async deleteAll(): Promise<number> {
+    const result = await this.inventoryModel.deleteMany({});
+    return result.deletedCount ?? 0;
+  }
 }
