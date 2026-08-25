@@ -24,7 +24,7 @@
     "initdb": "cd ./scripts; npm install; npm run build; node --env-file=../.env ./bin/dev load all",
     "migrate:sows": "node --env-file=.env dist/sow/migrate-sows.js",
     "migrate:job-editing": "node --env-file=.env dist/job/migrate-job-editing.js",
-    "migrate:job-contract-flow": "node --env-file=.env dist/job/migrate-job-contract-flow.js"
+    "migrate:job-contract-flow": "node --env-file=.env dist/job/migrate-job-contract-flow.js",
     "migrate:inventory-types": "node --env-file=.env dist/src/inventory/migrate-inventory-types.js"
   },
   "dependencies": {
