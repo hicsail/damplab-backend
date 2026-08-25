@@ -215,6 +215,19 @@ export class JobVersionService {
     return this.versionModel.findOne({ jobId, versionNumber, isEvent: { $ne: true } }).exec();
   }
 
+  /**
+   * Any version by number, event rows included.
+   *
+   * Events are not content — nothing is accepted or diffed against them — but
+   * they do carry a verbatim copy of the graph as it stood, and they are what
+   * the history calls "Submitted" or "Changes requested". Restoring to one is
+   * therefore a thing a user can reasonably ask for, and refusing it produced a
+   * bare "version not found" against a version plainly listed in the picker.
+   */
+  async getAnyVersion(jobId: string, versionNumber: number): Promise<JobVersion | null> {
+    return this.versionModel.findOne({ jobId, versionNumber }).exec();
+  }
+
   async findByOperationId(jobId: string, operationId: string): Promise<JobVersion | null> {
     return this.versionModel.findOne({ jobId, operationId }).exec();
   }
@@ -440,8 +453,11 @@ export class JobVersionService {
     note: string,
     opts: { visibleToCustomer?: boolean } = {}
   ): Promise<Job> {
-    const source = await this.getContentVersion(jobId, versionNumber);
+    const source = await this.getAnyVersion(jobId, versionNumber);
     if (!source) throw new NotFoundException(`Job version ${versionNumber} for job ${jobId} not found`);
+    if (!(source.workflows ?? []).length) {
+      throw new BadRequestException(`Version ${versionNumber} has no workflow to restore.`);
+    }
 
     const workflows: SaveWorkflowInput[] = (source.workflows ?? []).map((workflow) => ({
       workflowId: workflow.workflowId,
@@ -497,8 +513,26 @@ export class JobVersionService {
 
     const workflowIds: mongoose.Types.ObjectId[] = [];
     const keptNodeIds = new Set<string>();
+    // A workflow may be claimed by one tree only.
+    //
+    // Splitting is routine — deleting an edge turns one tree into two — and both
+    // halves still remember the workflow they came from, so both arrive naming
+    // it. Reconciling them in turn overwrote that workflow's node list once per
+    // group, so every node but the last was orphaned: still in the database,
+    // owned by nothing, and gone from the canvas. The job also ended up listing
+    // the same workflow several times, which made the next snapshot report the
+    // surviving node once per group.
+    //
+    // The first group keeps the workflow; the rest become new ones, which is
+    // what a split actually means.
+    const claimed = new Set<string>();
     for (let i = 0; i < input.workflows.length; i++) {
-      const { workflowId, nodeIds } = await this.reconcileWorkflow(input.workflows[i], prepared[i], liveNodes);
+      const requested = input.workflows[i].workflowId;
+      const alreadyTaken = requested != null && claimed.has(String(requested));
+      const spec = alreadyTaken ? { ...input.workflows[i], workflowId: undefined } : input.workflows[i];
+      if (spec.workflowId != null) claimed.add(String(spec.workflowId));
+
+      const { workflowId, nodeIds } = await this.reconcileWorkflow(spec, prepared[i], liveNodes);
       workflowIds.push(workflowId);
       for (const nodeId of nodeIds) keptNodeIds.add(String(nodeId));
     }

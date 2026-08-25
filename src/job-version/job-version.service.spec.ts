@@ -995,3 +995,93 @@ describe('restoreVersion', () => {
     await expect(harness.service.restoreVersion(JOB_ID, 9999, author, 'Reverted')).rejects.toBeInstanceOf(NotFoundException);
   });
 });
+
+describe('restoreVersion — edges', () => {
+  const NODE_B = 'b';
+
+  it('carries the snapshot edges back onto the live graph', async () => {
+    const harness = buildHarness({ nodes: [liveNode()] });
+    const twoNodes = [inputNode(), inputNode({ id: NODE_B, serviceId: SVC_B, label: 'Sequencing', formData: [] })];
+    const edge = [{ id: 'e1', source: 'a', target: NODE_B }];
+
+    // A connected two-node graph, then a parameter edit, then back again.
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'connected', workflows: [{ workflowId: WF_ID, nodes: twoNodes, edges: edge }] } as any, author);
+    const connected = harness.versions[harness.versions.length - 1];
+    expect(connected.workflows[0].edges).toHaveLength(1);
+
+    await harness.service.saveWorkflows(
+      { jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [twoNodes[0], { ...twoNodes[1], formData: [{ id: 'x', value: 1 }] }], edges: edge }] } as any,
+      author
+    );
+
+    await harness.service.restoreVersion(JOB_ID, connected.versionNumber, author, 'Reverted');
+
+    // The restored version must still describe a connected graph, and the live
+    // edge collection must still hold it — an edge lost here isolates every node,
+    // and an isolated node is what a later save drops.
+    const restored = harness.versions[harness.versions.length - 1];
+    expect(restored.workflows[0].edges).toEqual([{ id: 'e1', source: 'a', target: NODE_B }]);
+    expect(harness.edges).toHaveLength(1);
+  });
+});
+
+describe('saveWorkflows — a tree that split in two', () => {
+  const NODE_B = 'b';
+
+  // Removing the edge between two nodes splits one tree into two. Both groups
+  // still carry the workflowId they came from, so both name the same live
+  // workflow — and reconciling them in turn overwrote it, leaving the job
+  // pointing at one workflow three times and orphaning every node but the last.
+  it('keeps every node when one workflow splits into two disconnected trees', async () => {
+    const harness = buildHarness({ nodes: [liveNode()] });
+    const a = inputNode();
+    const b = inputNode({ id: NODE_B, serviceId: SVC_B, label: 'Sequencing', formData: [] });
+
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'connected', workflows: [{ workflowId: WF_ID, nodes: [a, b], edges: [{ id: 'e1', source: 'a', target: NODE_B }] }] } as any, author);
+
+    // The edge is gone, so the editor sends two groups that both claim WF_ID.
+    await harness.service.saveWorkflows(
+      {
+        jobId: JOB_ID,
+        note: 'split',
+        workflows: [
+          { workflowId: WF_ID, nodes: [a], edges: [] },
+          { workflowId: WF_ID, nodes: [b], edges: [] }
+        ]
+      } as any,
+      author
+    );
+
+    const snapshot = harness.versions[harness.versions.length - 1];
+    const nodeIds = (snapshot.workflows ?? []).flatMap((w: any) => (w.nodes ?? []).map((n: any) => n.id));
+    expect(nodeIds.sort()).toEqual(['a', NODE_B]);
+    // And the job must not list the same workflow twice.
+    expect(new Set(harness.job.workflows.map(String)).size).toBe(harness.job.workflows.length);
+  });
+});
+
+describe('restoreVersion — event versions', () => {
+  // The history calls these "Submitted" and "Changes requested"; they carry a
+  // verbatim copy of the graph. Refusing them produced a bare "version not
+  // found" against a version plainly listed in the picker.
+  it('restores from a state-change event, which the picker offers like any other', async () => {
+    const harness = buildHarness({ nodes: [liveNode()] });
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'original', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    const event = await harness.service.appendStateEvent(harness.job, JobState.SUBMITTED, { role: JobVersionAuthorRole.STAFF, sub: 's', name: 'Staff' }, 'Submitted');
+    await harness.service.saveWorkflows(
+      { jobId: JOB_ID, note: 'later edit', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 99 }] })], edges: [] }] } as any,
+      author
+    );
+
+    await expect(harness.service.restoreVersion(JOB_ID, event!.versionNumber, author, 'Back to submitted')).resolves.toBeDefined();
+    expect(harness.nodes[0].formData).toEqual([{ id: 'vol', value: 10 }]);
+  });
+
+  it('refuses a version carrying no workflow, rather than silently emptying the job', async () => {
+    const harness = buildHarness({ nodes: [liveNode()] });
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'original', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    harness.versions[0].workflows = [];
+
+    await expect(harness.service.restoreVersion(JOB_ID, harness.versions[0].versionNumber, author, 'Reverted')).rejects.toThrow(/no workflow to restore/);
+  });
+});
