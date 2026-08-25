@@ -44,16 +44,49 @@ export const StationPlacementSchema = new mongoose.Schema(
 
 /**
  * Coarse category for filtering and grouping on the availability board.
- * Open-ended on purpose — extend as the lab adds new categories of gear.
  */
 export enum InventoryItemType {
+  /** @deprecated Use EQUIPMENT. Kept for backward-compatible reads until migration runs. */
   ROBOT = 'ROBOT',
+  /** @deprecated Use EQUIPMENT. Kept for backward-compatible reads until migration runs. */
   MACHINE = 'MACHINE',
+  /** @deprecated Use EQUIPMENT. Kept for backward-compatible reads until migration runs. */
   INSTRUMENT = 'INSTRUMENT',
-  CONSUMABLE = 'CONSUMABLE',
-  OTHER = 'OTHER'
+  /** @deprecated Use EQUIPMENT or HOOD/STORAGE. Kept for backward-compatible reads until migration runs. */
+  OTHER = 'OTHER',
+  EQUIPMENT = 'EQUIPMENT',
+  HOOD = 'HOOD',
+  STORAGE = 'STORAGE',
+  CONSUMABLE = 'CONSUMABLE'
 }
 registerEnumType(InventoryItemType, { name: 'InventoryItemType' });
+
+/** A single dimension measurement (e.g. 12 cm, 5 kg). */
+@ObjectType()
+export class Dimension {
+  @Field({ description: 'Numeric value of the measurement.' })
+  value: number;
+
+  @Field({ description: 'Unit of measurement (e.g. cm, mm, kg).' })
+  unit: string;
+}
+
+@InputType()
+export class DimensionInput {
+  @Field()
+  value: number;
+
+  @Field()
+  unit: string;
+}
+
+const DimensionSchema = new mongoose.Schema(
+  {
+    value: { type: Number, required: true },
+    unit: { type: String, required: true }
+  },
+  { _id: false }
+);
 
 /** How a bookable item is billed. */
 export enum InventoryRateType {
@@ -82,10 +115,10 @@ export class InventoryItem {
   @Field({ description: 'Human readable name (e.g. "OT-2 #1", "Bioanalyzer").' })
   name: string;
 
-  @Prop({ required: false, default: InventoryItemType.MACHINE, type: String, enum: Object.values(InventoryItemType) })
+  @Prop({ required: false, default: InventoryItemType.EQUIPMENT, type: String, enum: Object.values(InventoryItemType) })
   @Field(() => InventoryItemType, {
     nullable: true,
-    defaultValue: InventoryItemType.MACHINE,
+    defaultValue: InventoryItemType.EQUIPMENT,
     description: 'Coarse category for grouping on the availability board.'
   })
   type?: InventoryItemType;
@@ -145,6 +178,34 @@ export class InventoryItem {
     description: 'Stations this equipment is placed at, with the quantity at each (equipment→station map). Locational only — does not affect booking capacity.'
   })
   placements: StationPlacement[];
+
+  @Prop({ required: false, unique: true, sparse: true })
+  @Field({ nullable: true, description: 'System-generated unique identifier (e.g. INV-0001). Not the Mongo _id.' })
+  uniqueId?: string;
+
+  @Prop({ type: [String], default: [] })
+  @Field(() => [String], { description: 'Filterable tags for finer categorisation (e.g. "Analytical Equipment", "Centrifuge").' })
+  tags: string[];
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Manufacturer model number. Items with the same model # are the same type of equipment.' })
+  modelNumber?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Serial number for tracking individual units. Internal use only — hidden from non-staff.' })
+  serialNumber?: string;
+
+  @Prop({ required: false, default: false })
+  @Field(() => Boolean, { nullable: true, defaultValue: false, description: 'Whether this item has an active service contract.' })
+  hasServiceContract?: boolean;
+
+  @Prop({ required: false, type: Date })
+  @Field({ nullable: true, description: 'Expiration date of the service contract, if any.' })
+  serviceContractExpiration?: Date;
+
+  @Prop({ type: [DimensionSchema], default: [] })
+  @Field(() => [Dimension], { description: 'Physical dimensions of the equipment (up to 3 measurements).' })
+  dimensions: Dimension[];
 
   @Prop({ required: false, default: false })
   @Field(() => Boolean, {
