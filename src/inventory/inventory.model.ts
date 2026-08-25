@@ -42,18 +42,8 @@ export const StationPlacementSchema = new mongoose.Schema(
   { _id: false }
 );
 
-/**
- * Coarse category for filtering and grouping on the availability board.
- * Open-ended on purpose — extend as the lab adds new categories of gear.
- */
-export enum InventoryItemType {
-  ROBOT = 'ROBOT',
-  MACHINE = 'MACHINE',
-  INSTRUMENT = 'INSTRUMENT',
-  CONSUMABLE = 'CONSUMABLE',
-  OTHER = 'OTHER'
-}
-registerEnumType(InventoryItemType, { name: 'InventoryItemType' });
+/** Suggested values for the type field — not enforced, users can add new ones. */
+export const SUGGESTED_INVENTORY_TYPES = ['EQUIPMENT', 'HOOD', 'STORAGE', 'CONSUMABLE'];
 
 /** How a bookable item is billed. */
 export enum InventoryRateType {
@@ -82,13 +72,13 @@ export class InventoryItem {
   @Field({ description: 'Human readable name (e.g. "OT-2 #1", "Bioanalyzer").' })
   name: string;
 
-  @Prop({ required: false, default: InventoryItemType.MACHINE, type: String, enum: Object.values(InventoryItemType) })
-  @Field(() => InventoryItemType, {
+  @Prop({ required: false, default: 'EQUIPMENT', type: String })
+  @Field(() => String, {
     nullable: true,
-    defaultValue: InventoryItemType.MACHINE,
-    description: 'Coarse category for grouping on the availability board.'
+    defaultValue: 'EQUIPMENT',
+    description: 'Coarse category for grouping on the availability board. Free string — suggested values: EQUIPMENT, HOOD, STORAGE, CONSUMABLE.'
   })
-  type?: InventoryItemType;
+  type?: string;
 
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Free-text description (model, capabilities, notes).' })
