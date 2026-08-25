@@ -26,10 +26,7 @@ interface MigrationReport {
   failed: Array<{ id: string; error: string }>;
 }
 
-export async function migrateInventoryTypes(
-  db: mongoose.mongo.Db,
-  opts: { dryRun?: boolean; log?: (msg: string) => void } = {}
-): Promise<MigrationReport> {
+export async function migrateInventoryTypes(db: mongoose.mongo.Db, opts: { dryRun?: boolean; log?: (msg: string) => void } = {}): Promise<MigrationReport> {
   const log = opts.log ?? console.log;
   const items = db.collection('inventoryitems');
 

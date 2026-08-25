@@ -81,7 +81,10 @@ export class DimensionInput {
 }
 
 const DimensionSchema = new mongoose.Schema(
-  { value: { type: Number, required: true }, unit: { type: String, required: true } },
+  {
+    value: { type: Number, required: true },
+    unit: { type: String, required: true }
+  },
   { _id: false }
 );
 
