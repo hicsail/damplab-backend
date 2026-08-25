@@ -1,6 +1,6 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { JobVersionService } from './job-version.service';
-import { JobVersionAuthorRole } from './job-version.model';
+import { JobVersionAuthorRole, JobVersionSchema } from './job-version.model';
 import { WorkflowNodeState } from '../workflow/models/node.model';
 import { JobState } from '../job/job.model';
 
@@ -49,6 +49,19 @@ describe('version numbers', () => {
   it('keeps legacy integers consecutive, then jumps to 1.0 on the first major bump', () => {
     expect(JobVersionService.nextVersionNumber(3, false)).toBe(4);
     expect(JobVersionService.nextVersionNumber(3, true)).toBe(1000);
+  });
+});
+
+describe('JobVersion operation index', () => {
+  it('indexes only rows whose operationId is a string', () => {
+    const operationIndex = JobVersionSchema.indexes().find(([keys]) => keys.jobId === 1 && keys.operationId === 1);
+
+    expect(operationIndex?.[0]).toEqual({ jobId: 1, operationId: 1 });
+    expect(operationIndex?.[1]).toMatchObject({
+      unique: true,
+      partialFilterExpression: { operationId: { $type: 'string' } }
+    });
+    expect(operationIndex?.[1]).not.toHaveProperty('sparse');
   });
 });
 
@@ -162,6 +175,7 @@ interface Harness {
   workflows: any[];
   versions: any[];
   job: any;
+  raceVersionCreateOnce: () => void;
 }
 
 /** Minimal mongoose-shaped fakes over plain arrays. */
@@ -173,6 +187,7 @@ function buildHarness(options: { nodes?: any[]; customerCategory?: string } = {}
   const job: any = { _id: JOB_ID, sub: 'user-1', workflows: [WF_ID], customerCategory: options.customerCategory };
 
   let autoId = 0;
+  let versionCreateRaces = 0;
   // Also a valid ObjectId — newly created docs get their ids converted too.
   const nextId = (): string => String(++autoId).padStart(24, 'f');
   const exec = <T>(value: T): { exec: () => Promise<T> } => ({ exec: async (): Promise<T> => value });
@@ -240,11 +255,33 @@ function buildHarness(options: { nodes?: any[]; customerCategory?: string } = {}
     }
   };
 
+  const matchingVersions = (query: any = {}): any[] =>
+    versions.filter((version) => {
+      if (query.jobId !== undefined && version.jobId !== query.jobId) return false;
+      if (query.versionNumber !== undefined && version.versionNumber !== query.versionNumber) return false;
+      if (query.operationId !== undefined && version.operationId !== query.operationId) return false;
+      if (query.isEvent?.$ne !== undefined && version.isEvent === query.isEvent.$ne) return false;
+      return true;
+    });
   const versionModel: any = {
-    find: () => ({ sort: () => exec([...versions].sort((a, b) => a.versionNumber - b.versionNumber)) }),
-    findOne: () => ({ sort: () => exec([...versions].sort((a, b) => b.versionNumber - a.versionNumber)[0] ?? null) }),
+    find: (query: any = {}) => ({ sort: () => exec([...matchingVersions(query)].sort((a, b) => a.versionNumber - b.versionNumber)) }),
+    findOne: (query: any = {}) => ({
+      sort: () => exec([...matchingVersions(query)].sort((a, b) => b.versionNumber - a.versionNumber)[0] ?? null),
+      exec: async () => matchingVersions(query)[0] ?? null
+    }),
+    findOneAndUpdate: (query: any, update: any) => {
+      const version = matchingVersions(query)[0] ?? null;
+      if (version) Object.assign(version, update.$set ?? {});
+      return exec(version);
+    },
     create: async (doc: any) => {
       versions.push(doc);
+      if (versionCreateRaces > 0) {
+        versionCreateRaces -= 1;
+        const error: any = new Error('duplicate version operation');
+        error.code = 11000;
+        throw error;
+      }
       return doc;
     }
   };
@@ -254,7 +291,17 @@ function buildHarness(options: { nodes?: any[]; customerCategory?: string } = {}
   };
 
   const service = new JobVersionService(versionModel, jobModel, workflowModel, nodeModel, edgeModel, dampLabServices);
-  return { service, nodes, edges, workflows, versions, job };
+  return {
+    service,
+    nodes,
+    edges,
+    workflows,
+    versions,
+    job,
+    raceVersionCreateOnce: (): void => {
+      versionCreateRaces += 1;
+    }
+  };
 }
 
 const liveNode = (over: Partial<any> = {}): any => ({
@@ -640,6 +687,91 @@ describe('appendStateEvent', () => {
     expect(await service.appendStateEvent(job, JobState.CLOSED, stateAuthor, 'Closed')).toBeNull();
     expect(versions).toHaveLength(0);
   });
+
+  it('returns the existing event when the same operationId is retried', async () => {
+    const { service, versions, job } = buildHarness({ nodes: [liveNode()] });
+
+    const first = await service.appendStateEvent(job, JobState.SUBMITTED, stateAuthor, 'Resubmitted', 'operation-1');
+    const second = await service.appendStateEvent(job, JobState.SUBMITTED, stateAuthor, 'Resubmitted', 'operation-1');
+
+    expect(second).toBe(first);
+    expect(versions.filter((version) => version.operationId === 'operation-1')).toHaveLength(1);
+  });
+
+  it('returns the concurrent event winner when create loses a duplicate-key race', async () => {
+    const { service, versions, job, raceVersionCreateOnce } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    raceVersionCreateOnce();
+
+    const result = await service.appendStateEvent(job, JobState.SUBMITTED, stateAuthor, 'Resubmitted', 'operation-race');
+
+    expect(result).toBe(versions.find((version) => version.operationId === 'operation-race'));
+    expect(versions.filter((version) => version.operationId === 'operation-race')).toHaveLength(1);
+  });
+});
+
+describe('content version publication', () => {
+  it('gets the latest non-event content version directly', async () => {
+    const { service, versions } = buildHarness({ nodes: [liveNode()] });
+    versions.push(
+      { jobId: JOB_ID, versionNumber: 1000, isEvent: false, workflows: [{ name: 'old' }] },
+      { jobId: JOB_ID, versionNumber: 1001, isEvent: false, workflows: [{ name: 'latest' }] },
+      { jobId: JOB_ID, versionNumber: 2000, isEvent: true, workflows: [{ name: 'event' }] }
+    );
+
+    await expect(service.getLatestContentVersion(JOB_ID)).resolves.toMatchObject({
+      versionNumber: 1001,
+      workflows: [{ name: 'latest' }]
+    });
+  });
+
+  it('publishes a hidden staff version by changing envelope metadata only', async () => {
+    const { service, versions } = buildHarness({ nodes: [liveNode()] });
+    const workflows = [{ name: 'immutable', nodes: [{ id: 'a' }], edges: [] }];
+    versions.push({
+      jobId: JOB_ID,
+      versionNumber: 1001,
+      authorRole: JobVersionAuthorRole.STAFF,
+      visibleToCustomer: false,
+      workflows,
+      note: 'staff draft'
+    });
+
+    const published = await service.publishVersion(JOB_ID, 1001, 'staff-1');
+
+    expect(published).toMatchObject({
+      visibleToCustomer: true,
+      publishedBy: 'staff-1',
+      note: 'staff draft'
+    });
+    expect(published.publishedAt).toBeInstanceOf(Date);
+    expect(published.workflows).toEqual(workflows);
+  });
+
+  it('leaves an already customer-visible version unchanged when published repeatedly', async () => {
+    const { service, versions } = buildHarness({ nodes: [liveNode()] });
+    const visible = {
+      jobId: JOB_ID,
+      versionNumber: 1000,
+      authorRole: JobVersionAuthorRole.CUSTOMER,
+      visibleToCustomer: true,
+      workflows: [{ name: 'customer', nodes: [], edges: [] }]
+    };
+    versions.push(visible);
+
+    const first = await service.publishVersion(JOB_ID, 1000, 'staff-1');
+    const second = await service.publishVersion(JOB_ID, 1000, 'staff-2');
+
+    expect(first).toBe(visible);
+    expect(second).toBe(visible);
+    expect(visible).not.toHaveProperty('publishedAt');
+    expect(visible).not.toHaveProperty('publishedBy');
+  });
+
+  it('rejects publication of a version that is not on the job', async () => {
+    const { service } = buildHarness({ nodes: [liveNode()] });
+    await expect(service.publishVersion(JOB_ID, 9999, 'staff-1')).rejects.toBeInstanceOf(NotFoundException);
+  });
 });
 
 describe('saveWorkflows — catalogue drift against an in-flight node', () => {
@@ -761,5 +893,21 @@ describe('saveWorkflows — catalogue drift against an in-flight node', () => {
     await expect(
       service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: '10' }] })], edges: [] }] } as any, author)
     ).resolves.toBeDefined();
+  });
+
+  it('treats nested object parameter key order as the same value', async () => {
+    const stored = { alpha: 1, beta: { y: 2, z: 3 } };
+    const submitted = { beta: { z: 3, y: 2 }, alpha: 1 };
+    const { service } = buildHarness({ nodes: [liveNode({ state: WorkflowNodeState.IN_PROGRESS, formData: [{ id: 'config', value: stored }] })] });
+    await expect(
+      service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'config', value: submitted }] })], edges: [] }] } as any, author)
+    ).resolves.toBeDefined();
+  });
+
+  it('blocks nested object parameter content changes on an in-flight node', async () => {
+    const { service } = buildHarness({ nodes: [liveNode({ state: WorkflowNodeState.IN_PROGRESS, formData: [{ id: 'config', value: { a: 1 } }] })] });
+    await expect(
+      service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'config', value: { a: 2 } }] })], edges: [] }] } as any, author)
+    ).rejects.toThrow(/parameters changed/);
   });
 });

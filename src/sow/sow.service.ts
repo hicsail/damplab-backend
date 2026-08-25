@@ -344,6 +344,17 @@ export class SOWService {
     return updated;
   }
 
+  /**
+   * Puts a previously captured billing core back.
+   *
+   * Compensation for `applyDocumentBilling`, which a save performs before it
+   * knows whether its version row will win the parent-pointer CAS. A lost race
+   * would otherwise leave the document billing figures that no version records.
+   */
+  async restoreDocumentBilling(sowId: string, pricing: SOW['pricing']): Promise<void> {
+    await this.sowModel.findByIdAndUpdate(sowId, { $set: { pricing, updatedAt: new Date() } }).exec();
+  }
+
   /** Default project length when nothing better is known; staff edit it in the editor. */
   private static readonly DEFAULT_DURATION_DAYS = 14;
 

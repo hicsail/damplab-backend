@@ -1,4 +1,4 @@
-import { Job, JobState } from './job.model';
+import { CustomerActionRequired, Job, JobState } from './job.model';
 
 /**
  * Whether the job's owner may currently change its workflow graph.
@@ -15,8 +15,8 @@ import { Job, JobState } from './job.model';
  * staff, whereas one who should not have been able to edit silently rewrites a
  * spec the lab has already priced.
  */
-export function customerMayEdit(job: Pick<Job, 'customerEditingEnabled'>): boolean {
-  return job.customerEditingEnabled === true;
+export function customerMayEdit(job: Pick<Job, 'state' | 'customerEditingEnabled'>): boolean {
+  return job.state === JobState.CHANGES_REQUESTED && job.customerEditingEnabled === true;
 }
 
 /**
@@ -46,4 +46,12 @@ export function jobIsWithCustomer(job: Pick<Job, 'state'>): boolean {
  */
 export function editingClosedByTransition(newState: JobState): boolean {
   return newState !== JobState.CHANGES_REQUESTED;
+}
+
+/** Compatibility mapping for callers still using the deprecated state/editing mutations. */
+export function legacyCustomerAction(newState: JobState, editingEnabled: boolean, note?: string): CustomerActionRequired | null {
+  if (newState !== JobState.CHANGES_REQUESTED) return null;
+  if (editingEnabled) return CustomerActionRequired.EDIT_WORKFLOW;
+  if (note?.trim() === 'Approval requested') return CustomerActionRequired.APPROVE_WORKFLOW;
+  return CustomerActionRequired.REPLY;
 }

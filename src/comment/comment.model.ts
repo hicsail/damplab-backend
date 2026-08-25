@@ -80,6 +80,10 @@ export class Comment {
   @Field({ description: 'If true, only visible to staff; if false, visible to both staff and client' })
   isInternal: boolean;
 
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Caller-provided idempotency key for command-generated comments.' })
+  operationId?: string;
+
   @Prop({ type: [mongoose.Schema.Types.Mixed], required: false, default: [] })
   @Field(() => [CommentAttachment], {
     nullable: true,
@@ -104,3 +108,10 @@ CommentSchema.index({ jobId: 1 });
 CommentSchema.index({ nodeId: 1 });
 CommentSchema.index({ createdAt: -1 });
 CommentSchema.index({ authorType: 1 });
+CommentSchema.index(
+  { jobId: 1, operationId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { operationId: { $type: 'string' } }
+  }
+);

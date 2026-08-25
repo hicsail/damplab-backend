@@ -141,10 +141,32 @@ export class SOWResolver {
   }
 
   @ResolveField(() => SowActionGate, {
-    description: 'Which lifecycle actions this SOW permits and what is in the way of each. Advisory only — sendSowToCustomer and finalizeSow enforce the same rules server-side.'
+    description:
+      'Which send, customer-sign, and staff-finalize actions this SOW permits and what is in the way of each. Customers see the signing half only. Advisory either way — every mutation enforces the same rules server-side.'
   })
-  async actionGate(@Parent() sow: SOW): Promise<SowActionGate> {
-    return this.sowVersionService.actionGate(String((sow as any)._id));
+  async actionGate(
+    @Parent() sow: SOW,
+    @CurrentUser() user: User,
+    @Args('expectedSignVersionNumber', { type: () => Int, nullable: true, description: 'Version the customer currently has open for signing; when stale, canSign is false.' })
+    expectedSignVersionNumber?: number
+  ): Promise<SowActionGate> {
+    const staff = isStaff(user);
+    const gate = await this.sowVersionService.actionGate(String((sow as any)._id), expectedSignVersionNumber, { reconcile: staff });
+    if (staff) return gate;
+
+    // Signing is the only action a customer can take, and the rest of the gate
+    // is the lab's internal repair checklist — sendBlockers name staff chores,
+    // and missingFields names the document sections still unwritten. None of
+    // that belongs on a customer's job page.
+    return {
+      canSend: false,
+      sendBlockers: [],
+      canSign: gate.canSign,
+      signBlockers: gate.signBlockers,
+      canCountersign: false,
+      countersignBlockers: [],
+      missingFields: []
+    };
   }
 
   // ---------------------------------------------------------------------------

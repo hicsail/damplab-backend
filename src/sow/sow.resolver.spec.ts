@@ -21,7 +21,7 @@ const JOB_ID = 'job-1';
 const sow = { id: SOW_ID, jobId: JOB_ID, clientEmail: 'client@lab.org' } as any;
 const job = { sub: 'sub-owner', email: 'client@lab.org' } as any;
 
-function build(overrides: { sow?: any; job?: any } = {}): { resolver: SOWResolver; sowService: any; jobService: any } {
+function build(overrides: { sow?: any; job?: any } = {}): { resolver: SOWResolver; sowService: any; jobService: any; sowVersionService: any } {
   const sowService = {
     findById: jest.fn().mockResolvedValue('sow' in overrides ? overrides.sow : sow),
     findByJobId: jest.fn().mockResolvedValue('sow' in overrides ? overrides.sow : sow)
@@ -29,9 +29,10 @@ function build(overrides: { sow?: any; job?: any } = {}): { resolver: SOWResolve
   const jobService = {
     findById: jest.fn().mockResolvedValue('job' in overrides ? overrides.job : job)
   } as any;
-  // Not exercised by these tests, which cover read access only.
-  const sowVersionService = {} as any;
-  return { resolver: new SOWResolver(sowService, jobService, sowVersionService), sowService, jobService };
+  const sowVersionService = {
+    actionGate: jest.fn().mockResolvedValue({ canSend: true, sendBlockers: [], canSign: true, signBlockers: [], canCountersign: false, countersignBlockers: [], missingFields: [] })
+  } as any;
+  return { resolver: new SOWResolver(sowService, jobService, sowVersionService), sowService, jobService, sowVersionService };
 }
 
 describe('SOWResolver.sowByJobId', () => {
@@ -87,5 +88,54 @@ describe('SOWResolver.sowById', () => {
   it('does not leak a SOW whose job has gone missing', async () => {
     const { resolver } = build({ job: null });
     await expect(resolver.sowById(SOW_ID, owner)).rejects.toThrow(ForbiddenException);
+  });
+});
+
+describe('SOWResolver.actionGate', () => {
+  it('forwards the optional expected sign version to the shared gate', async () => {
+    const { resolver, sowVersionService } = build();
+
+    await (resolver as any).actionGate({ _id: SOW_ID }, staff, 1000);
+
+    expect(sowVersionService.actionGate).toHaveBeenCalledWith(SOW_ID, 1000, { reconcile: true });
+  });
+
+  it('gives staff the whole gate', async () => {
+    const { resolver } = build();
+
+    await expect((resolver as any).actionGate({ _id: SOW_ID }, staff)).resolves.toMatchObject({
+      canSend: true,
+      canSign: true,
+      missingFields: []
+    });
+  });
+
+  // sendBlockers and missingFields are the lab's internal repair checklist —
+  // they name staff chores and the document sections still unwritten. Signing is
+  // the only action a customer can take, so it is the only half they get.
+  it('gives a customer the signing half only, and never reconciles on their read', async () => {
+    const { resolver, sowVersionService } = build();
+    sowVersionService.actionGate.mockResolvedValue({
+      canSend: true,
+      sendBlockers: ['DRAFT_INCOMPLETE'],
+      canSign: false,
+      signBlockers: ['UNSENT_DRAFT'],
+      canCountersign: true,
+      countersignBlockers: ['DOCUMENT_STALE'],
+      missingFields: ['Engagement Resources']
+    });
+
+    const gate = await (resolver as any).actionGate({ _id: SOW_ID }, owner);
+
+    expect(gate).toEqual({
+      canSend: false,
+      sendBlockers: [],
+      canSign: false,
+      signBlockers: ['UNSENT_DRAFT'],
+      canCountersign: false,
+      countersignBlockers: [],
+      missingFields: []
+    });
+    expect(sowVersionService.actionGate).toHaveBeenCalledWith(SOW_ID, undefined, { reconcile: false });
   });
 });

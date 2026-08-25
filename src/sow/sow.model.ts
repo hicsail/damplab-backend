@@ -21,8 +21,12 @@ registerEnumType(SOWStatus, { name: 'SOWStatus' });
 export enum DocumentBlocker {
   /** The lab has not accepted this job's spec. */
   NOT_ACCEPTED = 'NOT_ACCEPTED',
+  /** The exact accepted job content is missing or was never published to the customer. */
+  ACCEPTED_SOURCE_UNAVAILABLE = 'ACCEPTED_SOURCE_UNAVAILABLE',
   /** The spec moved after it was accepted, so the acceptance no longer covers it. */
   JOB_CHANGED_SINCE_ACCEPTANCE = 'JOB_CHANGED_SINCE_ACCEPTANCE',
+  /** This SOW was not derived from the job acceptance currently in force. */
+  SOW_SOURCE_MISMATCH = 'SOW_SOURCE_MISMATCH',
   /** The document still bills the job's earlier figures; Recalculate then save. */
   DOCUMENT_STALE = 'DOCUMENT_STALE',
   /** A required section is missing or empty. */
@@ -31,6 +35,10 @@ export enum DocumentBlocker {
   NO_DRAFT_TO_SEND = 'NO_DRAFT_TO_SEND',
   /** A draft sits above the version the customer holds; it has to go out and be signed first. */
   UNSENT_DRAFT = 'UNSENT_DRAFT',
+  /** The customer is trying to sign a SENT version that is no longer active. */
+  STALE_SIGN_VERSION = 'STALE_SIGN_VERSION',
+  /** No issued SENT version is currently awaiting a customer signature. */
+  AWAITING_SENT_VERSION = 'AWAITING_SENT_VERSION',
   /** The version in force has not been signed by the customer yet. */
   AWAITING_CUSTOMER_SIGNATURE = 'AWAITING_CUSTOMER_SIGNATURE'
 }
@@ -43,6 +51,12 @@ export class SowActionGate {
 
   @Field(() => [DocumentBlocker], { description: 'What stands between the current draft and a send, in repair order.' })
   sendBlockers: DocumentBlocker[];
+
+  @Field({ description: 'True when nothing blocks the customer from signing the active SENT version.' })
+  canSign: boolean;
+
+  @Field(() => [DocumentBlocker], { description: 'What stands between the active SENT version and a customer signature, in repair order.' })
+  signBlockers: DocumentBlocker[];
 
   @Field({ description: 'True when nothing blocks countersigning the signed version in force.' })
   canCountersign: boolean;

@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
+import { CustomerActionRequired, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
@@ -117,8 +117,15 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } }, { new: true }).exec();
   }
 
-  async updateState(job: Job, newState: JobState): Promise<Job | null> {
-    return this.jobModel.findOneAndUpdate({ _id: job._id }, { $set: { state: newState } }, { new: true }).exec();
+  async updateState(job: Job, newState: JobState, customerActionRequired?: CustomerActionRequired | null): Promise<Job | null> {
+    const statePatch: Record<string, unknown> = {
+      state: newState,
+      customerActionRequired: newState === JobState.CHANGES_REQUESTED ? customerActionRequired ?? CustomerActionRequired.REPLY : null
+    };
+    if (newState !== JobState.CHANGES_REQUESTED) {
+      statePatch.customerEditingEnabled = false;
+    }
+    return this.jobModel.findOneAndUpdate({ _id: job._id }, { $set: statePatch }, { new: true }).exec();
   }
 
   /**

@@ -9,7 +9,8 @@ import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../workfl
 import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.model';
 import { DampLabServices } from '../services/damplab-services.services';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
-import { calculateServiceCost, CustomerCategory, RUN_COUNT_PARAM_ID } from '../pricing/service-pricing.util';
+import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
+import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from '../job/contract-fingerprint.util';
 
 /** Fields on a live WorkflowNode that a save is allowed to write. Everything else — state, assigneeId, startedAt, completedSteps, usedInventory, inventory reservations — belongs to the lab and is never touched here. */
 type NodeContentPatch = {
@@ -32,28 +33,6 @@ interface PreparedNode {
   clientId: string;
   patch: NodeContentPatch;
   snapshot: JobVersionNode;
-}
-
-/** True for a value that carries no information: never counted as an edit. */
-function isEmptyParamValue(value: unknown): boolean {
-  if (value === null || value === undefined || value === '') return true;
-  if (Array.isArray(value)) return value.every((v) => v === null || v === undefined || v === '');
-  return false;
-}
-
-function paramValuesById(formData: unknown): Map<string, unknown> {
-  const byId = new Map<string, unknown>();
-  const entries = Array.isArray(formData) ? formData : [];
-  for (const entry of entries) {
-    if (entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string') {
-      byId.set((entry as { id: string }).id, (entry as { value?: unknown }).value ?? null);
-    }
-  }
-  // An absent run count means one run — that is how pricing reads it — so a
-  // stored node from before the universal run-count entry existed must compare
-  // equal to an editor payload that spells the default out.
-  if (!byId.has(RUN_COUNT_PARAM_ID)) byId.set(RUN_COUNT_PARAM_ID, 1);
-  return byId;
 }
 
 /**
@@ -89,10 +68,8 @@ function parametersDiffer(before: unknown, after: unknown): boolean {
       continue;
     }
     if (isEmptyParamValue(beforeValue) && isEmptyParamValue(afterValue)) continue;
-    // A number typed into a text field arrives as a string; "10" and 10 are the
-    // same parameter value and must not read as an edit.
-    if (String(beforeValue) === String(afterValue)) continue;
-    if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) return true;
+    if (paramValuesSemanticallyEqual(beforeValue, afterValue)) continue;
+    return true;
   }
 
   return false;
@@ -227,6 +204,58 @@ export class JobVersionService {
     }
   }
 
+  async getLatestContentVersion(jobId: string): Promise<JobVersion | null> {
+    return this.versionModel
+      .findOne({ jobId, isEvent: { $ne: true } })
+      .sort({ versionNumber: -1 })
+      .exec();
+  }
+
+  async getContentVersion(jobId: string, versionNumber: number): Promise<JobVersion | null> {
+    return this.versionModel.findOne({ jobId, versionNumber, isEvent: { $ne: true } }).exec();
+  }
+
+  async findByOperationId(jobId: string, operationId: string): Promise<JobVersion | null> {
+    return this.versionModel.findOne({ jobId, operationId }).exec();
+  }
+
+  async publishVersion(jobId: string, versionNumber: number, publishedBy: string): Promise<JobVersion> {
+    const version = await this.getContentVersion(jobId, versionNumber);
+    if (!version) {
+      throw new NotFoundException(`Job version ${versionNumber} for job ${jobId} not found`);
+    }
+
+    // Customer-authored, legacy-visible, and already-published rows are already
+    // part of the customer's immutable history. Publication must not rewrite
+    // their envelope metadata merely to record another review.
+    if (version.authorRole === JobVersionAuthorRole.CUSTOMER || version.visibleToCustomer !== false) {
+      return version;
+    }
+
+    const published = await this.versionModel
+      .findOneAndUpdate(
+        {
+          jobId,
+          versionNumber,
+          authorRole: JobVersionAuthorRole.STAFF,
+          visibleToCustomer: false,
+          isEvent: { $ne: true }
+        },
+        {
+          $set: {
+            visibleToCustomer: true,
+            publishedAt: new Date(),
+            publishedBy
+          }
+        },
+        { new: true }
+      )
+      .exec();
+
+    // A concurrent retry may have published between the read and update.
+    return published ?? ((await this.getContentVersion(jobId, versionNumber)) as JobVersion);
+  }
+
   /** The live workflow graph, in the denormalized shape a version stores. */
   async snapshotLiveWorkflows(job: Job): Promise<JobVersionWorkflow[]> {
     const snapshots: JobVersionWorkflow[] = [];
@@ -298,28 +327,41 @@ export class JobVersionService {
       isEvent?: boolean;
       bumpMajor?: boolean;
       visibleToCustomer?: boolean;
+      operationId?: string;
     }
   ): Promise<JobVersion> {
     const jobId = String(job._id);
+    if (meta.operationId) {
+      const existing = await this.findByOperationId(jobId, meta.operationId);
+      if (existing) return existing;
+    }
     const highest = await this.versionModel.findOne({ jobId }).sort({ versionNumber: -1 }).exec();
     const versionNumber = JobVersionService.nextVersionNumber(highest?.versionNumber ?? null, meta.bumpMajor === true);
 
-    return this.versionModel.create({
-      job: new mongoose.Types.ObjectId(jobId),
-      jobId,
-      versionNumber,
-      authorRole: meta.authorRole,
-      workflows,
-      note: meta.note,
-      // Explicit override first, so a transition can record the state it is
-      // moving *to* rather than whatever the in-memory job still says.
-      jobState: meta.jobState ?? job.state,
-      isEvent: meta.isEvent === true,
-      visibleToCustomer: meta.visibleToCustomer === true,
-      createdBy: meta.createdBy,
-      createdByName: meta.createdByName,
-      createdAt: meta.createdAt ?? new Date()
-    });
+    try {
+      return await this.versionModel.create({
+        job: new mongoose.Types.ObjectId(jobId),
+        jobId,
+        versionNumber,
+        authorRole: meta.authorRole,
+        workflows,
+        note: meta.note,
+        // Explicit override first, so a transition can record the state it is
+        // moving *to* rather than whatever the in-memory job still says.
+        jobState: meta.jobState ?? job.state,
+        isEvent: meta.isEvent === true,
+        visibleToCustomer: meta.visibleToCustomer === true,
+        operationId: meta.operationId,
+        createdBy: meta.createdBy,
+        createdByName: meta.createdByName,
+        createdAt: meta.createdAt ?? new Date()
+      });
+    } catch (error: any) {
+      if (error?.code !== 11000 || !meta.operationId) throw error;
+      const raced = await this.findByOperationId(jobId, meta.operationId);
+      if (raced) return raced;
+      throw error;
+    }
   }
 
   /**
@@ -333,7 +375,19 @@ export class JobVersionService {
    *
    * Modelled on the SOW's event versions, which exist for the same reason.
    */
-  async appendStateEvent(job: Job, newState: JobState, author: { role: JobVersionAuthorRole; sub: string; name: string }, note: string): Promise<JobVersion | null> {
+  async appendStateEvent(
+    job: Job,
+    newState: JobState,
+    author: { role: JobVersionAuthorRole; sub: string; name: string },
+    note: string,
+    operationId?: string,
+    sourceWorkflows?: JobVersionWorkflow[]
+  ): Promise<JobVersion | null> {
+    if (operationId) {
+      const existing = await this.findByOperationId(String(job._id), operationId);
+      if (existing) return existing;
+    }
+
     // Force the lazy v1 backfill first. On a job submitted before versioning
     // existed the event would otherwise be written as version 1, and listByJob
     // only backfills when it finds *no* versions — so the original submission
@@ -344,7 +398,7 @@ export class JobVersionService {
     // Nothing to snapshot means a job with no workflows; there is no history to
     // add an event to, and the lazy v1 backfill would be confused by a v1 that
     // carries no graph.
-    const workflows = await this.snapshotLiveWorkflows(job);
+    const workflows = sourceWorkflows ?? (await this.snapshotLiveWorkflows(job));
     if (workflows.length === 0) return null;
 
     return this.appendVersion(job, workflows, {
@@ -355,6 +409,7 @@ export class JobVersionService {
       jobState: newState,
       isEvent: true,
       visibleToCustomer: true,
+      operationId,
       bumpMajor: newState === JobState.CHANGES_REQUESTED
     });
   }

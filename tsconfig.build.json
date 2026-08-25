@@ -1,4 +1,19 @@
 {
   "extends": "./tsconfig.json",
+  // Pinned so the emitted layout cannot move. Without an explicit rootDir tsc
+  // infers one from whatever files it happens to compile, so a stray .ts beside
+  // package.json silently shifts every output from dist/<x>.js to dist/src/<x>.js
+  // — which breaks `start:prod` (node dist/main) and the migrate:* scripts, and
+  // only in whichever environment happens to have the stray file.
+  "compilerOptions": {
+    "rootDir": "./src",
+    // Inside dist, so `prebuild: rimraf dist` clears the incremental state along
+    // with the output. Left at its default beside this file, the build info
+    // outlives a deleted dist: tsc then reads it, concludes everything is
+    // already emitted, writes nothing, and `nest start` fails on a missing
+    // dist/main with no compile error to explain it.
+    "tsBuildInfoFile": "./dist/tsconfig.build.tsbuildinfo"
+  },
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "scripts**/*"]
 }

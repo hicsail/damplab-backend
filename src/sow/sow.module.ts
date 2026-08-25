@@ -10,6 +10,8 @@ import { JobModule } from '../job/job.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { DampLabServicesModule } from '../services/damplab-services.module';
 import { SowPresetModule } from '../sow-preset/sow-preset.module';
+import { JobVersionModule } from '../job-version/job-version.module';
+import { ActivityModule } from '../activity/activity.module';
 
 @Module({
   imports: [
@@ -20,7 +22,9 @@ import { SowPresetModule } from '../sow-preset/sow-preset.module';
     forwardRef(() => JobModule),
     forwardRef(() => WorkflowModule),
     DampLabServicesModule,
-    SowPresetModule
+    SowPresetModule,
+    JobVersionModule,
+    ActivityModule
   ],
   providers: [SOWService, SowVersionService, SOWResolver, SowVersionFieldsResolver],
   exports: [SOWService, SowVersionService]

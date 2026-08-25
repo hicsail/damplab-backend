@@ -165,6 +165,18 @@ export class JobVersion {
   })
   visibleToCustomer: boolean;
 
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When a hidden staff-authored content version was published to the customer.' })
+  publishedAt?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Keycloak sub of the staff member who published this content version.' })
+  publishedBy?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Caller-provided idempotency key for command-generated history events.' })
+  operationId?: string;
+
   /**
    * Optional on the way out — see jobState. `SaveJobWorkflowsInput` requires one
    * on the way in; the gap is the backfilled v1 and the canned event versions.
@@ -191,3 +203,10 @@ export const JobVersionSchema = SchemaFactory.createForClass(JobVersion);
 
 // One version number per job; also the index that serves history listing.
 JobVersionSchema.index({ jobId: 1, versionNumber: -1 }, { unique: true });
+JobVersionSchema.index(
+  { jobId: 1, operationId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { operationId: { $type: 'string' } }
+  }
+);

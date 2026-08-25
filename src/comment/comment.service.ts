@@ -14,6 +14,50 @@ export class CommentService {
     private readonly jobService: JobService
   ) {}
 
+  async createIdempotent(input: CreateCommentInput & { operationId: string }): Promise<Comment> {
+    const operationId = input.operationId?.trim();
+    if (!operationId) {
+      throw new BadRequestException('operationId cannot be empty');
+    }
+
+    const existing = await this.commentModel.findOne({ jobId: input.jobId, operationId }).exec();
+    if (existing) return existing;
+
+    const job = await this.jobService.findById(input.jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${input.jobId} not found`);
+    }
+    this.validateCommentInput(input);
+
+    const now = new Date();
+    const commentData = {
+      jobId: input.jobId,
+      nodeId: input.nodeId,
+      content: input.content.trim(),
+      author: input.author.trim(),
+      authorType: input.authorType,
+      isInternal: input.isInternal ?? false,
+      operationId,
+      createdAt: now,
+      attachments: (input.attachments ?? []).map((attachment) => ({
+        filename: attachment.filename,
+        key: attachment.key,
+        contentType: attachment.contentType,
+        size: attachment.size,
+        uploadedAt: now
+      }))
+    };
+
+    try {
+      return await this.commentModel.create(commentData);
+    } catch (error: any) {
+      if (error?.code !== 11000) throw error;
+      const raced = await this.commentModel.findOne({ jobId: input.jobId, operationId }).exec();
+      if (raced) return raced;
+      throw error;
+    }
+  }
+
   /**
    * Validate comment input
    */
