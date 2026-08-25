@@ -911,3 +911,87 @@ describe('saveWorkflows — catalogue drift against an in-flight node', () => {
     ).rejects.toThrow(/parameters changed/);
   });
 });
+
+// --------------------------------------------------------- restoreVersion
+
+describe('restoreVersion', () => {
+  const CUSTOMER_AUTHOR = { role: JobVersionAuthorRole.CUSTOMER, sub: 'user-1', name: 'client@lab.org' };
+
+  /**
+   * Two saves, so versions[0] is a genuine earlier state to go back to.
+   * buildHarness seeds live nodes but no versions, so a single save would leave
+   * the only version equal to the current graph and every restore a no-op.
+   */
+  async function withHistory(over: Record<string, any> = {}): Promise<Harness> {
+    const harness = buildHarness({ nodes: [liveNode()] });
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'original', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    await harness.service.saveWorkflows(
+      { jobId: JOB_ID, note: 'customer edit', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 99 }], ...over })], edges: [] }] } as any,
+      CUSTOMER_AUTHOR
+    );
+    return harness;
+  }
+
+  it('puts the live graph back to the chosen version, not just the history', async () => {
+    const harness = await withHistory();
+    const original = harness.versions[0];
+    expect(harness.nodes[0].formData).toEqual([{ id: 'vol', value: 99 }]);
+
+    await harness.service.restoreVersion(JOB_ID, original.versionNumber, author, 'Reverted');
+
+    // The point of the primitive: the live node moved, so the staff canvas and
+    // the version record agree.
+    expect(harness.nodes[0].formData).toEqual([{ id: 'vol', value: 10 }]);
+    expect(harness.versions[harness.versions.length - 1]).toMatchObject({ note: 'Reverted', isEvent: false });
+  });
+
+  it('leaves the versions it restored from intact in history', async () => {
+    const harness = await withHistory();
+    const before = harness.versions.map((version) => version.versionNumber);
+
+    await harness.service.restoreVersion(JOB_ID, harness.versions[0].versionNumber, author, 'Reverted');
+
+    expect(harness.versions.map((version) => version.versionNumber).slice(0, before.length)).toEqual(before);
+  });
+
+  it('preserves lab-owned node fields across a restore', async () => {
+    const harness = buildHarness({ nodes: [liveNode({ assigneeId: 'staff-9', completedSteps: ['step-1'] })] });
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'original', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'edit', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 42 }] })], edges: [] }] } as any, author);
+
+    await harness.service.restoreVersion(JOB_ID, harness.versions[0].versionNumber, author, 'Reverted');
+
+    expect(harness.nodes[0]).toMatchObject({ assigneeId: 'staff-9', completedSteps: ['step-1'] });
+  });
+
+  // Withdrawal undoes someone's work; hiding the result would leave them
+  // believing their edits still stand.
+  it('can publish the restored version to the customer, and hides it by default', async () => {
+    const hidden = await withHistory();
+    await hidden.service.restoreVersion(JOB_ID, hidden.versions[0].versionNumber, author, 'Reverted');
+    expect(hidden.versions[hidden.versions.length - 1].visibleToCustomer).toBe(false);
+
+    const shown = await withHistory();
+    await shown.service.restoreVersion(JOB_ID, shown.versions[0].versionNumber, author, 'Withdrawn', { visibleToCustomer: true });
+    expect(shown.versions[shown.versions.length - 1].visibleToCustomer).toBe(true);
+  });
+
+  it('refuses a snapshot whose node has no recorded service rather than guessing', async () => {
+    const harness = await withHistory();
+    harness.versions[0].workflows[0].nodes[0].serviceId = undefined;
+
+    await expect(harness.service.restoreVersion(JOB_ID, harness.versions[0].versionNumber, author, 'Reverted')).rejects.toThrow(/no recorded service/);
+  });
+
+  it('refuses to restore over work the lab has already started', async () => {
+    const harness = await withHistory();
+    harness.nodes[0].state = WorkflowNodeState.IN_PROGRESS;
+
+    await expect(harness.service.restoreVersion(JOB_ID, harness.versions[0].versionNumber, author, 'Reverted')).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('404s on a version that does not exist', async () => {
+    const harness = await withHistory();
+    await expect(harness.service.restoreVersion(JOB_ID, 9999, author, 'Reverted')).rejects.toBeInstanceOf(NotFoundException);
+  });
+});

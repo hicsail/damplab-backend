@@ -5,7 +5,6 @@ import { SowVersionService } from './sow-version.service';
 import { SowVersion, SowCalculatedValue, SowVersionService as SowVersionServiceLine } from './sow-version.model';
 import { CreateSOWInput } from './dto/create-sow.input';
 import { UpdateSOWInput } from './dto/update-sow.input';
-import { SubmitSOWSignatureInput } from './dto/submit-sow-signature.input';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
 import { SignSowInput } from './dto/sign-sow.input';
 import { SowInputsInput } from './dto/sow-inputs.input';
@@ -94,23 +93,6 @@ export class SOWResolver {
     // Use user email or preferred_username as createdBy if not provided
     const createdBy = input.createdBy || user.email || user.preferred_username || 'unknown';
     return this.sowService.upsertForJob(jobId, { ...input, jobId, createdBy });
-  }
-
-  /**
-   * The pre-versioning signature path. It writes signatures onto the SOW root
-   * and flips status to SIGNED without going through the version state machine,
-   * so it bypasses every check signSow makes — including the send gate. No UI
-   * calls it; staff-gated here so it cannot be driven from a customer token
-   * while it waits to be deleted.
-   *
-   * @deprecated Use signSow / finalizeSow.
-   */
-  @Mutation(() => SOW, {
-    description: 'Deprecated, staff-only. Legacy pre-versioning signature path; use signSow instead.'
-  })
-  @Roles(Role.DamplabStaff)
-  async submitSOWSignature(@Args('input', { type: () => SubmitSOWSignatureInput }) input: SubmitSOWSignatureInput, @CurrentUser() user: User): Promise<SOW> {
-    return this.sowService.submitSignature(input, user);
   }
 
   @ResolveField(() => Job, { description: 'Job this SOW is associated with' })
@@ -236,6 +218,15 @@ export class SOWResolver {
   async sendSowToCustomer(@Args('sowId', { type: () => ID }) sowId: string, @CurrentUser() user: User): Promise<SowVersion> {
     await this.authorizedSow(sowId, user);
     return this.sowVersionService.sendToCustomer(sowId, SOWResolver.author(user));
+  }
+
+  @Mutation(() => SOW, {
+    description: 'Staff-only. Take a sent Statement of Work back so it can be edited. The customer is told it is no longer available to sign.'
+  })
+  @Roles(Role.DamplabStaff)
+  async withdrawSowFromCustomer(@Args('sowId', { type: () => ID }) sowId: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<SOW> {
+    await this.authorizedSow(sowId, user);
+    return this.sowVersionService.withdrawFromCustomer(sowId, reason, { sub: user.sub, name: user.preferred_username ?? user.email ?? user.sub });
   }
 
   @Mutation(() => SowVersion, { description: 'Job owner only. Records the customer signature on the version in force.' })

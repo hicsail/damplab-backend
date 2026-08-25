@@ -334,13 +334,6 @@ export class SowVersion {
   sourceJobVersionNumber?: number;
 
   @Prop({ required: false })
-  @Field({
-    nullable: true,
-    description: 'Accepted contract fingerprint paired with sourceJobVersionNumber. Absent on historical rows and drafts saved without a valid accepted source.'
-  })
-  sourceContractFingerprint?: string;
-
-  @Prop({ required: false })
   @Field({ nullable: true })
   sentToCustomerAt?: Date;
 

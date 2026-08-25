@@ -140,16 +140,16 @@ export class Job {
   @Prop({ type: Number, required: false })
   @Field(() => Int, {
     nullable: true,
+    description: 'The content version in force when the job was last handed to the customer — what withdrawing it restores.'
+  })
+  handoverVersionNumber?: number | null;
+
+  @Prop({ type: Number, required: false })
+  @Field(() => Int, {
+    nullable: true,
     description: 'Exact immutable job-version number accepted by staff.'
   })
   acceptedJobVersionNumber?: number | null;
-
-  @Prop({ type: String, required: false })
-  @Field(() => String, {
-    nullable: true,
-    description: 'Contract fingerprint of the exact immutable job version accepted by staff.'
-  })
-  acceptedContractFingerprint?: string | null;
 
   /**
    * The job's billing figures as they stood when staff accepted it — see
@@ -164,21 +164,6 @@ export class Job {
   @Prop({ required: false })
   @Field({ description: 'Billing fingerprint of the job spec at the moment staff accepted it.', nullable: true })
   acceptedBillingFingerprint?: string;
-
-  /**
-   * Whether the job's owner may currently change its workflow graph.
-   *
-   * Set by staff in the Review Job modal, independently of the state decision
-   * taken alongside it. Read only through customerMayEdit — absent means false,
-   * and jobs written before this field existed need migrate-job-editing to give
-   * them one.
-   */
-  @Prop({ required: false, default: false })
-  @Field(() => Boolean, {
-    nullable: true,
-    description: "Whether the job's owner may currently edit its workflow graph. Absent on jobs predating the field, which read as locked."
-  })
-  customerEditingEnabled?: boolean;
 
   @Prop({ required: false })
   @Field({ description: 'When staff last accepted this job as specified', nullable: true })

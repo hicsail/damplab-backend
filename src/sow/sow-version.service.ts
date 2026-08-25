@@ -7,14 +7,16 @@ import { SowVersion, SowVersionDocument, SowVersionInputs, SowVersionService as 
 import { adjustmentAmount, adjustmentMultiplier, buildCalculatedFields, calculateFieldValues, normalizeIncomingFields, SowDocumentContext } from './sow-field-calculator';
 import { SOW_FIELD_CATALOG, findFieldDefinition } from './sow-field-defaults';
 import { SOWService } from './sow.service';
+import { assertSowContractWritable } from './sow-access';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
 import { SignSowInput } from './dto/sign-sow.input';
 import { User } from '../auth/user.interface';
 import { JobState } from '../job/job.model';
 import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
 import { JobVersionService } from '../job-version/job-version.service';
-import { ContractFingerprintWorkflowInput, contractFingerprint } from '../job/contract-fingerprint.util';
 import { ActivityService } from '../activity/activity.service';
+import { CommentService } from '../comment/comment.service';
+import { CommentAuthorType } from '../comment/comment.model';
 
 /**
  * Inputs as they arrive from the editor: the same shape as SowVersionInputs but
@@ -47,7 +49,8 @@ export class SowVersionService {
     @Inject(forwardRef(() => SOWService)) private readonly sowService: SOWService,
     private readonly presetService: SowTextPresetService,
     private readonly activityService: ActivityService,
-    private readonly jobVersionService: JobVersionService
+    private readonly jobVersionService: JobVersionService,
+    @Inject(forwardRef(() => CommentService)) private readonly commentService: CommentService
   ) {}
 
   /**
@@ -238,28 +241,27 @@ export class SowVersionService {
     return `${major}.${minor}`;
   }
 
-  private async validAcceptedSource(job: any): Promise<{ sourceJobVersionNumber?: number; sourceContractFingerprint?: string }> {
+  /**
+   * The accepted job version a new SOW version derives from, when there is a
+   * valid one.
+   *
+   * Provenance only — the version number identifies the content exactly, since
+   * job versions are immutable. Returns nothing when the job is not cleanly
+   * accepted, in which case the document simply records no source and the job's
+   * own blockers gate it.
+   */
+  private async validAcceptedSource(job: any): Promise<{ sourceJobVersionNumber?: number }> {
     const sourceJobVersionNumber = job?.acceptedJobVersionNumber;
-    const sourceContractFingerprint = job?.acceptedContractFingerprint;
-    if (job?.state !== JobState.ACCEPTED || typeof sourceJobVersionNumber !== 'number' || !sourceContractFingerprint) {
-      return {};
-    }
+    if (job?.state !== JobState.ACCEPTED || typeof sourceJobVersionNumber !== 'number') return {};
 
     const jobId = String(job?._id ?? job?.jobId ?? '');
     const source = await this.jobVersionService.getContentVersion(jobId, sourceJobVersionNumber);
     if (!source || !JobVersionService.isVisibleToCustomer(source)) return {};
 
-    const fingerprintFor = (workflows: unknown): string =>
-      contractFingerprint({
-        customerCategory: job.customerCategory,
-        workflows: workflows as ContractFingerprintWorkflowInput[]
-      });
-    if (fingerprintFor(source.workflows) !== sourceContractFingerprint) return {};
-
     const latest = await this.jobVersionService.getLatestContentVersion(jobId);
-    if (!latest || fingerprintFor(latest.workflows) !== sourceContractFingerprint) return {};
+    if (latest?.versionNumber !== sourceJobVersionNumber) return {};
 
-    return { sourceJobVersionNumber, sourceContractFingerprint };
+    return { sourceJobVersionNumber };
   }
 
   /**
@@ -465,7 +467,6 @@ export class SowVersionService {
         // The row remains fail-closed until the parent pointer CAS claims it.
         visibleToCustomer: false,
         sourceJobVersionNumber: from.sourceJobVersionNumber,
-        sourceContractFingerprint: from.sourceContractFingerprint,
         sentToCustomerAt: changes.sentToCustomerAt ?? from.sentToCustomerAt,
         clientSignature: changes.clientSignature ?? from.clientSignature,
         staffSignature: changes.staffSignature ?? from.staffSignature,
@@ -640,6 +641,17 @@ export class SowVersionService {
     const current = await this.getCurrentVersion(sowId);
     const currentNumber = current?.versionNumber ?? 0;
 
+    // Exactly one party may hold the document. A version out for signature has
+    // to be withdrawn first; a countersigned one is not editable at all.
+    const activeBeforeSave = await this.getActiveVersion(sowId);
+    assertSowContractWritable(activeBeforeSave?.status);
+
+    // Editing a signed document voids the signature it carries. The customer
+    // assented to specific words, so the alternative is countersigning terms
+    // they never agreed to — which the gate used to catch late, at countersign
+    // time, rather than here where the change actually happens.
+    const voidsSignature = activeBeforeSave?.status === SOWStatus.SIGNED;
+
     if (input.baseVersionNumber !== currentNumber) {
       throw new ConflictException(`This SOW has moved on since you opened it (you have v${input.baseVersionNumber}, it is now v${currentNumber}). Reload to see the newer version before saving.`);
     }
@@ -724,6 +736,10 @@ export class SowVersionService {
       // Excluded from every read until its parent pointer CAS wins below.
       isStaged: true,
       isDiscarded: false,
+      // A new draft never inherits a signature: it is not the document that was
+      // signed. Carried explicitly rather than by omission so the intent reads.
+      clientSignature: undefined,
+      staffSignature: undefined,
       note,
       createdBy: author.sub,
       createdByName: author.name,
@@ -738,7 +754,19 @@ export class SowVersionService {
           activeVersionNumber: baseSow.activeVersionNumber,
           status: baseSow.status
         },
-        { $set: { currentVersionNumber: versionNumber, status: SOWStatus.DRAFT, documentStale: false, updatedAt: new Date() } },
+        {
+          $set: {
+            currentVersionNumber: versionNumber,
+            status: SOWStatus.DRAFT,
+            // Voiding drops the signed version out of force. The row itself is
+            // immutable and stays in history as the record of what was signed;
+            // only the pointer moves, so there is no longer a document the
+            // customer is on the hook for.
+            ...(voidsSignature ? { activeVersionNumber: 0 } : {}),
+            documentStale: false,
+            updatedAt: new Date()
+          }
+        },
         { new: true }
       )
       .exec();
@@ -757,6 +785,17 @@ export class SowVersionService {
     }
     await this.versionModel.updateOne({ _id: created._id, isStaged: true }, { $set: { isStaged: false } }).exec();
     created.isStaged = false;
+
+    if (voidsSignature) {
+      await this.postSowComment(
+        baseSow,
+        `sow-signature-voided:${sowId}:${versionNumber}`,
+        // Third person throughout: this thread is read by staff and the client
+        // alike, so "you" addresses the wrong reader half the time.
+        'The Statement of Work the client signed has been revised by the lab, so that signature no longer applies. A new version will be issued for the client to review and sign.',
+        author
+      );
+    }
 
     // Auto-assign Project Lead to unassigned workflow nodes
     const previousLeadId = current?.inputs?.projectLeadId;
@@ -843,20 +882,16 @@ export class SowVersionService {
         return 'The accepted job version is missing or was not published to the customer. Re-accept the job, save a new SOW draft, and reissue it.';
       case DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE:
         return 'This job changed after it was accepted. Re-accept it, then recalculate and save a new SOW draft before reissuing it.';
-      case DocumentBlocker.SOW_SOURCE_MISMATCH:
-        return 'This SOW does not match the accepted job version. Re-accept the job, save a new SOW draft, and reissue it.';
       case DocumentBlocker.DOCUMENT_STALE:
         return "This document still bills the job's earlier figures. Recalculate the Fee Schedule and save a new draft before continuing.";
       case DocumentBlocker.DRAFT_INCOMPLETE:
         return missingFields.length > 0 ? `Complete the following before sending to the customer: ${missingFields.join(', ')}.` : 'This SOW has no document to send.';
       case DocumentBlocker.NO_DRAFT_TO_SEND:
         return 'This version has already been issued. Edit the document to start a new draft before sending again.';
-      case DocumentBlocker.UNSENT_DRAFT:
-        return 'A newer draft sits above the version the customer signed. Send it and have them sign it before countersigning.';
       case DocumentBlocker.STALE_SIGN_VERSION:
-        return 'This SOW version is no longer active. Reload to review the current sent version before signing.';
+        return 'This version is no longer the one in force. Reload to review the current Statement of Work before signing.';
       case DocumentBlocker.AWAITING_SENT_VERSION:
-        return 'There is no sent SOW version awaiting your signature.';
+        return 'There is no Statement of Work awaiting your signature. The lab may have withdrawn it to make changes.';
       case DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE:
         return 'The customer has not signed the version in force yet.';
       default:
@@ -864,10 +899,23 @@ export class SowVersionService {
     }
   }
 
+  /**
+   * What stands between this SOW and the customer, shared by all three actions.
+   *
+   * "Has the job changed since it was accepted?" is a version-number comparison,
+   * not a content hash: job content is versioned and immutable, so the accepted
+   * version number identifies it exactly. Under the exclusive-control rule
+   * nothing can change while a job is ACCEPTED anyway, so this should never
+   * fire — it is kept as cheap defence-in-depth against a write path that
+   * escaped the gate, which is the one failure that would otherwise be silent.
+   *
+   * Pricing is different and still needs a real fingerprint: a category change
+   * or a catalogue edit moves the figures without touching a job version.
+   */
   private static contractBlockers(args: { sow: SOW; job: any; version: SowVersionDocument | null; acceptedSource: any; latestContent: any; currentBillingFingerprint?: string }): DocumentBlocker[] {
     const { sow, job, version, acceptedSource, latestContent, currentBillingFingerprint } = args;
     const blockers: DocumentBlocker[] = [];
-    const hasAcceptance = job?.state === JobState.ACCEPTED && typeof job?.acceptedJobVersionNumber === 'number' && !!job?.acceptedContractFingerprint && !!job?.acceptedBillingFingerprint;
+    const hasAcceptance = job?.state === JobState.ACCEPTED && typeof job?.acceptedJobVersionNumber === 'number' && !!job?.acceptedBillingFingerprint;
 
     const liveInputs = SowVersionService.deriveInputs(sow, job);
     const documentBillingStale = !!version && SowVersionService.billingFingerprint(liveInputs) !== SowVersionService.billingFingerprint(version.inputs ?? ({} as SowVersionInputs));
@@ -879,32 +927,18 @@ export class SowVersionService {
       return blockers;
     }
 
+    // The accepted version still has to exist and be something the customer can
+    // see — they cannot be bound by a spec that was never published to them.
     if (!acceptedSource || !JobVersionService.isVisibleToCustomer(acceptedSource) || !latestContent) {
       blockers.push(DocumentBlocker.ACCEPTED_SOURCE_UNAVAILABLE);
       if (feeScheduleStale) blockers.push(DocumentBlocker.DOCUMENT_STALE);
       return blockers;
     }
 
-    const fingerprintFor = (workflows: unknown): string =>
-      contractFingerprint({
-        customerCategory: job.customerCategory,
-        workflows: workflows as ContractFingerprintWorkflowInput[]
-      });
-    const acceptedFingerprint = job.acceptedContractFingerprint;
-    if (fingerprintFor(acceptedSource.workflows) !== acceptedFingerprint || fingerprintFor(latestContent.workflows) !== acceptedFingerprint) {
+    if (latestContent.versionNumber !== job.acceptedJobVersionNumber) {
       blockers.push(DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE);
     }
 
-    // Only a version that records a source can contradict one. Rows written
-    // before provenance was tracked — and the few the contract-flow migration
-    // could not stamp — carry none, and are still gated by the job's own
-    // blockers above and by DOCUMENT_STALE below, exactly as they were before
-    // provenance existed. Every new version records a source, so the gap closes
-    // on the first save.
-    const versionRecordsSource = !!version?.sourceContractFingerprint;
-    if (versionRecordsSource && (version!.sourceJobVersionNumber !== job.acceptedJobVersionNumber || version!.sourceContractFingerprint !== acceptedFingerprint)) {
-      blockers.push(DocumentBlocker.SOW_SOURCE_MISMATCH);
-    }
     if (feeScheduleStale) blockers.push(DocumentBlocker.DOCUMENT_STALE);
     return blockers;
   }
@@ -961,23 +995,23 @@ export class SowVersionService {
       sendBlockers.push(DocumentBlocker.DRAFT_INCOMPLETE);
     }
 
+    // The customer can sign exactly the version in force, and only while it is
+    // out for signature. Staff cannot draft over it — they withdraw it first,
+    // which drops it out of force and lands here as AWAITING_SENT_VERSION.
     const signBlockers = sharedFor(active);
     if (active?.status === SOWStatus.SENT && expectedSignVersionNumber != null && active.versionNumber !== expectedSignVersionNumber) {
+      // They are holding a version that has been superseded — typically staff
+      // withdrew it and reissued a revision while the page was open.
       signBlockers.push(DocumentBlocker.STALE_SIGN_VERSION);
     } else if (!active || active.status !== SOWStatus.SENT) {
       signBlockers.push(DocumentBlocker.AWAITING_SENT_VERSION);
     }
-    if (sow.currentVersionNumber > sow.activeVersionNumber) {
-      signBlockers.push(DocumentBlocker.UNSENT_DRAFT);
-    }
 
+    // Editing a signed document now voids the signature at the moment of the
+    // edit, so a draft can never sit above a signature that is still good.
     const countersignBlockers = sharedFor(active);
     if (!active || active.status !== SOWStatus.SIGNED) {
       countersignBlockers.push(DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE);
-    } else if (sow.currentVersionNumber > sow.activeVersionNumber) {
-      // Staff have revised the document since the customer signed. Countersigning
-      // now would finalize a version the lab has already moved on from.
-      countersignBlockers.push(DocumentBlocker.UNSENT_DRAFT);
     }
 
     return {
@@ -989,6 +1023,81 @@ export class SowVersionService {
       countersignBlockers,
       missingFields
     };
+  }
+
+  /**
+   * Posts a SOW lifecycle note into the customer's job thread.
+   *
+   * SOW transitions otherwise emit activity events, which only staff read. When
+   * something changes what the customer is being asked to do — a withdrawal, a
+   * voided signature — it has to reach the one channel they see. Idempotent on
+   * the caller's key so a retry cannot post twice.
+   */
+  private async postSowComment(sow: SOW, operationId: string, content: string, author: { sub: string; name: string }): Promise<void> {
+    try {
+      await this.commentService.createIdempotent({
+        jobId: String(sow.jobId),
+        operationId,
+        content,
+        author: author.name,
+        authorType: CommentAuthorType.STAFF,
+        isInternal: false
+      } as any);
+    } catch (error: any) {
+      // The document change is what matters and it has already landed; a failed
+      // note must not roll it back or fail the caller.
+      this.logger.warn(`Could not post SOW comment ${operationId}: ${error?.message ?? error}`);
+    }
+  }
+
+  /**
+   * Takes a sent document back so staff can edit it.
+   *
+   * The customer stops being able to sign the moment this lands, and is told so
+   * — the alternative is a document that silently refuses their signature. The
+   * sent version stays in history; only the active pointer moves.
+   */
+  async withdrawFromCustomer(sowId: string, reason: string, author: { sub: string; name: string }): Promise<SOW> {
+    await this.reconcile(sowId);
+    const sow = await this.requireSow(sowId);
+    const active = await this.getActiveVersion(sowId);
+    if (active?.status !== SOWStatus.SENT) {
+      throw new BadRequestException('Only a Statement of Work that is out for signature can be withdrawn.');
+    }
+    const note = reason?.trim();
+    if (!note) throw new BadRequestException('Give a reason for withdrawing this Statement of Work.');
+
+    // Hand the lab back an editable draft of what was sent, rather than leaving
+    // currentVersionNumber on a SENT row that can neither be edited nor reissued.
+    // Withdrawing to make a change should land staff in the editor, on the
+    // content the customer saw.
+    await this.appendVersion(
+      sow,
+      active,
+      {
+        status: SOWStatus.DRAFT,
+        expectedStatus: SOWStatus.SENT,
+        sourcePointer: 'currentVersionNumber',
+        makeActive: false,
+        note: 'Withdrawn from the customer'
+      },
+      author
+    );
+
+    // Nothing is in force with the customer any more. The sent version stays in
+    // history; only the pointer moves.
+    const claimed = await this.sowModel.findOneAndUpdate({ _id: sowId, activeVersionNumber: active.versionNumber }, { $set: { activeVersionNumber: 0, updatedAt: new Date() } }, { new: true }).exec();
+    if (!claimed) {
+      throw new ConflictException('This SOW changed while it was being withdrawn. Reload and try again.');
+    }
+
+    await this.postSowComment(
+      claimed,
+      `sow-withdrawn:${sowId}:${active.versionNumber}`,
+      `The Statement of Work sent to the client has been withdrawn by the lab and is no longer available to sign.\n\n${note}`,
+      author
+    );
+    return claimed;
   }
 
   /** Issues the current draft to the customer. */
@@ -1056,6 +1165,8 @@ export class SowVersionService {
     const gate = await this.actionGate(sowId, input.versionNumber);
     if (!gate.canSign) {
       const message = SowVersionService.blockerMessage(gate.signBlockers, gate.missingFields);
+      // Looking at a version that is no longer the one in force is a stale view,
+      // not a bad request — the client should reload rather than correct itself.
       if (gate.signBlockers.includes(DocumentBlocker.STALE_SIGN_VERSION)) throw new ConflictException(message);
       throw new BadRequestException(message);
     }
@@ -1174,7 +1285,7 @@ export class SowVersionService {
     if (!current) throw new BadRequestException('This SOW has no document to cancel.');
     if (current.status === SOWStatus.CANCELLED) throw new BadRequestException('This SOW is already cancelled.');
 
-    return this.appendVersion(
+    const cancelled = await this.appendVersion(
       sow,
       current,
       {
@@ -1186,6 +1297,16 @@ export class SowVersionService {
       },
       author
     );
+
+    // Cancelling is customer-facing — it withdraws a document they may have been
+    // asked to sign — so it is announced the same way a withdrawal is.
+    await this.postSowComment(
+      sow,
+      `sow-cancelled:${String(sow._id)}:${cancelled.versionNumber}`,
+      `This Statement of Work has been cancelled by the lab and is no longer in effect.${note?.trim() ? `\n\n${note.trim()}` : ''}`,
+      author
+    );
+    return cancelled;
   }
 
   /**

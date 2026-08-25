@@ -10,7 +10,7 @@ import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.mode
 import { DampLabServices } from '../services/damplab-services.services';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
-import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from '../job/contract-fingerprint.util';
+import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
 
 /** Fields on a live WorkflowNode that a save is allowed to write. Everything else — state, assigneeId, startedAt, completedSteps, usedInventory, inventory reservations — belongs to the lab and is never touched here. */
 type NodeContentPatch = {
@@ -420,7 +420,55 @@ export class JobVersionService {
    * Live documents are reconciled node by node rather than rebuilt, so a node
    * that is already assigned, started or holding inventory keeps all of it.
    */
-  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string }): Promise<Job> {
+  /**
+   * Makes an earlier version the live graph again.
+   *
+   * Reverting has to move the live nodes, not just record that it happened: the
+   * staff canvas hydrates from `job.workflows`, so a history row alone would
+   * claim a revert the lab never actually received. Everything hard here —
+   * node reconciliation, preserving lab-owned fields, the work-in-flight guard,
+   * appending the resulting version — already lives in saveWorkflows, so this
+   * only has to translate a stored snapshot back into the shape it accepts.
+   *
+   * Shared by the staff/customer Revert action and by withdrawing a job from
+   * the customer, so the two cannot drift apart.
+   */
+  async restoreVersion(
+    jobId: string,
+    versionNumber: number,
+    author: { role: JobVersionAuthorRole; sub: string; name: string },
+    note: string,
+    opts: { visibleToCustomer?: boolean } = {}
+  ): Promise<Job> {
+    const source = await this.getContentVersion(jobId, versionNumber);
+    if (!source) throw new NotFoundException(`Job version ${versionNumber} for job ${jobId} not found`);
+
+    const workflows: SaveWorkflowInput[] = (source.workflows ?? []).map((workflow) => ({
+      workflowId: workflow.workflowId,
+      name: workflow.name,
+      nodes: (workflow.nodes ?? []).map((node) => {
+        // serviceId is optional on a snapshot but required to rebuild a node.
+        // Refuse rather than guess: a restore that silently dropped or
+        // mis-serviced a node would be worse than not restoring at all.
+        if (!node.serviceId) {
+          throw new BadRequestException(`Version ${versionNumber} cannot be restored: node "${node.label || node.id}" has no recorded service.`);
+        }
+        return {
+          id: node.id,
+          label: node.label,
+          serviceId: node.serviceId,
+          formData: node.formData,
+          additionalInstructions: node.additionalInstructions ?? '',
+          position: node.position ? { x: node.position.x, y: node.position.y } : undefined
+        };
+      }),
+      edges: (workflow.edges ?? []).map((edge) => ({ id: edge.id, source: edge.source, target: edge.target }))
+    }));
+
+    return this.saveWorkflows({ jobId, workflows, note } as SaveJobWorkflowsInput, author, opts);
+  }
+
+  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string }, opts: { visibleToCustomer?: boolean } = {}): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
 
@@ -478,7 +526,11 @@ export class JobVersionService {
       createdBy: author.sub,
       createdByName: author.name,
       note,
-      visibleToCustomer: author.role === JobVersionAuthorRole.CUSTOMER
+      // Staff edits stay hidden until acceptance publishes them; a customer's
+      // own edits are theirs to see. Withdrawal overrides this to true: undoing
+      // someone's work and then hiding the result would leave them believing
+      // their edits still stand.
+      visibleToCustomer: opts.visibleToCustomer ?? author.role === JobVersionAuthorRole.CUSTOMER
     });
 
     return refreshed!;

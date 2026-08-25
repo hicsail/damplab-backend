@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-import { ContractFingerprintWorkflowInput, contractFingerprint } from './contract-fingerprint.util';
 import { CustomerActionRequired, JobState } from './job.model';
 import { SOWStatus } from '../sow/sow.model';
 
@@ -15,11 +14,14 @@ import { SOWStatus } from '../sow/sow.model';
  *     job cannot respond at all: `respondToJobReview` refuses a job with no
  *     recorded action.
  *
- *  2. The exact acceptance — `acceptedJobVersionNumber` and
- *     `acceptedContractFingerprint`. The old `stampAcceptance` wrote only
- *     `acceptedBillingFingerprint`, and `contractBlockers` now demands all
- *     three, so every in-flight ACCEPTED job would report NOT_ACCEPTED and
- *     neither send nor sign its SOW.
+ *  2. The exact acceptance — `acceptedJobVersionNumber`. The old
+ *     `stampAcceptance` wrote only `acceptedBillingFingerprint`, and
+ *     `contractBlockers` now needs the accepted version number too, so every
+ *     in-flight ACCEPTED job would report NOT_ACCEPTED and neither send nor
+ *     sign its SOW.
+ *
+ *  3. `handoverVersionNumber` on jobs currently with the customer — the
+ *     baseline a withdrawal restores.
  *
  * Safe to run before the new backend is live: everything written here is either
  * a field the old code never reads, or (see `staleEditingGrantsDisabled` and
@@ -47,6 +49,8 @@ export interface JobContractFlowMigrationReport {
   /** No content version exists to point at. Staff must re-accept, which synthesizes v1. */
   acceptedJobsWithNoContentVersion: number;
   acceptedVersionsPublished: number;
+  handoverBaselinesBackfilled: number;
+  handoverBaselinesUnavailable: number;
   currentOrActiveSowVersionsMissingSource: number;
   sowVersionsSourceBackfilled: number;
   sowVersionsStillMissingSource: number;
@@ -59,11 +63,11 @@ export interface JobContractFlowMigrationReport {
 const VALID_ACTIONS = new Set<string>(Object.values(CustomerActionRequired));
 
 function sourceLinkMissing(version: any): boolean {
-  return typeof version?.sourceJobVersionNumber !== 'number' || typeof version?.sourceContractFingerprint !== 'string' || version.sourceContractFingerprint.length === 0;
+  return typeof version?.sourceJobVersionNumber !== 'number';
 }
 
 function hasExactAcceptance(job: any): boolean {
-  return typeof job?.acceptedJobVersionNumber === 'number' && typeof job?.acceptedContractFingerprint === 'string' && job.acceptedContractFingerprint.length > 0;
+  return typeof job?.acceptedJobVersionNumber === 'number';
 }
 
 function toTime(value: unknown): number | null {
@@ -159,6 +163,8 @@ export async function migrateJobContractFlow(db: mongoose.mongo.Db, opts: { dryR
     acceptedJobsMissingBillingFingerprint: 0,
     acceptedJobsWithNoContentVersion: 0,
     acceptedVersionsPublished: 0,
+    handoverBaselinesBackfilled: 0,
+    handoverBaselinesUnavailable: 0,
     currentOrActiveSowVersionsMissingSource: 0,
     sowVersionsSourceBackfilled: 0,
     sowVersionsStillMissingSource: 0,
@@ -170,7 +176,7 @@ export async function migrateJobContractFlow(db: mongoose.mongo.Db, opts: { dryR
   const jobVersionUpdates: any[] = [];
   const sowVersionUpdates: any[] = [];
   /** Acceptance stamped in this pass (or already present), keyed by job id — what the SOW source backfill reads. */
-  const acceptanceByJob = new Map<string, { versionNumber: number; fingerprint: string }>();
+  const acceptanceByJob = new Map<string, number>();
 
   for (const job of jobs) {
     const jobId = String(job._id);
@@ -181,7 +187,7 @@ export async function migrateJobContractFlow(db: mongoose.mongo.Db, opts: { dryR
       if (hasExactAcceptance(job)) {
         // Accepted through the new flow already. Never overwrite: this is the
         // record of what staff agreed to, not something to recompute.
-        acceptanceByJob.set(jobId, { versionNumber: job.acceptedJobVersionNumber, fingerprint: job.acceptedContractFingerprint });
+        acceptanceByJob.set(jobId, job.acceptedJobVersionNumber);
       } else {
         report.acceptedJobsMissingExactAcceptance += 1;
         const billingFingerprint = typeof job.acceptedBillingFingerprint === 'string' && job.acceptedBillingFingerprint.length > 0;
@@ -200,24 +206,12 @@ export async function migrateJobContractFlow(db: mongoose.mongo.Db, opts: { dryR
           report.acceptedJobsMissingBillingFingerprint += 1;
           report.failed.push(`${jobId}: accepted with no billing fingerprint; staff must re-accept`);
         } else {
-          let fingerprint: string;
-          try {
-            fingerprint = contractFingerprint({
-              customerCategory: job.customerCategory,
-              workflows: (pick.version.workflows ?? []) as ContractFingerprintWorkflowInput[]
-            });
-          } catch (error: any) {
-            report.failed.push(`${jobId}: could not fingerprint v${pick.version.versionNumber}: ${error?.message ?? error}`);
-            continue;
-          }
-
           patch.acceptedJobVersionNumber = pick.version.versionNumber;
-          patch.acceptedContractFingerprint = fingerprint;
           report.acceptedJobsBackfilled += 1;
           if (pick.rule === 'acceptedAt') report.acceptedByAcceptedAt += 1;
           else if (pick.rule === 'acceptanceEvent') report.acceptedByAcceptanceEvent += 1;
           else report.acceptedByLatestContent += 1;
-          acceptanceByJob.set(jobId, { versionNumber: pick.version.versionNumber, fingerprint });
+          acceptanceByJob.set(jobId, pick.version.versionNumber);
 
           // The gate requires the accepted source to be visible to the customer.
           // Staff-authored versions stay hidden until published, and acceptance
@@ -263,17 +257,42 @@ export async function migrateJobContractFlow(db: mongoose.mongo.Db, opts: { dryR
       if (job.customerActionRequired !== null) patch.customerActionRequired = null;
     }
 
-    if (job.state !== JobState.CHANGES_REQUESTED && job.customerEditingEnabled === true) {
-      report.staleEditingGrantsDisabled += 1;
-      patch.customerEditingEnabled = false;
+    // ---- 3. The handover baseline -----------------------------------------
+    // What withdrawing this job from the customer restores. Derived the same way
+    // as the acceptance: the newest content version at or below the handover
+    // event. A job already carrying one is left alone.
+    if (job.state === JobState.CHANGES_REQUESTED && typeof job.handoverVersionNumber !== 'number') {
+      const handoverEvent = latestEventByJob.get(jobId);
+      const contentVersions = contentVersionsByJob.get(jobId) ?? [];
+      const eventNumber = Number(handoverEvent?.versionNumber);
+      const baseline = Number.isFinite(eventNumber) ? contentVersions.find((version) => Number(version.versionNumber) <= eventNumber) : contentVersions[0];
+      if (baseline) {
+        patch.handoverVersionNumber = baseline.versionNumber;
+        report.handoverBaselinesBackfilled += 1;
+      } else {
+        // Nothing to restore. Withdrawal still works; it just takes the job back
+        // without reverting the graph.
+        report.handoverBaselinesUnavailable += 1;
+      }
     }
 
-    if (Object.keys(patch).length > 0) {
-      jobUpdates.push({ updateOne: { filter: { _id: job._id }, update: { $set: patch } } });
+    // customerEditingEnabled is gone — the requested action carries what it used
+    // to say. Cleared here so no stale flag survives in the documents.
+    const unset: Record<string, string> = {};
+    if (job.customerEditingEnabled !== undefined) {
+      if (job.state !== JobState.CHANGES_REQUESTED && job.customerEditingEnabled === true) report.staleEditingGrantsDisabled += 1;
+      unset.customerEditingEnabled = '';
+    }
+
+    if (Object.keys(patch).length > 0 || Object.keys(unset).length > 0) {
+      const update: Record<string, unknown> = {};
+      if (Object.keys(patch).length > 0) update.$set = patch;
+      if (Object.keys(unset).length > 0) update.$unset = unset;
+      jobUpdates.push({ updateOne: { filter: { _id: job._id }, update } });
     }
   }
 
-  // ---- 3. SOW document provenance -----------------------------------------
+  // ---- 4. SOW document provenance -----------------------------------------
   // Only the rows the parent pointers name are ever gated: contractBlockers is
   // evaluated against the current version for a send and the active version for
   // a sign or countersign. Historical rows are audited below but not written.
@@ -293,9 +312,8 @@ export async function migrateJobContractFlow(db: mongoose.mongo.Db, opts: { dryR
       if (!version || !sourceLinkMissing(version)) continue;
 
       if (!acceptance) {
-        // Nothing authoritative to point the document at. SOW_SOURCE_MISMATCH
-        // only fires on a recorded source, so this stays as it was: the job's
-        // own blockers still gate it.
+        // Nothing authoritative to point the document at. Provenance is advisory,
+        // so this stays as it was: the job's own blockers still gate it.
         report.sowVersionsStillMissingSource += 1;
         continue;
       }
@@ -304,7 +322,7 @@ export async function migrateJobContractFlow(db: mongoose.mongo.Db, opts: { dryR
       sowVersionUpdates.push({
         updateOne: {
           filter: { _id: version._id },
-          update: { $set: { sourceJobVersionNumber: acceptance.versionNumber, sourceContractFingerprint: acceptance.fingerprint } }
+          update: { $set: { sourceJobVersionNumber: acceptance } }
         }
       });
     }
@@ -325,6 +343,7 @@ export interface JobContractFlowVerifyReport {
   acceptedJobsMissingExactAcceptance: string[];
   acceptedJobsMissingBillingFingerprint: string[];
   changesRequestedJobsWithNoAction: string[];
+  changesRequestedJobsWithNoHandover: string[];
   lifecycleSowVersionsMissingSource: string[];
   blocked: number;
 }
@@ -344,6 +363,7 @@ export async function verifyJobContractFlow(db: mongoose.mongo.Db): Promise<JobC
     acceptedJobsMissingExactAcceptance: [],
     acceptedJobsMissingBillingFingerprint: [],
     changesRequestedJobsWithNoAction: [],
+    changesRequestedJobsWithNoHandover: [],
     lifecycleSowVersionsMissingSource: [],
     blocked: 0
   };
@@ -357,6 +377,8 @@ export async function verifyJobContractFlow(db: mongoose.mongo.Db): Promise<JobC
     // These customers cannot respond at all: respondToJobReview refuses a job
     // with no recorded action.
     if (job.state === JobState.CHANGES_REQUESTED && !VALID_ACTIONS.has(job.customerActionRequired)) report.changesRequestedJobsWithNoAction.push(jobId);
+    // Withdrawal still works without one; it just cannot revert the graph.
+    if (job.state === JobState.CHANGES_REQUESTED && typeof job.handoverVersionNumber !== 'number') report.changesRequestedJobsWithNoHandover.push(jobId);
   }
 
   const versionBySowAndNumber = new Map(sowVersions.map((version) => [`${String(version.sowId)}:${version.versionNumber}`, version]));

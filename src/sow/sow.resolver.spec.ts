@@ -119,7 +119,7 @@ describe('SOWResolver.actionGate', () => {
       canSend: true,
       sendBlockers: ['DRAFT_INCOMPLETE'],
       canSign: false,
-      signBlockers: ['UNSENT_DRAFT'],
+      signBlockers: ['STALE_SIGN_VERSION'],
       canCountersign: true,
       countersignBlockers: ['DOCUMENT_STALE'],
       missingFields: ['Engagement Resources']
@@ -131,7 +131,7 @@ describe('SOWResolver.actionGate', () => {
       canSend: false,
       sendBlockers: [],
       canSign: false,
-      signBlockers: ['UNSENT_DRAFT'],
+      signBlockers: ['STALE_SIGN_VERSION'],
       canCountersign: false,
       countersignBlockers: [],
       missingFields: []

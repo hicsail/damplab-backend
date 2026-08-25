@@ -5,7 +5,11 @@ import { CustomerActionRequired, JobState } from './job.model';
 
 export enum JobReviewCommandKind {
   REVIEW = 'REVIEW',
-  RESPOND = 'RESPOND'
+  RESPOND = 'RESPOND',
+  /** Staff take a job back from the customer, restoring the graph they were handed. */
+  WITHDRAW_FROM_CUSTOMER = 'WITHDRAW_FROM_CUSTOMER',
+  /** Staff reopen an accepted spec so it can be edited again. */
+  WITHDRAW_ACCEPTANCE = 'WITHDRAW_ACCEPTANCE'
 }
 
 export enum JobReviewOperationStatus {
@@ -47,20 +51,21 @@ export class JobReviewOperation {
   @Prop({ type: String, required: false })
   normalizedMessage?: string;
 
+  /** The version a withdrawal restores: the job's handover baseline, captured when the command was journaled. */
+  @Prop({ type: Number, required: false })
+  restoreVersionNumber?: number;
+
+  @Prop({ type: Number, required: false })
+  originalHandoverVersionNumber?: number | null;
+
   @Prop({ type: Number, required: true, enum: JobState })
   originalState: JobState;
 
   @Prop({ type: String, required: false, enum: CustomerActionRequired })
   originalCustomerActionRequired?: CustomerActionRequired | null;
 
-  @Prop({ type: Boolean, required: true })
-  originalCustomerEditingEnabled: boolean;
-
   @Prop({ type: Number, required: false })
   originalAcceptedJobVersionNumber?: number | null;
-
-  @Prop({ type: String, required: false })
-  originalAcceptedContractFingerprint?: string | null;
 
   @Prop({ type: String, required: false })
   originalAcceptedBillingFingerprint?: string | null;
@@ -77,8 +82,9 @@ export class JobReviewOperation {
   @Prop({ type: Number, required: false })
   selectedAcceptedVersionNumber?: number;
 
-  @Prop({ type: String, required: false })
-  selectedContractFingerprint?: string;
+  /** The content version handed to the customer by this request-changes decision. */
+  @Prop({ type: Number, required: false })
+  selectedHandoverVersionNumber?: number;
 
   @Prop({ type: String, required: false })
   selectedBillingFingerprint?: string;
@@ -91,6 +97,9 @@ export class JobReviewOperation {
 
   @Prop({ type: Date, required: false })
   historyWrittenAt?: Date;
+
+  @Prop({ type: Date, required: false })
+  restoreWrittenAt?: Date;
 
   @Prop({ type: Date, required: false })
   publishedAt?: Date;

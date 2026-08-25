@@ -212,7 +212,9 @@ describe('previewCalculatedValues — prose blocks', () => {
     // silently into "no accepted source", which blocked every SOW.
     const jobVersionService: any = { getContentVersion: async () => null, getLatestContentVersion: async () => null };
 
-    return new SowVersionService(versionModel, sowModel, sowService, presetService, activityService, jobVersionService);
+    const commentService: any = { createIdempotent: async () => undefined };
+
+    return new SowVersionService(versionModel, sowModel, sowService, presetService, activityService, jobVersionService, commentService);
   }
 
   const valueFor = (rows: Array<{ key: string; calculatedValue: string }>, key: string): string | undefined => rows.find((r) => r.key === key)?.calculatedValue;
@@ -348,7 +350,7 @@ describe('feeScheduleInputs', () => {
 });
 
 describe('contract lifecycle blocker guidance', () => {
-  it.each([DocumentBlocker.ACCEPTED_SOURCE_UNAVAILABLE, DocumentBlocker.SOW_SOURCE_MISMATCH])('gives the complete fail-closed repair sequence for %s', (blocker) => {
+  it.each([DocumentBlocker.ACCEPTED_SOURCE_UNAVAILABLE])('gives the complete fail-closed repair sequence for %s', (blocker) => {
     const message = SowVersionService.blockerMessage([blocker]);
 
     expect(message).toMatch(/Re-accept/i);

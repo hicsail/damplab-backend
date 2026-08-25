@@ -25,17 +25,18 @@ export enum DocumentBlocker {
   ACCEPTED_SOURCE_UNAVAILABLE = 'ACCEPTED_SOURCE_UNAVAILABLE',
   /** The spec moved after it was accepted, so the acceptance no longer covers it. */
   JOB_CHANGED_SINCE_ACCEPTANCE = 'JOB_CHANGED_SINCE_ACCEPTANCE',
-  /** This SOW was not derived from the job acceptance currently in force. */
-  SOW_SOURCE_MISMATCH = 'SOW_SOURCE_MISMATCH',
   /** The document still bills the job's earlier figures; Recalculate then save. */
   DOCUMENT_STALE = 'DOCUMENT_STALE',
   /** A required section is missing or empty. */
   DRAFT_INCOMPLETE = 'DRAFT_INCOMPLETE',
   /** The current version has already been issued; editing starts a fresh draft. */
   NO_DRAFT_TO_SEND = 'NO_DRAFT_TO_SEND',
-  /** A draft sits above the version the customer holds; it has to go out and be signed first. */
-  UNSENT_DRAFT = 'UNSENT_DRAFT',
-  /** The customer is trying to sign a SENT version that is no longer active. */
+  /**
+   * The customer is looking at a SENT version that is no longer the one in
+   * force — most often because staff withdrew it and reissued a revision while
+   * they had the page open. Distinct from AWAITING_SENT_VERSION because the
+   * remedy differs: reload and read the current version, rather than wait.
+   */
   STALE_SIGN_VERSION = 'STALE_SIGN_VERSION',
   /** No issued SENT version is currently awaiting a customer signature. */
   AWAITING_SENT_VERSION = 'AWAITING_SENT_VERSION',

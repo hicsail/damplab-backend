@@ -9,7 +9,7 @@ describe('JobReviewOperation schema', () => {
   });
 
   it('requires the identity, payload, original state, and progress needed to resume safely', () => {
-    for (const path of ['operationId', 'jobId', 'commandKind', 'payloadHash', 'actorSub', 'actorName', 'originalState', 'originalCustomerEditingEnabled', 'status']) {
+    for (const path of ['operationId', 'jobId', 'commandKind', 'payloadHash', 'actorSub', 'actorName', 'originalState', 'status']) {
       expect(JobReviewOperationSchema.path(path)?.isRequired).toBe(true);
     }
 
@@ -19,7 +19,6 @@ describe('JobReviewOperation schema', () => {
       'normalizedMessage',
       'originalCustomerActionRequired',
       'originalAcceptedJobVersionNumber',
-      'originalAcceptedContractFingerprint',
       'originalAcceptedBillingFingerprint',
       'originalAcceptedAt',
       'originalAcceptedBy',
@@ -30,7 +29,11 @@ describe('JobReviewOperation schema', () => {
       'publishedAt',
       'commentWrittenAt',
       'completedAt',
-      'compensatedAt'
+      'compensatedAt',
+      'restoreVersionNumber',
+      'restoreWrittenAt',
+      'originalHandoverVersionNumber',
+      'selectedHandoverVersionNumber'
     ]) {
       expect(JobReviewOperationSchema.path(path)).toBeDefined();
     }

@@ -16,7 +16,7 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
       name: 'Job',
       sub: user.sub,
       state,
-      customerEditingEnabled: true,
+      customerActionRequired: 'EDIT_WORKFLOW',
       workflows: []
     };
     const jobService: any = { findById: jest.fn(async () => job) };

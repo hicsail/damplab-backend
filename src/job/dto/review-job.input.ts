@@ -34,3 +34,22 @@ export class RespondToJobReviewInput {
   @Field({ nullable: true })
   message?: string;
 }
+
+/**
+ * Taking a job back from the customer, or reopening an accepted spec.
+ *
+ * Both carry a reason: a withdrawal undoes work someone else did, or reopens
+ * something the customer was told was agreed, and neither should land in the
+ * comment thread unexplained.
+ */
+@InputType()
+export class WithdrawJobInput {
+  @Field()
+  operationId: string;
+
+  @Field(() => ID)
+  jobId: string;
+
+  @Field({ description: 'Shown to the customer in the automated comment.' })
+  reason: string;
+}

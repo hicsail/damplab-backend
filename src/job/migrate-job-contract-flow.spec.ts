@@ -1,5 +1,4 @@
 import { migrateJobContractFlow, verifyJobContractFlow } from './migrate-job-contract-flow';
-import { contractFingerprint } from './contract-fingerprint.util';
 import { CustomerActionRequired, JobState } from './job.model';
 import { SOWStatus } from '../sow/sow.model';
 
@@ -37,17 +36,13 @@ class FakeDb {
 }
 
 const CATEGORY = 'INTERNAL_CUSTOMERS';
-const workflowsFor = (label: string): any[] => [
-  { workflowId: `wf-${label}`, name: label, nodes: [{ id: `node-${label}`, serviceId: 'svc-a', formData: [{ id: 'vol', value: 10 }], price: 25 }], edges: [] }
-];
-const fingerprintFor = (label: string): string => contractFingerprint({ customerCategory: CATEGORY, workflows: workflowsFor(label) as any });
 
-const contentVersion = (id: string, jobId: string, versionNumber: number, label: string, createdAt: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+const contentVersion = (id: string, jobId: string, versionNumber: number, createdAt: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
   _id: id,
   jobId,
   versionNumber,
   isEvent: false,
-  workflows: workflowsFor(label),
+  workflows: [{ workflowId: 'wf-1', name: id, nodes: [], edges: [] }],
   createdAt: new Date(createdAt),
   authorRole: 'CUSTOMER',
   visibleToCustomer: true,
@@ -57,13 +52,14 @@ const contentVersion = (id: string, jobId: string, versionNumber: number, label:
 function fixtures(): FakeDb {
   return new FakeDb({
     jobs: [
+      // Classification of the three asks CHANGES_REQUESTED used to conflate.
       { _id: 'edit', state: JobState.CHANGES_REQUESTED, customerEditingEnabled: true },
       { _id: 'approve', state: JobState.CHANGES_REQUESTED, customerEditingEnabled: false },
       { _id: 'reply', state: JobState.CHANGES_REQUESTED, customerEditingEnabled: false, customerActionRequired: 'LEGACY' },
       { _id: 'submitted', state: JobState.SUBMITTED, customerEditingEnabled: true },
       { _id: 'explicit', state: JobState.CHANGES_REQUESTED, customerEditingEnabled: false, customerActionRequired: CustomerActionRequired.REPLY },
 
-      // Accepted before the exact-acceptance fields existed. One per derivation rule.
+      // Accepted before the version number was recorded. One per derivation rule.
       {
         _id: 'dated',
         state: JobState.ACCEPTED,
@@ -81,36 +77,33 @@ function fixtures(): FakeDb {
       { _id: 'noversions', state: JobState.ACCEPTED, customerCategory: CATEGORY, acceptedBillingFingerprint: 'billing-none' },
 
       // Already accepted through the new flow — never recomputed.
-      {
-        _id: 'already',
-        state: JobState.ACCEPTED,
-        customerCategory: CATEGORY,
-        acceptedBillingFingerprint: 'billing-already',
-        acceptedJobVersionNumber: 4000,
-        acceptedContractFingerprint: 'preexisting-fingerprint'
-      }
+      { _id: 'already', state: JobState.ACCEPTED, customerCategory: CATEGORY, acceptedBillingFingerprint: 'billing-already', acceptedJobVersionNumber: 4000 }
     ],
     job_versions: [
       { _id: 'a1', jobId: 'approve', versionNumber: 10, isEvent: true, note: 'Clarification requested' },
       { _id: 'a2', jobId: 'approve', versionNumber: 11, isEvent: true, note: 'Approval requested' },
       { _id: 'r1', jobId: 'reply', versionNumber: 20, isEvent: true, note: 'Approval requested' },
       { _id: 'r2', jobId: 'reply', versionNumber: 21, isEvent: true, note: 'Workflow edits requested' },
+      // Content below each handover event, so a baseline can be derived.
+      contentVersion('ac1', 'approve', 9, '2026-03-01T00:00:00.000Z'),
+      contentVersion('rc1', 'reply', 19, '2026-03-01T00:00:00.000Z'),
+      contentVersion('ec1', 'edit', 5, '2026-03-01T00:00:00.000Z'),
 
       // 'dated': v1001 predates acceptedAt, v1002 comes after it.
-      contentVersion('d1', 'dated', 1001, 'dated-accepted', '2026-03-01T00:00:00.000Z'),
-      contentVersion('d2', 'dated', 1002, 'dated-later', '2026-03-20T00:00:00.000Z'),
+      contentVersion('d1', 'dated', 1001, '2026-03-01T00:00:00.000Z'),
+      contentVersion('d2', 'dated', 1002, '2026-03-20T00:00:00.000Z'),
 
-      // 'evented': no acceptedAt; the ACCEPTED event sits above v2001, below v2002.
-      contentVersion('e1', 'evented', 2001, 'evented-accepted', '2026-03-01T00:00:00.000Z', { authorRole: 'STAFF', visibleToCustomer: false }),
+      // 'evented': no acceptedAt; the ACCEPTED event sits above v2001, below v2600.
+      contentVersion('e1', 'evented', 2001, '2026-03-01T00:00:00.000Z', { authorRole: 'STAFF', visibleToCustomer: false }),
       { _id: 'e-evt', jobId: 'evented', versionNumber: 2500, isEvent: true, jobState: JobState.ACCEPTED, note: 'Accepted' },
-      contentVersion('e2', 'evented', 2600, 'evented-later', '2026-04-01T00:00:00.000Z'),
+      contentVersion('e2', 'evented', 2600, '2026-04-01T00:00:00.000Z'),
 
       // 'latest': no acceptedAt and no acceptance event.
-      contentVersion('l1', 'latest', 3001, 'latest-old', '2026-03-01T00:00:00.000Z'),
-      contentVersion('l2', 'latest', 3002, 'latest-newest', '2026-03-05T00:00:00.000Z'),
+      contentVersion('l1', 'latest', 3001, '2026-03-01T00:00:00.000Z'),
+      contentVersion('l2', 'latest', 3002, '2026-03-05T00:00:00.000Z'),
 
-      contentVersion('nb1', 'nobilling', 5001, 'nobilling', '2026-03-01T00:00:00.000Z'),
-      contentVersion('al1', 'already', 4000, 'already', '2026-03-01T00:00:00.000Z')
+      contentVersion('nb1', 'nobilling', 5001, '2026-03-01T00:00:00.000Z'),
+      contentVersion('al1', 'already', 4000, '2026-03-01T00:00:00.000Z')
     ],
     sows: [
       { _id: 'draft-sow', jobId: 'dated', status: SOWStatus.DRAFT, currentVersionNumber: 1, activeVersionNumber: 500 },
@@ -120,13 +113,15 @@ function fixtures(): FakeDb {
     sow_versions: [
       { _id: 'draft-v1', sowId: 'draft-sow', versionNumber: 1, status: SOWStatus.DRAFT },
       { _id: 'draft-active-v500', sowId: 'draft-sow', versionNumber: 500, status: SOWStatus.SENT },
-      { _id: 'sent-v2', sowId: 'sent-sow', versionNumber: 2, status: SOWStatus.SENT, sourceJobVersionNumber: 4, sourceContractFingerprint: 'already-linked' },
+      { _id: 'sent-v2', sowId: 'sent-sow', versionNumber: 2, status: SOWStatus.SENT, sourceJobVersionNumber: 4 },
       { _id: 'signed-old', sowId: 'sent-sow', versionNumber: 1, status: SOWStatus.SIGNED },
       { _id: 'orphan-v7', sowId: 'orphan-sow', versionNumber: 7, status: SOWStatus.DRAFT },
-      { _id: 'final-linked', sowId: 'other', versionNumber: 3, status: SOWStatus.FINAL, sourceJobVersionNumber: 3, sourceContractFingerprint: 'fp' }
+      { _id: 'final-linked', sowId: 'other', versionNumber: 3, status: SOWStatus.FINAL, sourceJobVersionNumber: 3 }
     ]
   });
 }
+
+const jobsById = (db: FakeDb): Map<string, any> => new Map(db.collection('jobs').documents.map((job) => [job._id, job]));
 
 describe('migrateJobContractFlow', () => {
   it('dry-runs every classification and backfill without writing', async () => {
@@ -146,9 +141,7 @@ describe('migrateJobContractFlow', () => {
       classifiedEditWorkflow: 1,
       classifiedApproveWorkflow: 1,
       classifiedReply: 1,
-      classifiedNoAction: 7,
       preservedValidActions: 1,
-      staleEditingGrantsDisabled: 2,
       acceptedJobsMissingExactAcceptance: 5,
       acceptedJobsBackfilled: 3,
       acceptedByAcceptedAt: 1,
@@ -166,33 +159,63 @@ describe('migrateJobContractFlow', () => {
 
     await migrateJobContractFlow(db as any);
 
-    const byId = new Map(db.collection('jobs').documents.map((job) => [job._id, job]));
-    expect(byId.get('edit')).toMatchObject({ customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW, customerEditingEnabled: true });
-    expect(byId.get('approve')).toMatchObject({ customerActionRequired: CustomerActionRequired.APPROVE_WORKFLOW, customerEditingEnabled: false });
-    expect(byId.get('reply')).toMatchObject({ customerActionRequired: CustomerActionRequired.REPLY, customerEditingEnabled: false });
-    expect(byId.get('submitted')).toMatchObject({ customerActionRequired: null, customerEditingEnabled: false });
+    const byId = jobsById(db);
+    expect(byId.get('edit')).toMatchObject({ customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW });
+    expect(byId.get('approve')).toMatchObject({ customerActionRequired: CustomerActionRequired.APPROVE_WORKFLOW });
+    expect(byId.get('reply')).toMatchObject({ customerActionRequired: CustomerActionRequired.REPLY });
+    expect(byId.get('submitted')).toMatchObject({ customerActionRequired: null });
     expect(byId.get('explicit')).toMatchObject({ customerActionRequired: CustomerActionRequired.REPLY });
-    // A stale editing grant outside CHANGES_REQUESTED is revoked.
-    expect(byId.get('dated')).toMatchObject({ customerEditingEnabled: false });
+  });
+
+  // The flag is gone; the requested action now carries what it used to say.
+  it('clears customerEditingEnabled from every job', async () => {
+    const db = fixtures();
+
+    await migrateJobContractFlow(db as any);
+
+    for (const job of db.collection('jobs').documents) {
+      expect(job).not.toHaveProperty('customerEditingEnabled');
+    }
   });
 
   it('stamps the newest content version that predates acceptedAt', async () => {
     const db = fixtures();
-
     await migrateJobContractFlow(db as any);
-
-    const dated = db.collection('jobs').documents.find((job) => job._id === 'dated');
-    expect(dated).toMatchObject({ acceptedJobVersionNumber: 1001, acceptedContractFingerprint: fingerprintFor('dated-accepted') });
+    expect(jobsById(db).get('dated')).toMatchObject({ acceptedJobVersionNumber: 1001 });
   });
 
   it('falls back to the acceptance event position, then to the latest content version', async () => {
     const db = fixtures();
-
     await migrateJobContractFlow(db as any);
 
-    const byId = new Map(db.collection('jobs').documents.map((job) => [job._id, job]));
-    expect(byId.get('evented')).toMatchObject({ acceptedJobVersionNumber: 2001, acceptedContractFingerprint: fingerprintFor('evented-accepted') });
-    expect(byId.get('latest')).toMatchObject({ acceptedJobVersionNumber: 3002, acceptedContractFingerprint: fingerprintFor('latest-newest') });
+    const byId = jobsById(db);
+    expect(byId.get('evented')).toMatchObject({ acceptedJobVersionNumber: 2001 });
+    expect(byId.get('latest')).toMatchObject({ acceptedJobVersionNumber: 3002 });
+  });
+
+  it('records the handover baseline a withdrawal would restore', async () => {
+    const db = fixtures();
+
+    const report = await migrateJobContractFlow(db as any);
+
+    const byId = jobsById(db);
+    // The newest content version at or below the handover event.
+    expect(byId.get('approve')).toMatchObject({ handoverVersionNumber: 9 });
+    expect(byId.get('reply')).toMatchObject({ handoverVersionNumber: 19 });
+    // No handover event: falls back to the newest content version.
+    expect(byId.get('edit')).toMatchObject({ handoverVersionNumber: 5 });
+    // Jobs the customer does not hold get none.
+    expect(byId.get('submitted').handoverVersionNumber).toBeUndefined();
+    expect(report.handoverBaselinesBackfilled).toBe(3);
+  });
+
+  it('reports a job with the customer that has no version to fall back to', async () => {
+    const db = new FakeDb({ jobs: [{ _id: 'bare', state: JobState.CHANGES_REQUESTED }], job_versions: [], sows: [], sow_versions: [] });
+
+    const report = await migrateJobContractFlow(db as any);
+
+    expect(report.handoverBaselinesUnavailable).toBe(1);
+    expect(db.collection('jobs').documents[0].handoverVersionNumber).toBeUndefined();
   });
 
   it('publishes a staff-authored accepted version the customer could not see', async () => {
@@ -209,13 +232,8 @@ describe('migrateJobContractFlow', () => {
 
   it('never recomputes an acceptance recorded through the new flow', async () => {
     const db = fixtures();
-
     await migrateJobContractFlow(db as any);
-
-    expect(db.collection('jobs').documents.find((job) => job._id === 'already')).toMatchObject({
-      acceptedJobVersionNumber: 4000,
-      acceptedContractFingerprint: 'preexisting-fingerprint'
-    });
+    expect(jobsById(db).get('already')).toMatchObject({ acceptedJobVersionNumber: 4000 });
   });
 
   it('reports the jobs it cannot complete instead of stamping a half acceptance', async () => {
@@ -223,9 +241,9 @@ describe('migrateJobContractFlow', () => {
 
     const report = await migrateJobContractFlow(db as any);
 
-    const byId = new Map(db.collection('jobs').documents.map((job) => [job._id, job]));
-    expect(byId.get('nobilling')).not.toHaveProperty('acceptedContractFingerprint');
-    expect(byId.get('noversions')).not.toHaveProperty('acceptedContractFingerprint');
+    const byId = jobsById(db);
+    expect(byId.get('nobilling')).not.toHaveProperty('acceptedJobVersionNumber');
+    expect(byId.get('noversions')).not.toHaveProperty('acceptedJobVersionNumber');
     expect(report.failed).toEqual([expect.stringContaining('nobilling: accepted with no billing fingerprint'), expect.stringContaining('noversions: accepted with no content version')]);
   });
 
@@ -235,15 +253,15 @@ describe('migrateJobContractFlow', () => {
     const report = await migrateJobContractFlow(db as any);
 
     const byId = new Map(db.collection('sow_versions').documents.map((version) => [version._id, version]));
-    expect(byId.get('draft-v1')).toMatchObject({ sourceJobVersionNumber: 1001, sourceContractFingerprint: fingerprintFor('dated-accepted') });
+    expect(byId.get('draft-v1')).toMatchObject({ sourceJobVersionNumber: 1001 });
     expect(byId.get('draft-active-v500')).toMatchObject({ sourceJobVersionNumber: 1001 });
-    // Already carries a complete source: never overwritten.
-    expect(byId.get('sent-v2')).toMatchObject({ sourceJobVersionNumber: 4, sourceContractFingerprint: 'already-linked' });
+    // Already carries a source: never overwritten.
+    expect(byId.get('sent-v2')).toMatchObject({ sourceJobVersionNumber: 4 });
     // Historical rows are audited, never written.
     expect(byId.get('signed-old')).not.toHaveProperty('sourceJobVersionNumber');
     // The SOW of a job that could not be stamped is left as it was.
     expect(byId.get('orphan-v7')).not.toHaveProperty('sourceJobVersionNumber');
-    expect(report).toMatchObject({ sowVersionsSourceBackfilled: 2, sowVersionsStillMissingSource: 1, historicalSignedOrFinalVersionsMissingSource: 1 });
+    expect(report).toMatchObject({ sowVersionsSourceBackfilled: 2, sowVersionsStillMissingSource: 1 });
   });
 
   it('is idempotent', async () => {
@@ -255,6 +273,7 @@ describe('migrateJobContractFlow', () => {
     const second = await migrateJobContractFlow(db as any);
     expect(second.writes).toBe(0);
     expect(second.acceptedJobsBackfilled).toBe(0);
+    expect(second.handoverBaselinesBackfilled).toBe(0);
     expect(second.sowVersionsSourceBackfilled).toBe(0);
   });
 });
@@ -268,6 +287,7 @@ describe('verifyJobContractFlow', () => {
     expect(before.acceptedJobsMissingExactAcceptance).toEqual(expect.arrayContaining(['dated', 'evented', 'latest', 'nobilling', 'noversions']));
     expect(before.acceptedJobsMissingBillingFingerprint).toEqual(['nobilling']);
     expect(before.changesRequestedJobsWithNoAction).toEqual(expect.arrayContaining(['edit', 'approve', 'reply']));
+    expect(before.changesRequestedJobsWithNoHandover).toEqual(expect.arrayContaining(['edit', 'approve', 'reply', 'explicit']));
     expect(before.blocked).toBeGreaterThan(0);
   });
 

@@ -6,7 +6,6 @@ import { SOWStatus, DocumentBlocker, SOWAdjustmentType } from './sow.model';
 import { JobState } from '../job/job.model';
 import { User } from '../auth/user.interface';
 import { JobVersionAuthorRole } from '../job-version/job-version.model';
-import { contractFingerprint } from '../job/contract-fingerprint.util';
 
 /**
  * Exercises the version state machine against in-memory stand-ins for the two
@@ -31,7 +30,6 @@ interface FakeVersion {
   staffSignature?: any;
   sentToCustomerAt?: Date;
   sourceJobVersionNumber?: number;
-  sourceContractFingerprint?: string;
   activityEventType?: 'SOW_SENT' | 'SOW_SIGNED' | 'SOW_FINALIZED';
   activityOperationId?: string;
   activityDeliveredAt?: Date;
@@ -63,7 +61,6 @@ const acceptedWorkflows = [
     edges: []
   }
 ];
-const acceptedContractFingerprint = contractFingerprint({ customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', workflows: acceptedWorkflows });
 
 function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; liveFingerprint?: string } = {}): {
   service: SowVersionService;
@@ -72,6 +69,7 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; l
   job: any;
   jobVersions: any[];
   activityEvents: any[];
+  comments: any[];
   race: { beforeSowCas?: () => void; failPromotion?: boolean; failActivity?: boolean; failCleanup?: boolean };
 } {
   const race: { beforeSowCas?: () => void; failPromotion?: boolean; failActivity?: boolean; failCleanup?: boolean } = {};
@@ -113,7 +111,6 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; l
       visibleToCustomer: false,
       isDiscarded: false,
       sourceJobVersionNumber: 1000,
-      sourceContractFingerprint: acceptedContractFingerprint,
       createdBy: 'tech',
       createdByName: 'tech',
       createdAt: new Date()
@@ -221,7 +218,6 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; l
     email: 'client@lab.org',
     state: JobState.ACCEPTED,
     acceptedJobVersionNumber: 1000,
-    acceptedContractFingerprint,
     acceptedBillingFingerprint: 'fp-accepted',
     ...(initial.job ?? {})
   };
@@ -262,10 +258,20 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; l
       return created;
     }
   };
-  const service = new (SowVersionService as any)(versionModel, sowModel, sowService, presetService, activityService);
-  (service as any).jobVersionService = jobVersionService;
+  const comments: any[] = [];
+  const commentService: any = {
+    createIdempotent: async (input: any) => {
+      const existing = comments.find((comment) => comment.operationId === input.operationId);
+      if (existing) return existing;
+      const created = { _id: `comment-${comments.length}`, ...input };
+      comments.push(created);
+      return created;
+    }
+  };
 
-  return { service, sow, versions, job, jobVersions, activityEvents, race };
+  const service = new (SowVersionService as any)(versionModel, sowModel, sowService, presetService, activityService, jobVersionService, commentService);
+
+  return { service, sow, versions, job, jobVersions, activityEvents, comments, race };
 }
 
 const staff = { sub: 'sub-staff', name: 'tech' };
@@ -288,7 +294,6 @@ const saveInput = (base: number, note = 'edited'): any => ({
 
 const fullConsent = [SowFieldKind.CALCULATED, SowFieldKind.PROSE, SowFieldKind.CUSTOM];
 const acceptedSourceUnavailable = 'ACCEPTED_SOURCE_UNAVAILABLE' as DocumentBlocker;
-const sowSourceMismatch = 'SOW_SOURCE_MISMATCH' as DocumentBlocker;
 
 describe('saveVersion', () => {
   it('stamps a new initial version with the exact valid accepted job source', async () => {
@@ -298,7 +303,6 @@ describe('saveVersion', () => {
     const created = await service.createInitialVersion(sow, job, staff.sub);
 
     expect((created as any).sourceJobVersionNumber).toBe(1000);
-    expect((created as any).sourceContractFingerprint).toBe(acceptedContractFingerprint);
   });
 
   it('leaves source linkage nullable when the accepted source is not valid', async () => {
@@ -310,7 +314,6 @@ describe('saveVersion', () => {
     const created = await service.createInitialVersion(sow, job, staff.sub);
 
     expect((created as any).sourceJobVersionNumber).toBeUndefined();
-    expect((created as any).sourceContractFingerprint).toBeUndefined();
   });
 
   it('appends a draft and advances the staff pointer only', async () => {
@@ -332,15 +335,12 @@ describe('saveVersion', () => {
         nodes: [{ ...acceptedWorkflows[0].nodes[0], formData: [{ id: 'volume', value: 20 }] }]
       }
     ];
-    const revisedFingerprint = contractFingerprint({ customerCategory: job.customerCategory, workflows: revisedWorkflows });
     jobVersions.push({ versionNumber: 1001, authorRole: JobVersionAuthorRole.STAFF, workflows: revisedWorkflows, visibleToCustomer: true, isEvent: false });
     job.acceptedJobVersionNumber = 1001;
-    job.acceptedContractFingerprint = revisedFingerprint;
 
     const created = await service.saveVersion(SOW_ID, saveInput(1), staff);
 
     expect((created as any).sourceJobVersionNumber).toBe(1001);
-    expect((created as any).sourceContractFingerprint).toBe(revisedFingerprint);
   });
 
   it('rejects a save built on a version someone else has superseded', async () => {
@@ -445,7 +445,6 @@ describe('sendToCustomer', () => {
 
     for (const version of [sent, signed, final]) {
       expect((version as any).sourceJobVersionNumber).toBe(1000);
-      expect((version as any).sourceContractFingerprint).toBe(acceptedContractFingerprint);
     }
   });
 
@@ -489,16 +488,18 @@ describe('sign', () => {
     await expect(service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber - 1, name: 'Jane', consentedGroups: fullConsent }, owner)).rejects.toThrow(ConflictException);
   });
 
-  it('blocks signing a SENT version superseded by a draft until staff reissue it', async () => {
+  // Staff can no longer draft over a sent version, so the way a customer loses
+  // the ability to sign is an explicit withdrawal — which they are told about.
+  it('stops the customer signing once staff withdraw, and lets them sign the reissue', async () => {
     const { service, sow, versions } = await sent();
-    const supersededSentNumber = sow.activeVersionNumber;
-    await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'customer changes'), staff);
+    const withdrawnNumber = sow.activeVersionNumber;
 
-    const gate = await service.actionGate(SOW_ID, supersededSentNumber);
+    await service.withdrawFromCustomer(SOW_ID, 'Reworking.', staff);
+
+    const gate = await service.actionGate(SOW_ID, withdrawnNumber);
     expect(gate.canSign).toBe(false);
-    expect(gate.signBlockers).toEqual([DocumentBlocker.UNSENT_DRAFT]);
     const versionCountBeforeRejectedSign = versions.length;
-    await expect(service.sign(SOW_ID, { versionNumber: supersededSentNumber, name: 'Jane', consentedGroups: fullConsent }, owner)).rejects.toThrow(/newer draft/i);
+    await expect(service.sign(SOW_ID, { versionNumber: withdrawnNumber, name: 'Jane', consentedGroups: fullConsent }, owner)).rejects.toThrow();
     expect(versions).toHaveLength(versionCountBeforeRejectedSign);
 
     const reissued = await service.sendToCustomer(SOW_ID, staff);
@@ -646,55 +647,94 @@ describe('finalize and the draft-above-final rule', () => {
     await expect(service.finalize(SOW_ID, 'Someone', staff)).rejects.toThrow(BadRequestException);
   });
 
-  it('leaves the finalized version in force when staff start a new draft', async () => {
+  it('keeps the finalized version in force and refuses to draft over it', async () => {
     const { service, sow } = await finalized();
     const finalNumber = sow.activeVersionNumber;
 
-    const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'proposed revision'), staff);
-
-    expect(draft.status).toBe(SOWStatus.DRAFT);
-    expect(sow.currentVersionNumber).toBe(draft.versionNumber);
-    // The whole point of the two-pointer split: the customer is still bound by
-    // the finalized version until someone deliberately sends the revision.
+    // An executed contract is not edited; it is cancelled and replaced.
+    await expect(service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'proposed revision'), staff)).rejects.toThrow(/countersigned and is final/);
     expect(sow.activeVersionNumber).toBe(finalNumber);
   });
 });
 
-describe('reissuing staff revisions above issued history', () => {
-  it.each([SOWStatus.SENT, SOWStatus.SIGNED, SOWStatus.FINAL])('saves above %s as parent DRAFT and reissues it', async (issuedStatus) => {
+describe('editing a document that is out with the customer', () => {
+  // The rule the whole change exists for: exactly one party holds the document,
+  // and staff take it back explicitly rather than drafting over it.
+  it('refuses to save over a version the customer is being asked to sign', async () => {
     const { service, sow } = makeHarness();
     await service.sendToCustomer(SOW_ID, staff);
-    if (issuedStatus === SOWStatus.SIGNED || issuedStatus === SOWStatus.FINAL) {
-      await service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent }, owner);
-    }
-    if (issuedStatus === SOWStatus.FINAL) {
-      await service.finalize(SOW_ID, 'Dr Staff', staff);
-    }
-    const issuedVersionNumber = sow.activeVersionNumber;
 
-    const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, `revise ${issuedStatus}`), staff);
+    await expect(service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'sneak an edit in'), staff)).rejects.toThrow(/Withdraw it before editing/);
+  });
 
-    expect(draft.status).toBe(SOWStatus.DRAFT);
+  it('withdraws, edits, and reissues', async () => {
+    const { service, sow, comments, versions } = makeHarness();
+    const sent = await service.sendToCustomer(SOW_ID, staff);
+
+    await service.withdrawFromCustomer(SOW_ID, 'Pricing was wrong.', staff);
     expect(sow.status).toBe(SOWStatus.DRAFT);
-    expect(sow.currentVersionNumber).toBe(draft.versionNumber);
-    expect(sow.activeVersionNumber).toBe(issuedVersionNumber);
-    expect((await service.actionGate(SOW_ID)).canSend).toBe(true);
+    // Nothing is in force with the customer any more, so nothing can be signed.
+    expect(sow.activeVersionNumber).toBe(0);
+    expect(await service.getActiveVersion(SOW_ID)).toBeNull();
+    expect(comments[0].content).toContain('Pricing was wrong.');
+    // The sent version is immutable and stays in history.
+    expect(versions.find((version) => version.versionNumber === sent.versionNumber)?.status).toBe(SOWStatus.SENT);
+
+    const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'corrected pricing'), staff);
+    expect(draft.status).toBe(SOWStatus.DRAFT);
 
     const reissued = await service.sendToCustomer(SOW_ID, staff);
     expect(reissued.status).toBe(SOWStatus.SENT);
     expect(sow.activeVersionNumber).toBe(reissued.versionNumber);
+  });
+
+  it('refuses to withdraw a document that is not out for signature', async () => {
+    const { service } = makeHarness();
+    await expect(service.withdrawFromCustomer(SOW_ID, 'why', staff)).rejects.toThrow(/out for signature can be withdrawn/);
+  });
+
+  it('requires a reason to withdraw', async () => {
+    const { service } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+    await expect(service.withdrawFromCustomer(SOW_ID, '  ', staff)).rejects.toThrow(/reason/i);
+  });
+
+  // A signature attests to specific words. Editing them is allowed — staff often
+  // need to — but the signature does not survive it.
+  it('voids the client signature when staff edit a signed document', async () => {
+    const { service, sow, comments } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+    await service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent }, owner);
+    expect(sow.status).toBe(SOWStatus.SIGNED);
+
+    const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'revise after signature'), staff);
+
+    expect(draft.status).toBe(SOWStatus.DRAFT);
+    expect(draft.clientSignature).toBeUndefined();
+    expect(sow.activeVersionNumber).toBe(0);
+    expect(comments.some((comment) => comment.content.includes('no longer applies'))).toBe(true);
+  });
+
+  it('refuses to edit a countersigned document at all', async () => {
+    const { service, sow } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+    await service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent }, owner);
+    await service.finalize(SOW_ID, 'Dr Staff', staff);
+
+    await expect(service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'revise final'), staff)).rejects.toThrow(/countersigned and is final/);
   });
 });
 
 describe('discardDraft', () => {
   it('drops an unsent draft and rolls the staff pointer back', async () => {
     const { service, sow } = makeHarness();
-    await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000) SENT, active=1000
-    const draft = await service.saveVersion(SOW_ID, saveInput(1000), staff); // v1.1 (1001) DRAFT
+    await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000) SENT
+    // Withdrawing hands the lab back an editable copy, v1.1 (1001).
+    await service.withdrawFromCustomer(SOW_ID, 'Reworking.', staff);
+    const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber), staff); // v1.2 (1002)
 
     await service.discardDraft(SOW_ID, draft.versionNumber);
-    expect(sow.currentVersionNumber).toBe(1000);
-    expect(sow.activeVersionNumber).toBe(1000);
+    expect(sow.currentVersionNumber).toBe(1001);
   });
 
   it('refuses to discard a version the customer has seen', async () => {
@@ -712,26 +752,30 @@ describe('discardDraft', () => {
   });
 
   it('does not reopen the editor on the draft that was just discarded', async () => {
-    const { service } = makeHarness();
+    const { service, sow } = makeHarness();
     await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000) SENT
-    const draft = await service.saveVersion(SOW_ID, saveInput(1000), staff); // v1.1 (1001) DRAFT
+    await service.withdrawFromCustomer(SOW_ID, 'Reworking.', staff); // v1.1 (1001) DRAFT
+    const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber), staff); // v1.2 (1002)
     await service.discardDraft(SOW_ID, draft.versionNumber);
 
+    // Back on the withdrawal draft — real content the editor can open, not the
+    // issued row and not the draft just thrown away.
     const current = await service.getCurrentVersion(SOW_ID);
-    expect(current?.versionNumber).toBe(1000);
-    expect(current?.status).toBe(SOWStatus.SENT);
+    expect(current?.versionNumber).toBe(1001);
+    expect(current?.status).toBe(SOWStatus.DRAFT);
   });
 
   it('does not reuse the discarded number, which would collide on the unique index', async () => {
     const { service } = makeHarness();
     await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000)
-    const draft = await service.saveVersion(SOW_ID, saveInput(1000), staff); // v1.1 (1001)
+    await service.withdrawFromCustomer(SOW_ID, 'Reworking.', staff); // v1.1 (1001)
+    const draft = await service.saveVersion(SOW_ID, saveInput(1001), staff); // v1.2 (1002)
     await service.discardDraft(SOW_ID, draft.versionNumber);
 
-    const next = await service.saveVersion(SOW_ID, saveInput(1000), staff);
-    // 1001 is still on the books (discarded, not deleted), so the next draft
-    // must skip past it to 1.2 (1002) rather than reusing 1.1.
-    expect(next.versionNumber).toBe(1002);
+    const next = await service.saveVersion(SOW_ID, saveInput(1001), staff);
+    // 1002 is still on the books (discarded, not deleted), so the next draft
+    // must skip past it to 1.3 (1003) rather than reusing 1.2.
+    expect(next.versionNumber).toBe(1003);
   });
 
   // Only the current draft's discard has to move the pointer. An older unsent
@@ -739,9 +783,10 @@ describe('discardDraft', () => {
   // to current-only would silently break stacked drafts.
   it('discards an older unsent draft without disturbing the current pointer', async () => {
     const { service, sow, versions } = makeHarness();
-    await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000), active
-    const older = await service.saveVersion(SOW_ID, saveInput(1000), staff); // v1.1 (1001)
-    const current = await service.saveVersion(SOW_ID, saveInput(1001), staff); // v1.2 (1002)
+    await service.sendToCustomer(SOW_ID, staff); // v1.0 (1000)
+    await service.withdrawFromCustomer(SOW_ID, 'Reworking.', staff); // v1.1 (1001)
+    const older = await service.saveVersion(SOW_ID, saveInput(1001), staff); // v1.2 (1002)
+    const current = await service.saveVersion(SOW_ID, saveInput(1002), staff); // v1.3 (1003)
 
     await service.discardDraft(SOW_ID, older.versionNumber);
 
@@ -979,11 +1024,14 @@ describe('actionGate — countersigning', () => {
     expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE]);
   });
 
-  it('blocks it when staff have revised the document since the signature', async () => {
+  // Revising a signed document now voids the signature as it happens, so a draft
+  // can never sit above a signature that is still good — the case this used to
+  // catch at countersign time cannot arise.
+  it('has nothing to block when a draft sits above the signed version, because the signature is already void', async () => {
     const { service, sow } = signedHarness();
-    sow.currentVersionNumber = 2; // an unsent draft sits above the signed version
+    sow.currentVersionNumber = 2;
 
-    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.UNSENT_DRAFT]);
+    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([]);
   });
 
   it('blocks it when the document no longer matches the job', async () => {
@@ -1008,11 +1056,13 @@ describe('actionGate — countersigning', () => {
       expect(v.staffSignature?.name).toBe('Dr Staff');
     });
 
-    it('refuses to finalize a version staff have already revised past', async () => {
+    it('refuses to finalize once the signature has been voided by an edit', async () => {
       const { service, sow } = signedHarness();
-      sow.currentVersionNumber = 2;
+      // Voiding drops the signed version out of force; there is nothing to
+      // countersign until the customer signs a reissued version.
+      sow.activeVersionNumber = 0;
 
-      await expect(service.finalize(SOW_ID, 'Dr Staff', staff)).rejects.toThrow(/newer draft/);
+      await expect(service.finalize(SOW_ID, 'Dr Staff', staff)).rejects.toThrow();
     });
 
     it('refuses to finalize a document whose figures no longer match the job', async () => {
@@ -1221,14 +1271,14 @@ describe('fail-closed staged-row lookups', () => {
 });
 
 describe('stale sign-version gate', () => {
-  it('adds an ordered stale-version blocker only when an expected SENT version is supplied', async () => {
+  it('refuses to sign a version that is not the one in force', async () => {
     const { service } = makeHarness();
     const sent = await service.sendToCustomer(SOW_ID, staff);
 
     expect((await service.actionGate(SOW_ID)).signBlockers).toEqual([]);
     const staleGate = await (service as any).actionGate(SOW_ID, sent.versionNumber - 1);
     expect(staleGate.canSign).toBe(false);
-    expect(staleGate.signBlockers).toEqual(['STALE_SIGN_VERSION']);
+    expect(staleGate.signBlockers).toEqual([DocumentBlocker.STALE_SIGN_VERSION]);
   });
 });
 
@@ -1308,8 +1358,7 @@ describe('shared contract-validity gate', () => {
     expect(versions.find((version) => version._id === sent._id)).toMatchObject({
       status: SOWStatus.SENT,
       visibleToCustomer: true,
-      sourceJobVersionNumber: 1000,
-      sourceContractFingerprint: acceptedContractFingerprint
+      sourceJobVersionNumber: 1000
     });
   });
 
@@ -1345,9 +1394,15 @@ describe('shared contract-validity gate', () => {
     await expect(service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent }, owner)).rejects.toThrow(/Re-accept/);
   });
 
-  it('allows signing after an operational or layout-only newer content version', async () => {
+  // Any newer content version blocks, whatever it changed. The old fingerprint
+  // could tell a layout-only edit from a contract one; a version number cannot.
+  // That precision is no longer needed: under exclusive control no content
+  // version can be written while the job is ACCEPTED, so reaching this state at
+  // all means a write path escaped the gate — and failing closed is the right
+  // answer to that.
+  it('fails closed on any newer content version, even a layout-only one', async () => {
     const { service, jobVersions } = makeHarness();
-    const sent = await service.sendToCustomer(SOW_ID, staff);
+    await service.sendToCustomer(SOW_ID, staff);
     jobVersions.push({
       versionNumber: 1001,
       authorRole: JobVersionAuthorRole.STAFF,
@@ -1361,9 +1416,7 @@ describe('shared contract-validity gate', () => {
       ]
     });
 
-    expect(((await service.actionGate(SOW_ID)) as any).signBlockers).toEqual([]);
-    const signed = await service.sign(SOW_ID, { versionNumber: sent.versionNumber, name: 'Jane', consentedGroups: fullConsent }, owner);
-    expect(signed.status).toBe(SOWStatus.SIGNED);
+    expect(((await service.actionGate(SOW_ID)) as any).signBlockers).toEqual([DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE]);
   });
 
   it('fails closed when the exact accepted source is missing or unpublished', async () => {
@@ -1377,41 +1430,19 @@ describe('shared contract-validity gate', () => {
     expect((await unpublished.service.actionGate(SOW_ID)).sendBlockers).toEqual([acceptedSourceUnavailable]);
   });
 
-  it('fails closed when the accepted source content no longer matches its fingerprint', async () => {
+  // Job content is versioned and immutable, so "has it changed since acceptance?"
+  // is a version-number comparison. Under exclusive control nothing can change
+  // while a job is ACCEPTED, so this is defence-in-depth against a write path
+  // that escaped the gate.
+  it('fails closed when a newer content version exists than the one accepted', async () => {
     const { service, jobVersions } = makeHarness();
-    jobVersions[0].workflows = materialRevision();
+    jobVersions.push({ ...jobVersions[0], _id: 'newer', versionNumber: jobVersions[0].versionNumber + 1 });
 
     expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([DocumentBlocker.JOB_CHANGED_SINCE_ACCEPTANCE]);
   });
 
-  it('fails closed when a recorded source contradicts the acceptance in force', async () => {
-    for (const sourcePatch of [{ sourceJobVersionNumber: 999 }, { sourceContractFingerprint: 'wrong-fingerprint' }]) {
-      const { service, versions } = makeHarness();
-      Object.assign(versions[0], sourcePatch);
-      expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([sowSourceMismatch]);
-    }
-  });
-
-  // A row that records no source cannot contradict one. These are versions
-  // written before provenance was tracked, plus the few the contract-flow
-  // migration could not stamp; blocking them would strand every pre-existing
-  // document behind an error whose only remedy is a full re-issue. The job's own
-  // acceptance blockers and DOCUMENT_STALE still gate them exactly as before,
-  // and the first save records a source and closes the gap.
-  it('grandfathers a version that records no source at all', async () => {
-    const { service, versions } = makeHarness();
-    Object.assign(versions[0], { sourceJobVersionNumber: undefined, sourceContractFingerprint: undefined });
-
-    expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([]);
-  });
-
   it('fails closed for legacy jobs missing the new acceptance links', async () => {
-    const { service } = makeHarness({
-      job: {
-        acceptedJobVersionNumber: undefined,
-        acceptedContractFingerprint: undefined
-      }
-    });
+    const { service } = makeHarness({ job: { acceptedJobVersionNumber: undefined } });
 
     expect((await service.actionGate(SOW_ID)).sendBlockers).toEqual([DocumentBlocker.NOT_ACCEPTED]);
   });
@@ -1465,5 +1496,42 @@ describe('shared contract-validity gate', () => {
 
     expect(JSON.parse(JSON.stringify(versions.find((version) => version._id === signed._id)))).toEqual(snapshots[0]);
     expect(JSON.parse(JSON.stringify(versions.find((version) => version._id === final._id)))).toEqual(snapshots[1]);
+  });
+});
+
+describe('cancelling a SOW', () => {
+  // Cancelling is how a document is retired rather than taken back to edit —
+  // including after the job's acceptance is withdrawn, where it would otherwise
+  // be stranded: unsendable, unsignable, and with no way to dispose of it.
+  it('cancels, tells the client, and still allows a replacement afterwards', async () => {
+    const { service, sow, comments } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+
+    const cancelled = await service.cancel(SOW_ID, 'Project is not going ahead on these terms.', staff);
+
+    expect(cancelled.status).toBe(SOWStatus.CANCELLED);
+    expect(sow.status).toBe(SOWStatus.CANCELLED);
+    expect(comments.some((c) => c.content.includes('no longer in effect') && c.content.includes('not going ahead'))).toBe(true);
+
+    // Replacement path: a cancelled document is editable again.
+    const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'new terms'), staff);
+    expect(draft.status).toBe(SOWStatus.DRAFT);
+    const reissued = await service.sendToCustomer(SOW_ID, staff);
+    expect(reissued.status).toBe(SOWStatus.SENT);
+  });
+
+  it('refuses to cancel twice', async () => {
+    const { service } = makeHarness();
+    await service.cancel(SOW_ID, undefined, staff);
+    await expect(service.cancel(SOW_ID, undefined, staff)).rejects.toThrow(/already cancelled/);
+  });
+
+  it('addresses the client in the third person, since staff read the same thread', async () => {
+    const { service, comments } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+    await service.withdrawFromCustomer(SOW_ID, 'Reworking.', staff);
+
+    expect(comments[0].content).toContain('sent to the client');
+    expect(comments[0].content).not.toMatch(/\bsent to you\b/);
   });
 });

@@ -1,5 +1,4 @@
 import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
-import { contractFingerprint } from './contract-fingerprint.util';
 import { CustomerActionRequired, JobState } from './job.model';
 import { JobReviewService } from './job-review.service';
 import { JobReviewDecision } from './dto/review-job.input';
@@ -35,6 +34,7 @@ interface Harness {
   comments: any[];
   activityEvents: any[];
   operations: any[];
+  restores: any[];
   failPublicationOnce: () => void;
   failCommentOnce: () => void;
   failEventOnce: () => void;
@@ -52,7 +52,6 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
     sub: customer.sub,
     state: JobState.SUBMITTED,
     customerCategory: 'INTERNAL_CUSTOMERS',
-    customerEditingEnabled: false,
     ...overrides
   };
   const versions: any[] = opts.seedVersions ?? [
@@ -87,6 +86,7 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
   const comments: any[] = [];
   const activityEvents: any[] = [];
   const operations: any[] = [];
+  const restores: any[] = [];
   let publicationFailures = 0;
   let commentFailures = 0;
   let eventFailures = 0;
@@ -163,6 +163,10 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
         });
       }
       return [...versions].filter((version) => version.isEvent !== true).sort((a, b) => b.versionNumber - a.versionNumber)[0] ?? null;
+    },
+    restoreVersion: async (_jobId: string, versionNumber: number, author: any, note: string, opts: any = {}) => {
+      restores.push({ versionNumber, note, visibleToCustomer: opts.visibleToCustomer });
+      return {};
     },
     getContentVersion: async (_jobId: string, versionNumber: number) => versions.find((version) => version.isEvent !== true && version.versionNumber === versionNumber) ?? null,
     findByOperationId: async (_jobId: string, operationId: string) => versions.find((version) => version.isEvent === true && version.operationId === operationId) ?? null,
@@ -284,6 +288,7 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
     comments,
     activityEvents,
     operations,
+    restores,
     failPublicationOnce: (): void => {
       publicationFailures += 1;
     },
@@ -351,15 +356,14 @@ describe('JobReviewService.reviewJob', () => {
     [JobReviewDecision.REQUEST_CLARIFICATION, CustomerActionRequired.REPLY, false],
     [JobReviewDecision.REQUEST_EDITS, CustomerActionRequired.EDIT_WORKFLOW, true],
     [JobReviewDecision.REQUEST_APPROVAL, CustomerActionRequired.APPROVE_WORKFLOW, false]
-  ])('maps %s to its exact customer action and editing grant', async (decision, action, editing) => {
+  ])('maps %s to its exact customer action', async (decision, action) => {
     const { service, job, comments } = buildHarness();
 
     await service.reviewJob({ operationId: `op-${decision}`, jobId: JOB_ID, decision, message: 'Please address this.' }, staff);
 
     expect(job).toMatchObject({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: action,
-      customerEditingEnabled: editing
+      customerActionRequired: action
     });
     expect(comments).toHaveLength(1);
     expect(comments[0]).toMatchObject({
@@ -390,11 +394,9 @@ describe('JobReviewService.reviewJob', () => {
 
   it.each(allowedSourceStates.flatMap((state) => reviewDecisions.map((decision) => [decision, state] as const)))('allows %s from reviewable source state %s', async (decision, sourceState) => {
     const originalAction = sourceState === JobState.SUBMITTED ? null : sourceState === JobState.CHANGES_REQUESTED ? CustomerActionRequired.REPLY : CustomerActionRequired.APPROVE_WORKFLOW;
-    const originalEditing = sourceState !== JobState.SUBMITTED;
     const { service, job, operations } = buildHarness({
       state: sourceState,
       customerActionRequired: originalAction,
-      customerEditingEnabled: originalEditing,
       acceptedJobVersionNumber: sourceState === JobState.ACCEPTED ? 1000 : undefined
     });
 
@@ -412,7 +414,6 @@ describe('JobReviewService.reviewJob', () => {
     expect(operations[0]).toMatchObject({
       originalState: sourceState,
       originalCustomerActionRequired: originalAction,
-      originalCustomerEditingEnabled: originalEditing,
       status: JobReviewOperationStatus.COMPLETE
     });
   });
@@ -454,18 +455,11 @@ describe('JobReviewService.reviewJob', () => {
 
     expect(job).toMatchObject({
       state: JobState.ACCEPTED,
-      customerEditingEnabled: false,
       acceptedJobVersionNumber: 1001,
       acceptedBillingFingerprint: 'billing-current',
       acceptedBy: staff.sub
     });
     expect(job.customerActionRequired).toBeNull();
-    expect(job.acceptedContractFingerprint).toBe(
-      contractFingerprint({
-        customerCategory: 'INTERNAL_CUSTOMERS',
-        workflows: VERSION_WORKFLOWS
-      })
-    );
     expect(job.acceptedAt).toBeInstanceOf(Date);
 
     const accepted = versions.find((version) => version.versionNumber === 1001);
@@ -484,7 +478,6 @@ describe('JobReviewService.reviewJob', () => {
     await service.reviewJob({ operationId: 'accept-legacy', jobId: JOB_ID, decision: JobReviewDecision.ACCEPT }, staff);
 
     expect(job).toMatchObject({ state: JobState.ACCEPTED, acceptedJobVersionNumber: 1000 });
-    expect(job.acceptedContractFingerprint).toBe(contractFingerprint({ customerCategory: 'INTERNAL_CUSTOMERS', workflows: VERSION_WORKFLOWS }));
 
     const backfilled = versions.find((version) => version.versionNumber === 1000);
     expect(backfilled).toMatchObject({ note: 'Original submission', authorRole: JobVersionAuthorRole.CUSTOMER, isEvent: false });
@@ -540,8 +533,7 @@ describe('JobReviewService.respondToJobReview', () => {
   it('emits one retry-safe response activity with the original customer action', async () => {
     const { service, activityEvents } = buildHarness({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW,
-      customerEditingEnabled: true
+      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW
     });
     const input = { operationId: 'response-activity', jobId: JOB_ID, message: 'Revised.' };
 
@@ -562,16 +554,14 @@ describe('JobReviewService.respondToJobReview', () => {
   it('lets the owner reply, clears the action/editing grant, and resubmits atomically', async () => {
     const { service, job, comments } = buildHarness({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: CustomerActionRequired.REPLY,
-      customerEditingEnabled: false
+      customerActionRequired: CustomerActionRequired.REPLY
     });
 
     await service.respondToJobReview({ operationId: 'reply-1', jobId: JOB_ID, message: 'Here is the answer.' }, customer);
 
     expect(job).toMatchObject({
       state: JobState.SUBMITTED,
-      customerActionRequired: null,
-      customerEditingEnabled: false
+      customerActionRequired: null
     });
     expect(comments[0]).toMatchObject({
       author: customer.name,
@@ -595,14 +585,12 @@ describe('JobReviewService.respondToJobReview', () => {
   it.each([CustomerActionRequired.EDIT_WORKFLOW, CustomerActionRequired.APPROVE_WORKFLOW])('allows an optional response note for %s', async (action) => {
     const { service, job, comments } = buildHarness({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: action,
-      customerEditingEnabled: action === CustomerActionRequired.EDIT_WORKFLOW
+      customerActionRequired: action
     });
 
     await service.respondToJobReview({ operationId: `respond-${action}`, jobId: JOB_ID }, customer);
 
     expect(job.state).toBe(JobState.SUBMITTED);
-    expect(job.customerEditingEnabled).toBe(false);
     expect(comments).toHaveLength(1);
   });
 
@@ -628,8 +616,7 @@ describe('JobReviewService.respondToJobReview', () => {
   it('is retry-idempotent for the response comment and history event', async () => {
     const { service, versions, comments } = buildHarness({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW,
-      customerEditingEnabled: true
+      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW
     });
     const input = { operationId: 'response-retry', jobId: JOB_ID, message: 'Done.' };
 
@@ -643,8 +630,7 @@ describe('JobReviewService.respondToJobReview', () => {
   it('repairs a failed response comment with the original server-generated action header', async () => {
     const { service, comments, failCommentOnce } = buildHarness({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW,
-      customerEditingEnabled: true
+      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW
     });
     const input = { operationId: 'response-comment-retry', jobId: JOB_ID };
     failCommentOnce();
@@ -659,8 +645,7 @@ describe('JobReviewService.respondToJobReview', () => {
   it('repairs a failed response history event after the authoritative state update', async () => {
     const { service, job, versions, comments, failEventOnce } = buildHarness({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: CustomerActionRequired.APPROVE_WORKFLOW,
-      customerEditingEnabled: false
+      customerActionRequired: CustomerActionRequired.APPROVE_WORKFLOW
     });
     const input = { operationId: 'response-event-retry', jobId: JOB_ID };
     failEventOnce();
@@ -795,8 +780,7 @@ describe('JobReviewService operation journal', () => {
   it('resumes an old response side effect without clearing an intervening newer action', async () => {
     const { service, job, versions, comments, failEventOnce } = buildHarness({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW,
-      customerEditingEnabled: true
+      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW
     });
     failEventOnce();
 
@@ -816,7 +800,6 @@ describe('JobReviewService operation journal', () => {
     expect(job).toMatchObject({
       state: JobState.CHANGES_REQUESTED,
       customerActionRequired: CustomerActionRequired.APPROVE_WORKFLOW,
-      customerEditingEnabled: false,
       lastReviewOperationId: 'new-review'
     });
     expect(versions.filter((version) => version.operationId === 'old-response')).toHaveLength(1);
@@ -826,8 +809,7 @@ describe('JobReviewService operation journal', () => {
   it('rejects reuse of a completed response operationId for a different current action', async () => {
     const { service } = buildHarness({
       state: JobState.CHANGES_REQUESTED,
-      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW,
-      customerEditingEnabled: true
+      customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW
     });
     const response = { operationId: 'response-action-collision', jobId: JOB_ID, message: 'Done.' };
 
@@ -862,9 +844,7 @@ describe('JobReviewService acceptance version races', () => {
     const { service, job, versions, comments, operations, addContentOnLatestRead } = buildHarness({
       state: JobState.SUBMITTED,
       customerActionRequired: null,
-      customerEditingEnabled: false,
       acceptedJobVersionNumber: 1000,
-      acceptedContractFingerprint: 'old-contract',
       acceptedBillingFingerprint: 'old-billing',
       acceptedBy: 'old-staff',
       acceptedAt: new Date('2026-08-01T00:00:00.000Z')
@@ -876,9 +856,7 @@ describe('JobReviewService acceptance version races', () => {
     expect(job).toMatchObject({
       state: JobState.SUBMITTED,
       customerActionRequired: null,
-      customerEditingEnabled: false,
       acceptedJobVersionNumber: 1000,
-      acceptedContractFingerprint: 'old-contract',
       acceptedBillingFingerprint: 'old-billing',
       acceptedBy: 'old-staff',
       acceptedAt: new Date('2026-08-01T00:00:00.000Z')
@@ -982,7 +960,6 @@ describe('JobReviewService acceptance version races', () => {
       Object.assign(job, {
         state: JobState.CHANGES_REQUESTED,
         customerActionRequired: CustomerActionRequired.APPROVE_WORKFLOW,
-        customerEditingEnabled: false,
         lastReviewOperationId: 'newer-command'
       });
     });
@@ -992,9 +969,123 @@ describe('JobReviewService acceptance version races', () => {
     expect(job).toMatchObject({
       state: JobState.CHANGES_REQUESTED,
       customerActionRequired: CustomerActionRequired.APPROVE_WORKFLOW,
-      customerEditingEnabled: false,
       lastReviewOperationId: 'newer-command'
     });
     expect(operations[0].status).toBe(JobReviewOperationStatus.COMPENSATED);
+  });
+});
+
+describe('JobReviewService withdrawal', () => {
+  const withCustomer = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    state: JobState.CHANGES_REQUESTED,
+    customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW,
+    handoverVersionNumber: 1000,
+    ...over
+  });
+
+  it('takes the job back, restores the handover version, and publishes it to the customer', async () => {
+    const { service, job, restores, comments } = buildHarness(withCustomer());
+
+    await service.withdrawJobFromCustomer({ operationId: 'wd-1', jobId: JOB_ID, reason: 'We need to rework the design.' }, staff);
+
+    expect(job).toMatchObject({ state: JobState.SUBMITTED, lastReviewOperationId: 'wd-1' });
+    expect(job.customerActionRequired).toBeNull();
+    // Spent once used, so a later withdrawal cannot restore a stale baseline.
+    expect(job.handoverVersionNumber).toBeNull();
+    expect(restores).toEqual([{ versionNumber: 1000, note: 'Withdrawn by the lab', visibleToCustomer: true }]);
+    expect(comments[0].content).toContain('We need to rework the design.');
+  });
+
+  it('is retry-safe: a repeat under the same operationId restores and comments once', async () => {
+    const { service, restores, comments, versions } = buildHarness(withCustomer());
+    const input = { operationId: 'wd-retry', jobId: JOB_ID, reason: 'Reworking.' };
+
+    await service.withdrawJobFromCustomer(input, staff);
+    await service.withdrawJobFromCustomer(input, staff);
+
+    expect(restores).toHaveLength(1);
+    expect(comments.filter((comment) => comment.operationId === input.operationId)).toHaveLength(1);
+    expect(versions.filter((version) => version.operationId === input.operationId)).toHaveLength(1);
+  });
+
+  it('refuses to withdraw a job that is not with the customer', async () => {
+    const { service } = buildHarness({ state: JobState.SUBMITTED });
+    await expect(service.withdrawJobFromCustomer({ operationId: 'wd-2', jobId: JOB_ID, reason: 'why' }, staff)).rejects.toThrow(/not currently with the customer/);
+  });
+
+  it('requires a reason, since a withdrawal undoes work someone else did', async () => {
+    const { service } = buildHarness(withCustomer());
+    await expect(service.withdrawJobFromCustomer({ operationId: 'wd-3', jobId: JOB_ID, reason: '   ' }, staff)).rejects.toThrow(/reason/i);
+  });
+
+  // A legacy job handed over before the baseline was recorded: take it back
+  // rather than refuse, and leave the graph where it is.
+  it('still withdraws when no handover baseline was recorded, without restoring', async () => {
+    const { service, job, restores } = buildHarness(withCustomer({ handoverVersionNumber: undefined }));
+
+    await service.withdrawJobFromCustomer({ operationId: 'wd-4', jobId: JOB_ID, reason: 'Legacy job.' }, staff);
+
+    expect(job.state).toBe(JobState.SUBMITTED);
+    expect(restores).toEqual([]);
+  });
+
+  it('clears the whole acceptance stamp and leaves the graph alone', async () => {
+    const { service, job, restores, comments } = buildHarness({
+      state: JobState.ACCEPTED,
+      acceptedJobVersionNumber: 1001,
+      acceptedBillingFingerprint: 'billing',
+      acceptedAt: new Date('2026-03-01'),
+      acceptedBy: 'staff-1'
+    });
+
+    await service.withdrawJobAcceptance({ operationId: 'wa-1', jobId: JOB_ID, reason: 'Price correction needed.' }, staff);
+
+    expect(job.state).toBe(JobState.SUBMITTED);
+    for (const field of ['acceptedJobVersionNumber', 'acceptedBillingFingerprint', 'acceptedAt', 'acceptedBy']) {
+      expect(job[field]).toBeNull();
+    }
+    // Reopening the spec must not silently rewrite the graph.
+    expect(restores).toEqual([]);
+    expect(comments[0].content).toContain('Price correction needed.');
+  });
+
+  it('refuses to withdraw acceptance from a job that was never accepted', async () => {
+    const { service } = buildHarness({ state: JobState.SUBMITTED });
+    await expect(service.withdrawJobAcceptance({ operationId: 'wa-2', jobId: JOB_ID, reason: 'why' }, staff)).rejects.toThrow(/has not been accepted/);
+  });
+
+  it('rejects an operationId reused across the two withdrawal kinds', async () => {
+    const { service } = buildHarness(withCustomer());
+    await service.withdrawJobFromCustomer({ operationId: 'shared', jobId: JOB_ID, reason: 'Reworking.' }, staff);
+
+    await expect(service.withdrawJobAcceptance({ operationId: 'shared', jobId: JOB_ID, reason: 'Reworking.' }, staff)).rejects.toThrow(ConflictException);
+  });
+});
+
+describe('JobReviewService handover baseline', () => {
+  it('stamps the version in force when the job is handed over', async () => {
+    const { service, job } = buildHarness();
+
+    await service.reviewJob({ operationId: 'rc-1', jobId: JOB_ID, decision: JobReviewDecision.REQUEST_EDITS, message: 'Please revise.' }, staff);
+
+    expect(job.handoverVersionNumber).toBe(1001);
+  });
+
+  // Each handover is a fresh baseline: withdrawing returns to the start of the
+  // current round, not the beginning of the whole negotiation.
+  it('re-stamps on a second request-changes', async () => {
+    const { service, job, versions } = buildHarness();
+    await service.reviewJob({ operationId: 'rc-a', jobId: JOB_ID, decision: JobReviewDecision.REQUEST_EDITS, message: 'Round one.' }, staff);
+
+    versions.push({ _id: 'content-1500', jobId: JOB_ID, versionNumber: 1500, authorRole: JobVersionAuthorRole.CUSTOMER, workflows: VERSION_WORKFLOWS, visibleToCustomer: true, isEvent: false });
+    await service.reviewJob({ operationId: 'rc-b', jobId: JOB_ID, decision: JobReviewDecision.REQUEST_EDITS, message: 'Round two.' }, staff);
+
+    expect(job.handoverVersionNumber).toBe(1500);
+  });
+
+  it('does not stamp one on acceptance', async () => {
+    const { service, job } = buildHarness();
+    await service.reviewJob({ operationId: 'acc-1', jobId: JOB_ID, decision: JobReviewDecision.ACCEPT }, staff);
+    expect(job.handoverVersionNumber ?? null).toBeNull();
   });
 });

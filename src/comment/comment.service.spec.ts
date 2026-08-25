@@ -108,3 +108,30 @@ describe('CommentService.createIdempotent', () => {
     expect(comments).toHaveLength(1);
   });
 });
+
+describe('CommentService.findByJobWithVisibility', () => {
+  // Internal notes used to reach customers: both read paths called the
+  // unfiltered findByJob, and this filtered method had no callers at all.
+  function harness(): { service: CommentService; queries: any[] } {
+    const queries: any[] = [];
+    const commentModel: any = {
+      find: (query: any) => {
+        queries.push(query);
+        return { sort: () => ({ exec: async () => [] }) };
+      }
+    };
+    return { service: new CommentService(commentModel, {} as any), queries };
+  }
+
+  it('hides internal notes from a customer', async () => {
+    const { service, queries } = harness();
+    await service.findByJobWithVisibility('job-1', false);
+    expect(queries[0]).toEqual({ jobId: 'job-1', isInternal: false });
+  });
+
+  it('shows staff everything', async () => {
+    const { service, queries } = harness();
+    await service.findByJobWithVisibility('job-1', true);
+    expect(queries[0]).toEqual({ jobId: 'job-1' });
+  });
+});

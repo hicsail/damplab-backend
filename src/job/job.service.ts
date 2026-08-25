@@ -122,9 +122,6 @@ export class JobService {
       state: newState,
       customerActionRequired: newState === JobState.CHANGES_REQUESTED ? customerActionRequired ?? CustomerActionRequired.REPLY : null
     };
-    if (newState !== JobState.CHANGES_REQUESTED) {
-      statePatch.customerEditingEnabled = false;
-    }
     return this.jobModel.findOneAndUpdate({ _id: job._id }, { $set: statePatch }, { new: true }).exec();
   }
 
@@ -134,11 +131,6 @@ export class JobService {
    */
   async recordAcceptance(jobId: string, fingerprint: string, acceptedBy?: string): Promise<Job | null> {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { acceptedBillingFingerprint: fingerprint, acceptedAt: new Date(), acceptedBy: acceptedBy ?? null } }, { new: true }).exec();
-  }
-
-  /** Staff-set: whether the job's owner may currently edit its workflow graph. */
-  async setCustomerEditingEnabled(jobId: string, enabled: boolean): Promise<Job | null> {
-    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { customerEditingEnabled: enabled } }, { new: true }).exec();
   }
 
   async updateCustomerCategory(jobId: string, customerCategory: CustomerCategory): Promise<Job | null> {

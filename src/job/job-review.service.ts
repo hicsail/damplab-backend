@@ -8,8 +8,7 @@ import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.mod
 import { JobVersionService } from '../job-version/job-version.service';
 import { SOWService } from '../sow/sow.service';
 import { ActivityService } from '../activity/activity.service';
-import { ContractFingerprintWorkflowInput, contractFingerprint } from './contract-fingerprint.util';
-import { JobReviewDecision, RespondToJobReviewInput, ReviewJobInput } from './dto/review-job.input';
+import { JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { CustomerActionRequired, Job, JobDocument, JobState } from './job.model';
 import { JobReviewCommandKind, JobReviewOperation, JobReviewOperationDocument, JobReviewOperationStatus } from './job-review-operation.model';
 
@@ -30,7 +29,6 @@ interface OperationIdentity {
 
 interface ReviewMapping {
   action: CustomerActionRequired;
-  editing: boolean;
   heading: string;
 }
 
@@ -82,11 +80,11 @@ export class JobReviewService {
   private reviewMapping(decision: Exclude<JobReviewDecision, JobReviewDecision.ACCEPT>): ReviewMapping {
     switch (decision) {
       case JobReviewDecision.REQUEST_CLARIFICATION:
-        return { action: CustomerActionRequired.REPLY, editing: false, heading: 'Clarification requested' };
+        return { action: CustomerActionRequired.REPLY, heading: 'Clarification requested' };
       case JobReviewDecision.REQUEST_EDITS:
-        return { action: CustomerActionRequired.EDIT_WORKFLOW, editing: true, heading: 'Workflow edits requested' };
+        return { action: CustomerActionRequired.EDIT_WORKFLOW, heading: 'Workflow edits requested' };
       case JobReviewDecision.REQUEST_APPROVAL:
-        return { action: CustomerActionRequired.APPROVE_WORKFLOW, editing: false, heading: 'Workflow approval requested' };
+        return { action: CustomerActionRequired.APPROVE_WORKFLOW, heading: 'Workflow approval requested' };
     }
   }
 
@@ -98,9 +96,8 @@ export class JobReviewService {
     return {
       originalState: job.state,
       originalCustomerActionRequired: job.customerActionRequired ?? null,
-      originalCustomerEditingEnabled: job.customerEditingEnabled === true,
+      originalHandoverVersionNumber: job.handoverVersionNumber ?? null,
       originalAcceptedJobVersionNumber: job.acceptedJobVersionNumber ?? null,
-      originalAcceptedContractFingerprint: job.acceptedContractFingerprint ?? null,
       originalAcceptedBillingFingerprint: job.acceptedBillingFingerprint ?? null,
       originalAcceptedAt: job.acceptedAt ?? null,
       originalAcceptedBy: job.acceptedBy ?? null,
@@ -191,8 +188,14 @@ export class JobReviewService {
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
 
     let selectedVersion: JobVersion | null = null;
-    let selectedContractFingerprint: string | undefined;
     let selectedBillingFingerprint: string | undefined;
+    // Handing the job over records what the customer is starting from, so
+    // withdrawing it later restores exactly that and not a guess.
+    let selectedHandoverVersionNumber: number | undefined;
+    if (input.decision !== JobReviewDecision.ACCEPT) {
+      await this.jobVersionService.listByJob(input.jobId);
+      selectedHandoverVersionNumber = (await this.jobVersionService.getLatestContentVersion(input.jobId))?.versionNumber;
+    }
     if (input.decision === JobReviewDecision.ACCEPT) {
       // Force the lazy v1 backfill first, exactly as appendStateEvent does. A job
       // submitted before versioning existed has no content version until someone
@@ -202,10 +205,6 @@ export class JobReviewService {
       await this.jobVersionService.listByJob(input.jobId);
       selectedVersion = await this.jobVersionService.getLatestContentVersion(input.jobId);
       if (!selectedVersion) throw new BadRequestException('This job has no content version to accept.');
-      selectedContractFingerprint = contractFingerprint({
-        customerCategory: job.customerCategory,
-        workflows: selectedVersion.workflows as unknown as ContractFingerprintWorkflowInput[]
-      });
       selectedBillingFingerprint = await this.sowService.jobBillingFingerprint(job);
     }
 
@@ -216,7 +215,7 @@ export class JobReviewService {
         normalizedMessage,
         ...this.originalFields(job),
         selectedAcceptedVersionNumber: selectedVersion?.versionNumber,
-        selectedContractFingerprint,
+        selectedHandoverVersionNumber,
         selectedBillingFingerprint
       },
       identity
@@ -284,9 +283,8 @@ export class JobReviewService {
       _id: operation.jobId,
       state: operation.originalState,
       customerActionRequired: operation.originalCustomerActionRequired ?? null,
-      customerEditingEnabled: operation.originalCustomerEditingEnabled ? true : { $ne: true },
+      handoverVersionNumber: operation.originalHandoverVersionNumber ?? null,
       acceptedJobVersionNumber: operation.originalAcceptedJobVersionNumber ?? null,
-      acceptedContractFingerprint: operation.originalAcceptedContractFingerprint ?? null,
       acceptedBillingFingerprint: operation.originalAcceptedBillingFingerprint ?? null,
       acceptedAt: operation.originalAcceptedAt ?? null,
       acceptedBy: operation.originalAcceptedBy ?? null,
@@ -300,11 +298,11 @@ export class JobReviewService {
       return job.state === JobState.ACCEPTED && job.acceptedJobVersionNumber === operation.selectedAcceptedVersionNumber;
     }
     const mapping = this.reviewMapping(operation.decision as Exclude<JobReviewDecision, JobReviewDecision.ACCEPT>);
-    return job.state === JobState.CHANGES_REQUESTED && job.customerActionRequired === mapping.action && job.customerEditingEnabled === mapping.editing;
+    return job.state === JobState.CHANGES_REQUESTED && job.customerActionRequired === mapping.action;
   }
 
   private responseTargetIsApplied(operation: JobReviewOperation, job: Job): boolean {
-    return job.lastReviewOperationId === operation.operationId && job.state === JobState.SUBMITTED && job.customerActionRequired == null && job.customerEditingEnabled !== true;
+    return job.lastReviewOperationId === operation.operationId && job.state === JobState.SUBMITTED && job.customerActionRequired == null;
   }
 
   private async markJobWritten(operation: JobReviewOperation): Promise<void> {
@@ -337,9 +335,7 @@ export class JobReviewService {
       target = {
         state: JobState.ACCEPTED,
         customerActionRequired: null,
-        customerEditingEnabled: false,
         acceptedJobVersionNumber: operation.selectedAcceptedVersionNumber,
-        acceptedContractFingerprint: operation.selectedContractFingerprint,
         acceptedBillingFingerprint: operation.selectedBillingFingerprint,
         acceptedAt: new Date(),
         acceptedBy: operation.actorSub,
@@ -350,7 +346,11 @@ export class JobReviewService {
       target = {
         state: JobState.CHANGES_REQUESTED,
         customerActionRequired: mapping.action,
-        customerEditingEnabled: mapping.editing,
+        // The baseline a withdrawal restores. Recorded here rather than inferred
+        // later: scanning back for the last staff-authored version gets it wrong
+        // whenever staff edited before handing over, or across several rounds.
+        // A repeat request-changes re-stamps it — each handover is a fresh start.
+        handoverVersionNumber: operation.selectedHandoverVersionNumber ?? null,
         lastReviewOperationId: operation.operationId
       };
     }
@@ -384,7 +384,6 @@ export class JobReviewService {
           $set: {
             state: JobState.SUBMITTED,
             customerActionRequired: null,
-            customerEditingEnabled: false,
             lastReviewOperationId: operation.operationId
           },
           $unset: { lastReviewCustomerAction: '' }
@@ -504,9 +503,7 @@ export class JobReviewService {
     const $set: Record<string, unknown> = {
       state: operation.originalState,
       customerActionRequired: operation.originalCustomerActionRequired ?? null,
-      customerEditingEnabled: operation.originalCustomerEditingEnabled,
       acceptedJobVersionNumber: operation.originalAcceptedJobVersionNumber ?? null,
-      acceptedContractFingerprint: operation.originalAcceptedContractFingerprint ?? null,
       acceptedBillingFingerprint: operation.originalAcceptedBillingFingerprint ?? null,
       acceptedAt: operation.originalAcceptedAt ?? null,
       acceptedBy: operation.originalAcceptedBy ?? null
@@ -625,6 +622,201 @@ export class JobReviewService {
       throw new ConflictException('This response operation could not complete finalization.');
     }
     return this.completedJob(operation);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Withdrawal
+  //
+  // The two ways staff take a job back so they can edit it again. Both are
+  // journaled like a review decision, but neither needs a compensation branch:
+  // unlike acceptance they select nothing that can move underneath them, so they
+  // resume straight through PENDING → APPLIED → FINALIZING → COMPLETE.
+  // ---------------------------------------------------------------------------
+
+  private withdrawalKind(fromCustomer: boolean): JobReviewCommandKind {
+    return fromCustomer ? JobReviewCommandKind.WITHDRAW_FROM_CUSTOMER : JobReviewCommandKind.WITHDRAW_ACCEPTANCE;
+  }
+
+  private async loadOrCreateWithdrawalOperation(input: WithdrawJobInput, actor: JobReviewActor, fromCustomer: boolean): Promise<JobReviewOperation> {
+    const operationId = this.normalizeOperationId(input.operationId);
+    const normalizedMessage = this.normalizeMessage(input.reason);
+    if (!normalizedMessage) throw new BadRequestException('Give a reason for withdrawing this job.');
+
+    const identity: OperationIdentity = {
+      operationId,
+      jobId: input.jobId,
+      commandKind: this.withdrawalKind(fromCustomer),
+      actorSub: actor.sub,
+      normalizedMessage
+    };
+    const existing = await this.findOperation(operationId);
+    if (existing) {
+      this.assertOperationMatches(existing, identity);
+      return existing;
+    }
+
+    const job = await this.jobModel.findById(input.jobId).exec();
+    if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
+
+    const requiredState = fromCustomer ? JobState.CHANGES_REQUESTED : JobState.ACCEPTED;
+    if (job.state !== requiredState) {
+      throw new BadRequestException(fromCustomer ? 'This job is not currently with the customer.' : 'This job has not been accepted.');
+    }
+
+    // Captured now so a retry restores the same version even if a later handover
+    // moves the baseline.
+    const restoreVersionNumber = fromCustomer ? job.handoverVersionNumber ?? undefined : undefined;
+
+    const operation = await this.createOperation(
+      {
+        actorName: actor.name,
+        normalizedMessage,
+        restoreVersionNumber,
+        ...this.originalFields(job)
+      },
+      identity
+    );
+    this.assertOperationMatches(operation, identity);
+    return operation;
+  }
+
+  private withdrawalTargetIsApplied(operation: JobReviewOperation, job: Job): boolean {
+    return job.lastReviewOperationId === operation.operationId && job.state === JobState.SUBMITTED && job.customerActionRequired == null;
+  }
+
+  private async ensureWithdrawalJobWritten(operation: JobReviewOperation, fromCustomer: boolean): Promise<Job> {
+    let job = await this.jobModel.findById(operation.jobId).exec();
+    if (!job) throw new NotFoundException(`Job with ID ${operation.jobId} not found`);
+    if (operation.jobWrittenAt) return job;
+    if (this.withdrawalTargetIsApplied(operation, job)) {
+      await this.markJobWritten(operation);
+      return job;
+    }
+
+    // Withdrawing acceptance clears the whole acceptance stamp. Taking the job
+    // back from the customer clears the handover baseline once it is spent.
+    const target: Record<string, unknown> = {
+      state: JobState.SUBMITTED,
+      customerActionRequired: null,
+      handoverVersionNumber: null,
+      lastReviewOperationId: operation.operationId
+    };
+    if (!fromCustomer) {
+      Object.assign(target, {
+        acceptedJobVersionNumber: null,
+        acceptedBillingFingerprint: null,
+        acceptedAt: null,
+        acceptedBy: null
+      });
+    }
+
+    job = await this.jobModel.findOneAndUpdate(this.originalJobFilter(operation), { $set: target }, { new: true }).exec();
+    if (!job) {
+      const raced = await this.jobModel.findById(operation.jobId).exec();
+      if (raced && this.withdrawalTargetIsApplied(operation, raced)) {
+        await this.markJobWritten(operation);
+        return raced;
+      }
+      return this.conflictOperation(operation, 'The job changed while it was being withdrawn.');
+    }
+    await this.markJobWritten(operation);
+    return job;
+  }
+
+  /**
+   * Puts the graph back to what the customer was handed.
+   *
+   * Their own saved versions stay in history — they are immutable and already
+   * visible — so nothing they did is lost, and Revert can reach it. The restored
+   * version is published to them deliberately: undoing someone's work and then
+   * hiding the result would leave them believing their edits still stand.
+   */
+  private async writeWithdrawalRestore(operation: JobReviewOperation): Promise<void> {
+    if (operation.restoreWrittenAt || operation.restoreVersionNumber == null) return;
+    await this.jobVersionService.restoreVersion(
+      operation.jobId,
+      operation.restoreVersionNumber,
+      { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName },
+      'Withdrawn by the lab',
+      { visibleToCustomer: true }
+    );
+    await this.updateOperationProgress(operation, { restoreWrittenAt: new Date() });
+  }
+
+  private async writeWithdrawalHistory(operation: JobReviewOperation, job: Job, fromCustomer: boolean): Promise<void> {
+    if (operation.historyWrittenAt) return;
+    const heading = fromCustomer ? 'Withdrawn from the customer' : 'Acceptance withdrawn';
+    await this.jobVersionService.appendStateEvent(job, JobState.SUBMITTED, { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName }, heading, operation.operationId);
+    await this.updateOperationProgress(operation, { historyWrittenAt: new Date() });
+  }
+
+  private async writeWithdrawalComment(operation: JobReviewOperation, fromCustomer: boolean): Promise<void> {
+    if (operation.commentWrittenAt) return;
+    const heading = fromCustomer ? 'The lab has taken this job back for further work' : 'The lab has reopened this job for changes';
+    await this.commentService.createIdempotent({
+      jobId: operation.jobId,
+      operationId: operation.operationId,
+      content: this.commentContent(heading, operation.normalizedMessage),
+      author: operation.actorName,
+      authorType: CommentAuthorType.STAFF,
+      isInternal: false
+    });
+    await this.updateOperationProgress(operation, { commentWrittenAt: new Date() });
+  }
+
+  private async writeWithdrawalActivity(operation: JobReviewOperation, fromCustomer: boolean): Promise<void> {
+    if (operation.activityWrittenAt) return;
+    const type = fromCustomer ? 'JOB_WITHDRAWN_FROM_CUSTOMER' : 'JOB_ACCEPTANCE_WITHDRAWN';
+    await this.activityService.createEventIdempotent({
+      type,
+      operationId: `${type}:${operation.operationId}`,
+      message: fromCustomer ? 'Job withdrawn from the customer' : 'Job acceptance withdrawn',
+      actorDisplayName: operation.actorName,
+      jobId: operation.jobId
+    });
+    await this.updateOperationProgress(operation, { activityWrittenAt: new Date() });
+  }
+
+  private async completeWithdrawalOperation(operation: JobReviewOperation, fromCustomer: boolean): Promise<Job> {
+    this.assertOperationResumable(operation);
+    if (operation.status === JobReviewOperationStatus.COMPLETE) {
+      await this.writeWithdrawalActivity(operation, fromCustomer);
+      return this.completedJob(operation);
+    }
+
+    const job = operation.status === JobReviewOperationStatus.PENDING ? await this.ensureWithdrawalJobWritten(operation, fromCustomer) : await this.completedJob(operation);
+    if (operation.status === JobReviewOperationStatus.APPLIED) {
+      await this.casOperationStatus(operation, JobReviewOperationStatus.APPLIED, JobReviewOperationStatus.FINALIZING);
+    }
+    if (operation.status !== JobReviewOperationStatus.FINALIZING) {
+      throw new ConflictException('This withdrawal is not eligible for finalization.');
+    }
+
+    // Restore first: the history entry and the comment both describe a graph
+    // that has already moved, so a failure here must not leave them claiming a
+    // revert that never happened.
+    await this.writeWithdrawalRestore(operation);
+    await this.writeWithdrawalHistory(operation, job, fromCustomer);
+    await this.writeWithdrawalComment(operation, fromCustomer);
+    await this.writeWithdrawalActivity(operation, fromCustomer);
+
+    const completed = await this.casOperationStatus(operation, JobReviewOperationStatus.FINALIZING, JobReviewOperationStatus.COMPLETE, { completedAt: new Date() });
+    if (!completed && (operation.status as JobReviewOperationStatus) !== JobReviewOperationStatus.COMPLETE) {
+      throw new ConflictException('This withdrawal could not complete finalization.');
+    }
+    return this.completedJob(operation);
+  }
+
+  /** Staff take the job back from the customer, restoring the graph they were handed. */
+  async withdrawJobFromCustomer(input: WithdrawJobInput, actor: JobReviewActor): Promise<Job> {
+    const operation = await this.loadOrCreateWithdrawalOperation(input, actor, true);
+    return this.completeWithdrawalOperation(operation, true);
+  }
+
+  /** Staff reopen an accepted spec so it can be edited again. */
+  async withdrawJobAcceptance(input: WithdrawJobInput, actor: JobReviewActor): Promise<Job> {
+    const operation = await this.loadOrCreateWithdrawalOperation(input, actor, false);
+    return this.completeWithdrawalOperation(operation, false);
   }
 
   async reviewJob(input: ReviewJobInput, actor: JobReviewActor): Promise<Job> {

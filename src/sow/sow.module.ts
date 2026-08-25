@@ -12,6 +12,7 @@ import { DampLabServicesModule } from '../services/damplab-services.module';
 import { SowPresetModule } from '../sow-preset/sow-preset.module';
 import { JobVersionModule } from '../job-version/job-version.module';
 import { ActivityModule } from '../activity/activity.module';
+import { CommentModule } from '../comment/comment.module';
 
 @Module({
   imports: [
@@ -24,7 +25,10 @@ import { ActivityModule } from '../activity/activity.module';
     DampLabServicesModule,
     SowPresetModule,
     JobVersionModule,
-    ActivityModule
+    ActivityModule,
+    // For the automated comments a withdrawal or a voided signature posts: the
+    // customer's job thread is the only channel they actually read.
+    forwardRef(() => CommentModule)
   ],
   providers: [SOWService, SowVersionService, SOWResolver, SowVersionFieldsResolver],
   exports: [SOWService, SowVersionService]
