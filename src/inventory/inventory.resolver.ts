@@ -7,7 +7,7 @@ import { CreateInventoryItem } from './dtos/create.dto';
 import { InventoryItemChange } from './dtos/update.dto';
 
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
+import { Public, Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
 
 @Resolver(() => InventoryItem)
@@ -25,6 +25,19 @@ export class InventoryResolver {
   @Query(() => [InventoryItem], { description: 'Active (non-deleted) inventory items for catalog pickers.' })
   async activeInventoryItems(): Promise<InventoryItem[]> {
     return this.inventoryService.findAllActive();
+  }
+
+  /** Public inventory list — no auth required, sensitive fields (uniqueId, serialNumber) stripped. */
+  @Public()
+  @Query(() => [InventoryItem], { description: 'Public inventory list with sensitive fields hidden.' })
+  async publicInventoryItems(): Promise<InventoryItem[]> {
+    const items = await this.inventoryService.findAllActive();
+    return items.map((item) => {
+      const doc = { ...item } as any;
+      doc.uniqueId = undefined;
+      doc.serialNumber = undefined;
+      return doc;
+    });
   }
 
   @Mutation(() => InventoryItem)
