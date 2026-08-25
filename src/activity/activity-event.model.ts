@@ -1,4 +1,4 @@
-import { Field, ID, ObjectType } from '@nestjs/graphql';
+import { Field, ID, Int, ObjectType } from '@nestjs/graphql';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
@@ -20,6 +20,15 @@ export class ActivityEventEntity {
   jobId?: string;
 
   @Prop({ type: String, required: false })
+  sowId?: string;
+
+  @Prop({ type: Number, required: false })
+  sowVersionNumber?: number;
+
+  @Prop({ type: String, required: false })
+  operationId?: string;
+
+  @Prop({ type: String, required: false })
   workflowId?: string;
 
   @Prop({ type: String, required: false })
@@ -35,6 +44,13 @@ export const ActivityEventEntitySchema = SchemaFactory.createForClass(ActivityEv
 ActivityEventEntitySchema.index({ createdAt: -1 });
 ActivityEventEntitySchema.index({ type: 1, createdAt: -1 });
 ActivityEventEntitySchema.index({ jobId: 1, createdAt: -1 });
+ActivityEventEntitySchema.index(
+  { operationId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { operationId: { $type: 'string' } }
+  }
+);
 
 @ObjectType()
 export class ActivityEvent {
@@ -55,6 +71,12 @@ export class ActivityEvent {
 
   @Field(() => String, { nullable: true })
   jobId?: string | null;
+
+  @Field(() => String, { nullable: true })
+  sowId?: string | null;
+
+  @Field(() => Int, { nullable: true })
+  sowVersionNumber?: number | null;
 
   @Field(() => String, { nullable: true })
   workflowId?: string | null;

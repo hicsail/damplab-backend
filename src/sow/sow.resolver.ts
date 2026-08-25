@@ -5,7 +5,6 @@ import { SowVersionService } from './sow-version.service';
 import { SowVersion, SowCalculatedValue, SowVersionService as SowVersionServiceLine } from './sow-version.model';
 import { CreateSOWInput } from './dto/create-sow.input';
 import { UpdateSOWInput } from './dto/update-sow.input';
-import { SubmitSOWSignatureInput } from './dto/submit-sow-signature.input';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
 import { SignSowInput } from './dto/sign-sow.input';
 import { SowInputsInput } from './dto/sow-inputs.input';
@@ -96,23 +95,6 @@ export class SOWResolver {
     return this.sowService.upsertForJob(jobId, { ...input, jobId, createdBy });
   }
 
-  /**
-   * The pre-versioning signature path. It writes signatures onto the SOW root
-   * and flips status to SIGNED without going through the version state machine,
-   * so it bypasses every check signSow makes — including the send gate. No UI
-   * calls it; staff-gated here so it cannot be driven from a customer token
-   * while it waits to be deleted.
-   *
-   * @deprecated Use signSow / finalizeSow.
-   */
-  @Mutation(() => SOW, {
-    description: 'Deprecated, staff-only. Legacy pre-versioning signature path; use signSow instead.'
-  })
-  @Roles(Role.DamplabStaff)
-  async submitSOWSignature(@Args('input', { type: () => SubmitSOWSignatureInput }) input: SubmitSOWSignatureInput, @CurrentUser() user: User): Promise<SOW> {
-    return this.sowService.submitSignature(input, user);
-  }
-
   @ResolveField(() => Job, { description: 'Job this SOW is associated with' })
   async job(@Parent() sow: SOW): Promise<Job | null> {
     return this.jobService.findById(sow.jobId);
@@ -141,10 +123,32 @@ export class SOWResolver {
   }
 
   @ResolveField(() => SowActionGate, {
-    description: 'Which lifecycle actions this SOW permits and what is in the way of each. Advisory only — sendSowToCustomer and finalizeSow enforce the same rules server-side.'
+    description:
+      'Which send, customer-sign, and staff-finalize actions this SOW permits and what is in the way of each. Customers see the signing half only. Advisory either way — every mutation enforces the same rules server-side.'
   })
-  async actionGate(@Parent() sow: SOW): Promise<SowActionGate> {
-    return this.sowVersionService.actionGate(String((sow as any)._id));
+  async actionGate(
+    @Parent() sow: SOW,
+    @CurrentUser() user: User,
+    @Args('expectedSignVersionNumber', { type: () => Int, nullable: true, description: 'Version the customer currently has open for signing; when stale, canSign is false.' })
+    expectedSignVersionNumber?: number
+  ): Promise<SowActionGate> {
+    const staff = isStaff(user);
+    const gate = await this.sowVersionService.actionGate(String((sow as any)._id), expectedSignVersionNumber, { reconcile: staff });
+    if (staff) return gate;
+
+    // Signing is the only action a customer can take, and the rest of the gate
+    // is the lab's internal repair checklist — sendBlockers name staff chores,
+    // and missingFields names the document sections still unwritten. None of
+    // that belongs on a customer's job page.
+    return {
+      canSend: false,
+      sendBlockers: [],
+      canSign: gate.canSign,
+      signBlockers: gate.signBlockers,
+      canCountersign: false,
+      countersignBlockers: [],
+      missingFields: []
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -214,6 +218,15 @@ export class SOWResolver {
   async sendSowToCustomer(@Args('sowId', { type: () => ID }) sowId: string, @CurrentUser() user: User): Promise<SowVersion> {
     await this.authorizedSow(sowId, user);
     return this.sowVersionService.sendToCustomer(sowId, SOWResolver.author(user));
+  }
+
+  @Mutation(() => SOW, {
+    description: 'Staff-only. Take a sent Statement of Work back so it can be edited. The customer is told it is no longer available to sign.'
+  })
+  @Roles(Role.DamplabStaff)
+  async withdrawSowFromCustomer(@Args('sowId', { type: () => ID }) sowId: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<SOW> {
+    await this.authorizedSow(sowId, user);
+    return this.sowVersionService.withdrawFromCustomer(sowId, reason, { sub: user.sub, name: user.preferred_username ?? user.email ?? user.sub });
   }
 
   @Mutation(() => SowVersion, { description: 'Job owner only. Records the customer signature on the version in force.' })

@@ -327,6 +327,13 @@ export class SowVersion {
   visibleToCustomer: boolean;
 
   @Prop({ required: false })
+  @Field(() => Int, {
+    nullable: true,
+    description: 'Exact accepted immutable job content version this SOW version derives from. Absent on historical rows and drafts saved without a valid accepted source.'
+  })
+  sourceJobVersionNumber?: number;
+
+  @Prop({ required: false })
   @Field({ nullable: true })
   sentToCustomerAt?: Date;
 
@@ -342,9 +349,34 @@ export class SowVersion {
   @Field({ nullable: true, description: 'Optional note describing what changed' })
   note?: string;
 
+  /** Durable lifecycle activity intent; delivery metadata may change without changing the document snapshot. */
+  @Prop({ type: String, required: false, enum: ['SOW_SENT', 'SOW_SIGNED', 'SOW_FINALIZED'] })
+  activityEventType?: 'SOW_SENT' | 'SOW_SIGNED' | 'SOW_FINALIZED';
+
+  @Prop({ type: String, required: false })
+  activityOperationId?: string;
+
+  @Prop({ type: Date, required: false })
+  activityDeliveredAt?: Date;
+
   @Prop({ required: true, default: false })
   @Field({ description: 'Unsent draft the staff abandoned; hidden from history by default' })
   isDiscarded: boolean;
+
+  /**
+   * Written but not yet reachable: the row exists, and the compare-and-set that
+   * moves the SOW's parent pointer onto it has not been won yet.
+   *
+   * Deliberately distinct from isDiscarded, which means a staff member abandoned
+   * a draft. Conflating the two makes an abandoned draft and a crashed write
+   * indistinguishable, and the recovery for one is the opposite of the other.
+   *
+   * Not exposed to GraphQL: it describes a write in flight, not anything a
+   * reader of the document should reason about. Every filter tests `$ne: true`
+   * so rows written before this field existed need no backfill.
+   */
+  @Prop({ required: true, default: false })
+  isStaged: boolean;
 
   @Prop({ required: true })
   @Field({ description: 'Keycloak sub or email of the author' })

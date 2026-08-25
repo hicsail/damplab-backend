@@ -1,0 +1,12 @@
+# The Dockerfile does `COPY . .`, so anything left here lands in an image layer.
+# CI builds from a clean checkout and never sees these; a local `docker build`
+# would otherwise bake real secrets and a host-shaped dist into the image.
+.env
+.env.*
+node_modules
+dist
+coverage
+*.tsbuildinfo
+.git
+.github
+.vscode

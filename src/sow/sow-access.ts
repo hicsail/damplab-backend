@@ -71,3 +71,34 @@ export function assertJobOwner(job: { email?: string; sub?: string } | null | un
     throw new ForbiddenException('Only the customer who owns this job can sign its SOW');
   }
 }
+
+/**
+ * Whether staff may currently change a SOW's content, and why not when they
+ * cannot.
+ *
+ * A SOW is "with the customer" only while its active version is SENT and
+ * unsigned — SIGNED means they have acted and the ball is back with the lab. So
+ * there are three cases, not one:
+ *
+ *   SENT    the customer is being asked to sign it → withdraw it first
+ *   SIGNED  editable, but the signature it carries does not survive the edit
+ *   FINAL   countersigned by both parties; a executed contract is not edited,
+ *           it is cancelled and replaced
+ *
+ * Returns null when nothing is in the way. The SIGNED case is deliberately not
+ * a blocker: it is allowed, and the caller voids the signature as it writes.
+ */
+export function sowEditBlockedReason(activeStatus: string | null | undefined): string | null {
+  if (activeStatus === 'SENT') {
+    return 'This Statement of Work is with the customer for signature. Withdraw it before editing, and the customer will be told it is no longer available to sign.';
+  }
+  if (activeStatus === 'FINAL') {
+    return 'This Statement of Work has been countersigned and is final. Cancel it and issue a new one to change its terms.';
+  }
+  return null;
+}
+
+export function assertSowContractWritable(activeStatus: string | null | undefined): void {
+  const reason = sowEditBlockedReason(activeStatus);
+  if (reason) throw new ForbiddenException(reason);
+}

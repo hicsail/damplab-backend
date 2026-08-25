@@ -1,7 +1,7 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
-import { Field, ObjectType, ID, registerEnumType } from '@nestjs/graphql';
+import { Field, ObjectType, ID, Int, registerEnumType } from '@nestjs/graphql';
 import { Workflow } from '../workflow/models/workflow.model';
 
 export enum JobState {
@@ -30,6 +30,13 @@ export enum CustomerCategory {
   EXTERNAL_CUSTOMER_NO_SALARY = 'EXTERNAL_CUSTOMER_NO_SALARY'
 }
 registerEnumType(CustomerCategory, { name: 'CustomerCategory' });
+
+export enum CustomerActionRequired {
+  REPLY = 'REPLY',
+  EDIT_WORKFLOW = 'EDIT_WORKFLOW',
+  APPROVE_WORKFLOW = 'APPROVE_WORKFLOW'
+}
+registerEnumType(CustomerActionRequired, { name: 'CustomerActionRequired' });
 
 @ObjectType({ description: 'File attached to a job for additional context or requirements' })
 export class JobAttachment {
@@ -118,6 +125,31 @@ export class Job {
   @Prop({ required: true, default: JobState.CREATING })
   @Field(() => JobState, { description: 'Where in the Job life cycle this Job is' })
   state: JobState;
+
+  @Prop({ type: String, required: false, enum: CustomerActionRequired })
+  @Field(() => CustomerActionRequired, {
+    nullable: true,
+    description: 'The explicit action the customer must complete while this job is in CHANGES_REQUESTED.'
+  })
+  customerActionRequired?: CustomerActionRequired | null;
+
+  /** Identifies which journaled review operation owns the current authoritative state, including compensation checks. */
+  @Prop({ type: String, required: false })
+  lastReviewOperationId?: string;
+
+  @Prop({ type: Number, required: false })
+  @Field(() => Int, {
+    nullable: true,
+    description: 'The content version in force when the job was last handed to the customer — what withdrawing it restores.'
+  })
+  handoverVersionNumber?: number | null;
+
+  @Prop({ type: Number, required: false })
+  @Field(() => Int, {
+    nullable: true,
+    description: 'Exact immutable job-version number accepted by staff.'
+  })
+  acceptedJobVersionNumber?: number | null;
 
   /**
    * The job's billing figures as they stood when staff accepted it — see
