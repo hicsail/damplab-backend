@@ -16,10 +16,8 @@ import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
-import { SowVersionService } from '../sow/sow-version.service';
 import { JobAttachmentsService } from './job-attachments.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
-import { UpdateSOWInput } from '../sow/dto/update-sow.input';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
@@ -81,25 +79,6 @@ export class JobResolver {
     });
   }
 
-  private async syncSowServicesFromJobWorkflows(jobId: string): Promise<void> {
-    const job = await this.jobService.findById(jobId);
-    if (!job) return;
-
-    const existingSow = await this.sowService.findByJobId(jobId);
-    if (!existingSow) return;
-
-    const servicesInput = await this.sowService.collectSowServiceInputs(job, existingSow.services ?? []);
-    if (servicesInput.length === 0) return;
-
-    const updateInput: UpdateSOWInput = { services: servicesInput } as any;
-    await this.sowService.update(String(existingSow._id), updateInput);
-
-    // The billing core has moved; the SOW *document* has not. Flag it so staff
-    // see a banner and choose whether to revise, rather than silently rewriting a
-    // document that may already be sent, signed or finalized.
-    await this.sowVersionService.refreshDocumentStale(String(existingSow._id));
-  }
-
   constructor(
     private readonly jobService: JobService,
     private readonly workflowService: WorkflowService,
@@ -109,8 +88,6 @@ export class JobResolver {
     private readonly commentService: CommentService,
     @Inject(forwardRef(() => SOWService))
     private readonly sowService: SOWService,
-    @Inject(forwardRef(() => SowVersionService))
-    private readonly sowVersionService: SowVersionService,
     private readonly jobAttachmentsService: JobAttachmentsService,
     private readonly jobVersionService: JobVersionService,
     private readonly jobReviewService: JobReviewService,
@@ -313,7 +290,7 @@ export class JobResolver {
       throw new Error('Unable to update job with new workflow');
     }
 
-    await this.syncSowServicesFromJobWorkflows(jobId);
+    await this.sowService.syncServicesFromJobWorkflows(jobId);
 
     await this.activityService.createEvent({
       type: 'JOB_UPDATED',
@@ -363,7 +340,7 @@ export class JobResolver {
     }
 
     for (const j of updatedJobs) {
-      await this.syncSowServicesFromJobWorkflows(String(j._id));
+      await this.sowService.syncServicesFromJobWorkflows(String(j._id));
     }
 
     const updatedJob = updatedJobs.find((j) => String(j._id) === String(jobId)) ?? (await this.jobService.findById(jobId));
@@ -553,12 +530,14 @@ export class JobResolver {
     if (!job) throw new NotFoundException(`Job with ID ${jobId} not found`);
     this.assertContractWritable(job, user);
 
-    return this.jobVersionService.restoreVersion(
+    const restored = await this.jobVersionService.restoreVersion(
       jobId,
       versionNumber,
       { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' },
       note?.trim() || `Restored version ${versionNumber}`
     );
+    await this.sowService.syncServicesFromJobWorkflows(jobId);
+    return restored;
   }
 
   /**
@@ -588,7 +567,7 @@ export class JobResolver {
     // The billing core has moved. This is a no-op on a job with no SOW, which is
     // most jobs being edited; where there is one it flags the document stale so
     // staff can decide whether to issue a new version for re-signature.
-    await this.syncSowServicesFromJobWorkflows(input.jobId);
+    await this.sowService.syncServicesFromJobWorkflows(input.jobId);
 
     await this.activityService.createEvent({
       type: 'JOB_WORKFLOWS_EDITED',

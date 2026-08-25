@@ -302,6 +302,31 @@ export class SOWService {
   }
 
   /**
+   * Rewrites this job's SOW billing core from the live workflow graph.
+   *
+   * The parent `sow.services` is a working copy of the job, not a version.
+   * Versions stay frozen: this flags `documentStale` so staff Recalculate and
+   * Save a new draft rather than mutating a snapshot that may already be sent,
+   * signed, or finalized. No-op when the job has no SOW, which is most jobs
+   * being edited.
+   */
+  async syncServicesFromJobWorkflows(jobId: string): Promise<void> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) return;
+
+    const existingSow = await this.findByJobId(jobId);
+    if (!existingSow) return;
+
+    const servicesInput = await this.collectSowServiceInputs(job, existingSow.services ?? []);
+    if (servicesInput.length === 0) return;
+
+    const updateInput: UpdateSOWInput = { services: servicesInput } as any;
+    await this.update(String(existingSow._id), updateInput);
+
+    await this.sowVersionService.refreshDocumentStale(String(existingSow._id));
+  }
+
+  /**
    * The job a SOW belongs to, or null. Callers need it for the customer category
    * (which drives pricing) and the display job id shown on the document.
    */
