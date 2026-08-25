@@ -50,6 +50,23 @@ export class SOWService {
     return this.generateSOWNumber();
   }
 
+  /** Attempts to allocate a SOW number before giving up; see the retry in `create`. */
+  private static readonly SOW_NUMBER_ATTEMPTS = 5;
+
+  /**
+   * True for a MongoDB duplicate-key rejection, optionally narrowed to one
+   * indexed field. `sows` has unique indexes on both `jobId` and `sowNumber`,
+   * and the two mean very different things — one is a second SOW for the same
+   * job, the other is two SOWs reaching for the same number — so callers need
+   * to tell them apart rather than treating every 11000 alike.
+   */
+  private static isDuplicateKeyError(error: unknown, key?: string): boolean {
+    const candidate = error as { code?: number; keyPattern?: Record<string, unknown> } | null;
+    if (candidate?.code !== 11000) return false;
+    if (!key) return true;
+    return Object.prototype.hasOwnProperty.call(candidate.keyPattern ?? {}, key);
+  }
+
   /** The numeric part of a SOW number, or null if it does not parse. */
   static parseSowNumber(sowNumber: unknown): number | null {
     if (typeof sowNumber !== 'string') return null;
@@ -460,7 +477,7 @@ export class SOWService {
     const endDate = new Date(startDate);
     endDate.setUTCDate(endDate.getUTCDate() + SOWService.DEFAULT_DURATION_DAYS);
 
-    return this.create({
+    const input: CreateSOWInput = {
       jobId,
       // sowTitle is deliberately absent: the field calculator supplies the default
       // title, and a second copy of that string here is exactly the divergence the
@@ -482,7 +499,20 @@ export class SOWService {
       additionalInformation: '',
       createdBy,
       status: SOWStatus.DRAFT
-    });
+    };
+
+    try {
+      return await this.create(input);
+    } catch (error) {
+      // Two clicks on Generate race the `findOne` at the top of this method:
+      // both see no SOW, both build one, and the unique index on jobId lets
+      // exactly one through. The loser should end up where a single click would
+      // have left it — holding the job's SOW — rather than looking at a failure
+      // for work that did in fact get done.
+      const raced = await this.sowModel.findOne({ jobId }).exec();
+      if (raced) return raced;
+      throw error;
+    }
   }
 
   /**
@@ -505,7 +535,7 @@ export class SOWService {
     this.validateSOWData(createSOWInput);
 
     // Always assign on the server; ignore any client-provided sowNumber.
-    const sowNumber = await this.resolveSowNumberForNewSow(job);
+    let sowNumber = await this.resolveSowNumberForNewSow(job);
 
     // Transform services
     const services = await this.transformServices(createSOWInput.services, (job as any).customerCategory);
@@ -547,9 +577,34 @@ export class SOWService {
       updatedAt: new Date()
     };
 
-    const sow = await this.sowModel.create(sowData);
+    // Both checks above — "does this job have a SOW" and "is this number taken" —
+    // are reads followed by a write, so two callers can pass them at the same
+    // moment and disagree only at the insert. The unique indexes are what
+    // actually settle it, which makes this the one place either race is visible.
+    //
+    // A taken sowNumber just means someone else got that number: allocate the
+    // next one and try again. A taken jobId means the job already has its SOW,
+    // which is the same condition the check at the top of this method reports,
+    // so it is reported the same way.
+    let sow: SOWDocument | undefined;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        sow = await this.sowModel.create({ ...sowData, sowNumber });
+        break;
+      } catch (error) {
+        if (SOWService.isDuplicateKeyError(error, 'jobId')) {
+          throw new BadRequestException(`Job ${createSOWInput.jobId} already has a SOW`);
+        }
+        if (!SOWService.isDuplicateKeyError(error, 'sowNumber') || attempt >= SOWService.SOW_NUMBER_ATTEMPTS) throw error;
+        this.logger.warn(`SOW number ${sowNumber} was taken while creating a SOW for job ${createSOWInput.jobId}; allocating another (attempt ${attempt}).`);
+        sowNumber = await this.generateSOWNumber();
+      }
+    }
+
     // Every SOW owns a document from the moment it exists, so the editor and the
-    // customer view never have to cope with a SOW that has no version.
+    // customer view never have to cope with a SOW that has no version. Nothing
+    // above this line writes anything, so a create that lost either race leaves
+    // no half-built SOW behind.
     await this.sowVersionService.createInitialVersion(sow, job as any, createSOWInput.createdBy);
     // Re-read: creating the version sets the version pointers with a separate
     // update, so the document created above still reports currentVersionNumber 0.
