@@ -646,12 +646,6 @@ export class SowVersionService {
     const activeBeforeSave = await this.getActiveVersion(sowId);
     assertSowContractWritable(activeBeforeSave?.status);
 
-    // Editing a signed document voids the signature it carries. The customer
-    // assented to specific words, so the alternative is countersigning terms
-    // they never agreed to — which the gate used to catch late, at countersign
-    // time, rather than here where the change actually happens.
-    const voidsSignature = activeBeforeSave?.status === SOWStatus.SIGNED;
-
     if (input.baseVersionNumber !== currentNumber) {
       throw new ConflictException(`This SOW has moved on since you opened it (you have v${input.baseVersionNumber}, it is now v${currentNumber}). Reload to see the newer version before saving.`);
     }
@@ -758,11 +752,6 @@ export class SowVersionService {
           $set: {
             currentVersionNumber: versionNumber,
             status: SOWStatus.DRAFT,
-            // Voiding drops the signed version out of force. The row itself is
-            // immutable and stays in history as the record of what was signed;
-            // only the pointer moves, so there is no longer a document the
-            // customer is on the hook for.
-            ...(voidsSignature ? { activeVersionNumber: 0 } : {}),
             documentStale: false,
             updatedAt: new Date()
           }
@@ -785,17 +774,6 @@ export class SowVersionService {
     }
     await this.versionModel.updateOne({ _id: created._id, isStaged: true }, { $set: { isStaged: false } }).exec();
     created.isStaged = false;
-
-    if (voidsSignature) {
-      await this.postSowComment(
-        baseSow,
-        `sow-signature-voided:${sowId}:${versionNumber}`,
-        // Third person throughout: this thread is read by staff and the client
-        // alike, so "you" addresses the wrong reader half the time.
-        'The Statement of Work the client signed has been revised by the lab, so that signature no longer applies. A new version will be issued for the client to review and sign.',
-        author
-      );
-    }
 
     // Auto-assign Project Lead to unassigned workflow nodes
     const previousLeadId = current?.inputs?.projectLeadId;
@@ -859,6 +837,29 @@ export class SowVersionService {
   }
 
   /**
+   * Makes the signed version in force the staff working copy again by discarding
+   * every unsent draft above it. The signature stays; Countersign can proceed.
+   */
+  async restoreSignedVersion(sowId: string, versionNumber: number): Promise<SOW> {
+    await this.reconcile(sowId);
+    const sow = await this.requireSow(sowId);
+    const active = await this.getActiveVersion(sowId);
+    if (!active || active.status !== SOWStatus.SIGNED || active.versionNumber !== versionNumber) {
+      throw new BadRequestException('Only the signed version in force can be restored for countersignature.');
+    }
+    if (sow.currentVersionNumber === versionNumber) return sow;
+
+    const above = (await this.listVersions(sowId))
+      .map((version) => version.versionNumber)
+      .filter((n) => n > versionNumber)
+      .sort((a, b) => b - a);
+    for (const n of above) {
+      await this.discardDraft(sowId, n);
+    }
+    return this.requireSow(sowId);
+  }
+
+  /**
    * Fields the document cannot be sent without: hidden or empty means the
    * customer would see a blank or missing section (Engagement Resources with no
    * Project Manager or Project Lead selected, for instance).
@@ -894,6 +895,8 @@ export class SowVersionService {
         return 'There is no Statement of Work awaiting your signature. The lab may have withdrawn it to make changes.';
       case DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE:
         return 'The customer has not signed the version in force yet.';
+      case DocumentBlocker.UNSENT_DRAFT:
+        return 'A newer draft sits above the signed version. Revert to the signed version to countersign those terms, or send the draft for the customer to sign.';
       default:
         return 'This SOW cannot move to its next stage yet.';
     }
@@ -950,8 +953,9 @@ export class SowVersionService {
    * unchanged since) and the document must match it. Signing is not a branch —
    * a signed version is immutable, so a later job change simply runs the same
    * rule again and the customer re-signs. Countersigning adds two conditions of
-   * its own, both of which say the same thing: you may only countersign the
-   * exact document the customer signed, and only while it is still current.
+   * its own: you may only countersign the exact document the customer signed,
+   * and only while no later draft sits above it. A draft above a signature is
+   * recoverable — restore the signed version, or send the revision.
    *
    * DOCUMENT_STALE blocks both actions rather than warning, because
    * appendVersion copies a version's fields verbatim: without it, staff could
@@ -1007,11 +1011,13 @@ export class SowVersionService {
       signBlockers.push(DocumentBlocker.AWAITING_SENT_VERSION);
     }
 
-    // Editing a signed document now voids the signature at the moment of the
-    // edit, so a draft can never sit above a signature that is still good.
     const countersignBlockers = sharedFor(active);
     if (!active || active.status !== SOWStatus.SIGNED) {
       countersignBlockers.push(DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE);
+    } else if ((sow.currentVersionNumber ?? 0) > (sow.activeVersionNumber ?? 0)) {
+      // Staff saved a revision; the signature is still good, but they have to
+      // restore it (or send the draft) before countersigning those terms.
+      countersignBlockers.push(DocumentBlocker.UNSENT_DRAFT);
     }
 
     return {
@@ -1236,10 +1242,9 @@ export class SowVersionService {
     if (!name?.trim()) throw new BadRequestException('A name is required to countersign.');
 
     // A countersignature closes the agreement, so it may only land on the exact
-    // document the customer signed, and only while that document still matches
-    // the job. A stale figure or a draft sitting above the signed version both
-    // mean the lab has moved on from what was agreed — the revision has to go
-    // out and come back signed first.
+    // document the customer signed. A stale figure blocks it; a draft sitting
+    // above the signed version does too, until staff restore that signed version
+    // or send the revision for a new signature.
     const gate = await this.actionGate(sowId);
     if (!gate.canCountersign) {
       throw new BadRequestException(SowVersionService.blockerMessage(gate.countersignBlockers, gate.missingFields));

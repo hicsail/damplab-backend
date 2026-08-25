@@ -213,6 +213,15 @@ export class SOWResolver {
     return this.sowVersionService.discardDraft(sowId, versionNumber);
   }
 
+  @Mutation(() => SOW, {
+    description: 'Staff-only. Discard drafts above the signed version in force so that version can be countersigned.'
+  })
+  @Roles(Role.DamplabStaff)
+  async restoreSowSignedVersion(@Args('sowId', { type: () => ID }) sowId: string, @Args('versionNumber', { type: () => Int }) versionNumber: number, @CurrentUser() user: User): Promise<SOW> {
+    await this.authorizedSow(sowId, user);
+    return this.sowVersionService.restoreSignedVersion(sowId, versionNumber);
+  }
+
   @Mutation(() => SowVersion, { description: 'Staff-only. Issues the current draft to the customer for signing.' })
   @Roles(Role.DamplabStaff)
   async sendSowToCustomer(@Args('sowId', { type: () => ID }) sowId: string, @CurrentUser() user: User): Promise<SowVersion> {

@@ -361,4 +361,8 @@ describe('contract lifecycle blocker guidance', () => {
   it('reports the first blocker because blocker order is the repair order', () => {
     expect(SowVersionService.blockerMessage([DocumentBlocker.NOT_ACCEPTED, DocumentBlocker.DOCUMENT_STALE])).toMatch(/^Accept this job/);
   });
+
+  it('tells staff to revert to the signed version when a draft sits above it', () => {
+    expect(SowVersionService.blockerMessage([DocumentBlocker.UNSENT_DRAFT])).toMatch(/Revert to the signed version/);
+  });
 });
