@@ -35,6 +35,7 @@ interface Harness {
   activityEvents: any[];
   operations: any[];
   restores: any[];
+  sowSyncs: string[];
   failPublicationOnce: () => void;
   failCommentOnce: () => void;
   failEventOnce: () => void;
@@ -224,8 +225,12 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
       return created;
     }
   };
+  const sowSyncs: string[] = [];
   const sowService: any = {
-    jobBillingFingerprint: async () => 'billing-current'
+    jobBillingFingerprint: async () => 'billing-current',
+    syncServicesFromJobWorkflows: async (jobId: string) => {
+      sowSyncs.push(jobId);
+    }
   };
   const activityService: any = {
     createEventIdempotent: async (input: any) => {
@@ -289,6 +294,7 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
     activityEvents,
     operations,
     restores,
+    sowSyncs,
     failPublicationOnce: (): void => {
       publicationFailures += 1;
     },
@@ -984,7 +990,7 @@ describe('JobReviewService withdrawal', () => {
   });
 
   it('takes the job back, restores the handover version, and publishes it to the customer', async () => {
-    const { service, job, restores, comments } = buildHarness(withCustomer());
+    const { service, job, restores, comments, sowSyncs } = buildHarness(withCustomer());
 
     await service.withdrawJobFromCustomer({ operationId: 'wd-1', jobId: JOB_ID, reason: 'We need to rework the design.' }, staff);
 
@@ -994,10 +1000,13 @@ describe('JobReviewService withdrawal', () => {
     expect(job.handoverVersionNumber).toBeNull();
     expect(restores).toEqual([{ versionNumber: 1000, note: 'Withdrawn by the lab', visibleToCustomer: true }]);
     expect(comments[0].content).toContain('We need to rework the design.');
+    // The live graph moved; the SOW billing core has to follow or Recalculate
+    // still shows the customer's unsubmitted draft.
+    expect(sowSyncs).toEqual([JOB_ID]);
   });
 
   it('is retry-safe: a repeat under the same operationId restores and comments once', async () => {
-    const { service, restores, comments, versions } = buildHarness(withCustomer());
+    const { service, restores, comments, versions, sowSyncs } = buildHarness(withCustomer());
     const input = { operationId: 'wd-retry', jobId: JOB_ID, reason: 'Reworking.' };
 
     await service.withdrawJobFromCustomer(input, staff);
@@ -1006,6 +1015,22 @@ describe('JobReviewService withdrawal', () => {
     expect(restores).toHaveLength(1);
     expect(comments.filter((comment) => comment.operationId === input.operationId)).toHaveLength(1);
     expect(versions.filter((version) => version.operationId === input.operationId)).toHaveLength(1);
+    expect(sowSyncs).toEqual([JOB_ID]);
+  });
+
+  it('still syncs the SOW if restore already landed and finalization is retried', async () => {
+    const { service, restores, sowSyncs, failCommentOnce } = buildHarness(withCustomer());
+    const input = { operationId: 'wd-sync-retry', jobId: JOB_ID, reason: 'Reworking.' };
+    failCommentOnce();
+
+    await expect(service.withdrawJobFromCustomer(input, staff)).rejects.toThrow('comment failed');
+    expect(restores).toHaveLength(1);
+    expect(sowSyncs).toEqual([JOB_ID]);
+
+    await service.withdrawJobFromCustomer(input, staff);
+
+    expect(restores).toHaveLength(1);
+    expect(sowSyncs).toEqual([JOB_ID, JOB_ID]);
   });
 
   it('refuses to withdraw a job that is not with the customer', async () => {
@@ -1021,16 +1046,17 @@ describe('JobReviewService withdrawal', () => {
   // A legacy job handed over before the baseline was recorded: take it back
   // rather than refuse, and leave the graph where it is.
   it('still withdraws when no handover baseline was recorded, without restoring', async () => {
-    const { service, job, restores } = buildHarness(withCustomer({ handoverVersionNumber: undefined }));
+    const { service, job, restores, sowSyncs } = buildHarness(withCustomer({ handoverVersionNumber: undefined }));
 
     await service.withdrawJobFromCustomer({ operationId: 'wd-4', jobId: JOB_ID, reason: 'Legacy job.' }, staff);
 
     expect(job.state).toBe(JobState.SUBMITTED);
     expect(restores).toEqual([]);
+    expect(sowSyncs).toEqual([]);
   });
 
   it('clears the whole acceptance stamp and leaves the graph alone', async () => {
-    const { service, job, restores, comments } = buildHarness({
+    const { service, job, restores, comments, sowSyncs } = buildHarness({
       state: JobState.ACCEPTED,
       acceptedJobVersionNumber: 1001,
       acceptedBillingFingerprint: 'billing',
@@ -1046,6 +1072,7 @@ describe('JobReviewService withdrawal', () => {
     }
     // Reopening the spec must not silently rewrite the graph.
     expect(restores).toEqual([]);
+    expect(sowSyncs).toEqual([]);
     expect(comments[0].content).toContain('Price correction needed.');
   });
 

@@ -41,7 +41,12 @@ export enum DocumentBlocker {
   /** No issued SENT version is currently awaiting a customer signature. */
   AWAITING_SENT_VERSION = 'AWAITING_SENT_VERSION',
   /** The version in force has not been signed by the customer yet. */
-  AWAITING_CUSTOMER_SIGNATURE = 'AWAITING_CUSTOMER_SIGNATURE'
+  AWAITING_CUSTOMER_SIGNATURE = 'AWAITING_CUSTOMER_SIGNATURE',
+  /**
+   * A later unsent draft sits above the signed version in force. Staff can
+   * restore that signed version (and countersign it) or send the draft.
+   */
+  UNSENT_DRAFT = 'UNSENT_DRAFT'
 }
 registerEnumType(DocumentBlocker, { name: 'DocumentBlocker' });
 

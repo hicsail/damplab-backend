@@ -81,12 +81,13 @@ export function assertJobOwner(job: { email?: string; sub?: string } | null | un
  * there are three cases, not one:
  *
  *   SENT    the customer is being asked to sign it → withdraw it first
- *   SIGNED  editable, but the signature it carries does not survive the edit
+ *   SIGNED  editable; a new draft sits above it and blocks countersign until
+ *           staff send that draft or restore the signed version
  *   FINAL   countersigned by both parties; a executed contract is not edited,
  *           it is cancelled and replaced
  *
  * Returns null when nothing is in the way. The SIGNED case is deliberately not
- * a blocker: it is allowed, and the caller voids the signature as it writes.
+ * a blocker: saving a revision is allowed, and the signature stays in force.
  */
 export function sowEditBlockedReason(activeStatus: string | null | undefined): string | null {
   if (activeStatus === 'SENT') {

@@ -730,17 +730,26 @@ export class JobReviewService {
    * visible — so nothing they did is lost, and Revert can reach it. The restored
    * version is published to them deliberately: undoing someone's work and then
    * hiding the result would leave them believing their edits still stand.
+   *
+   * The SOW billing core is a cache of the live graph. Restore without syncing
+   * it leaves Recalculate showing the customer's unsubmitted draft. Sync runs
+   * even on retry: a crash after restore but before the first sync must still
+   * catch the cache up. Versions stay frozen; this only rewrites sow.services
+   * and flags the document stale.
    */
   private async writeWithdrawalRestore(operation: JobReviewOperation): Promise<void> {
-    if (operation.restoreWrittenAt || operation.restoreVersionNumber == null) return;
-    await this.jobVersionService.restoreVersion(
-      operation.jobId,
-      operation.restoreVersionNumber,
-      { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName },
-      'Withdrawn by the lab',
-      { visibleToCustomer: true }
-    );
-    await this.updateOperationProgress(operation, { restoreWrittenAt: new Date() });
+    if (operation.restoreVersionNumber == null) return;
+    if (!operation.restoreWrittenAt) {
+      await this.jobVersionService.restoreVersion(
+        operation.jobId,
+        operation.restoreVersionNumber,
+        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName },
+        'Withdrawn by the lab',
+        { visibleToCustomer: true }
+      );
+      await this.updateOperationProgress(operation, { restoreWrittenAt: new Date() });
+    }
+    await this.sowService.syncServicesFromJobWorkflows(operation.jobId);
   }
 
   private async writeWithdrawalHistory(operation: JobReviewOperation, job: Job, fromCustomer: boolean): Promise<void> {

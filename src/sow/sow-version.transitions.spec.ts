@@ -699,20 +699,23 @@ describe('editing a document that is out with the customer', () => {
     await expect(service.withdrawFromCustomer(SOW_ID, '  ', staff)).rejects.toThrow(/reason/i);
   });
 
-  // A signature attests to specific words. Editing them is allowed — staff often
-  // need to — but the signature does not survive it.
-  it('voids the client signature when staff edit a signed document', async () => {
+  // A signature attests to specific words. Saving a revision is allowed — staff
+  // often need to — but the signed version stays in force until they send the
+  // new draft (or restore it and countersign). Voiding on save left no way back.
+  it('keeps the client signature in force when staff save a draft above a signed version', async () => {
     const { service, sow, comments } = makeHarness();
     await service.sendToCustomer(SOW_ID, staff);
     await service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent }, owner);
     expect(sow.status).toBe(SOWStatus.SIGNED);
+    const signedNumber = sow.activeVersionNumber;
 
     const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'revise after signature'), staff);
 
     expect(draft.status).toBe(SOWStatus.DRAFT);
     expect(draft.clientSignature).toBeUndefined();
-    expect(sow.activeVersionNumber).toBe(0);
-    expect(comments.some((comment) => comment.content.includes('no longer applies'))).toBe(true);
+    expect(sow.activeVersionNumber).toBe(signedNumber);
+    expect(comments.some((comment) => comment.content.includes('no longer applies'))).toBe(false);
+    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.UNSENT_DRAFT]);
   });
 
   it('refuses to edit a countersigned document at all', async () => {
@@ -793,6 +796,39 @@ describe('discardDraft', () => {
     expect(sow.currentVersionNumber).toBe(current.versionNumber);
     expect(versions.find((version) => version.versionNumber === older.versionNumber)?.isDiscarded).toBe(true);
     await expect(service.getCurrentVersion(SOW_ID)).resolves.toMatchObject({ versionNumber: current.versionNumber });
+  });
+});
+
+describe('restoreSignedVersion', () => {
+  it('discards drafts above the signed version so staff can countersign it', async () => {
+    const { service, sow, versions } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+    await service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent }, owner);
+    const signedNumber = sow.activeVersionNumber;
+    const firstDraft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'accidental edit'), staff);
+    const secondDraft = await service.saveVersion(SOW_ID, saveInput(firstDraft.versionNumber, 'another edit'), staff);
+
+    const restored = await service.restoreSignedVersion(SOW_ID, signedNumber);
+
+    expect(restored.currentVersionNumber).toBe(signedNumber);
+    expect(restored.activeVersionNumber).toBe(signedNumber);
+    expect(restored.status).toBe(SOWStatus.SIGNED);
+    expect(versions.find((version) => version.versionNumber === firstDraft.versionNumber)?.isDiscarded).toBe(true);
+    expect(versions.find((version) => version.versionNumber === secondDraft.versionNumber)?.isDiscarded).toBe(true);
+    expect((await service.actionGate(SOW_ID)).canCountersign).toBe(true);
+
+    const finalized = await service.finalize(SOW_ID, 'Dr Staff', staff);
+    expect(finalized.status).toBe(SOWStatus.FINAL);
+  });
+
+  it('refuses to restore anything but the signed version in force', async () => {
+    const { service, sow } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+    await expect(service.restoreSignedVersion(SOW_ID, sow.activeVersionNumber)).rejects.toThrow(/signed version in force/);
+
+    await service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber, name: 'Jane', consentedGroups: fullConsent }, owner);
+    await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'revise'), staff);
+    await expect(service.restoreSignedVersion(SOW_ID, sow.currentVersionNumber)).rejects.toThrow(/signed version in force/);
   });
 });
 
@@ -1024,14 +1060,12 @@ describe('actionGate — countersigning', () => {
     expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.AWAITING_CUSTOMER_SIGNATURE]);
   });
 
-  // Revising a signed document now voids the signature as it happens, so a draft
-  // can never sit above a signature that is still good — the case this used to
-  // catch at countersign time cannot arise.
-  it('has nothing to block when a draft sits above the signed version, because the signature is already void', async () => {
+  it('blocks countersignature with UNSENT_DRAFT when a draft sits above the signed version', async () => {
     const { service, sow } = signedHarness();
     sow.currentVersionNumber = 2;
 
-    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([]);
+    expect((await service.actionGate(SOW_ID)).countersignBlockers).toEqual([DocumentBlocker.UNSENT_DRAFT]);
+    expect((await service.actionGate(SOW_ID)).canCountersign).toBe(false);
   });
 
   it('blocks it when the document no longer matches the job', async () => {
@@ -1056,13 +1090,11 @@ describe('actionGate — countersigning', () => {
       expect(v.staffSignature?.name).toBe('Dr Staff');
     });
 
-    it('refuses to finalize once the signature has been voided by an edit', async () => {
+    it('refuses to finalize while a draft sits above the signed version', async () => {
       const { service, sow } = signedHarness();
-      // Voiding drops the signed version out of force; there is nothing to
-      // countersign until the customer signs a reissued version.
-      sow.activeVersionNumber = 0;
+      sow.currentVersionNumber = 2;
 
-      await expect(service.finalize(SOW_ID, 'Dr Staff', staff)).rejects.toThrow();
+      await expect(service.finalize(SOW_ID, 'Dr Staff', staff)).rejects.toThrow(/Revert to the signed version/);
     });
 
     it('refuses to finalize a document whose figures no longer match the job', async () => {
