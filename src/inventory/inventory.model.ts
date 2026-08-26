@@ -187,9 +187,17 @@ export class InventoryItem {
   @Field({ nullable: true, description: 'Expiration date of the service contract, if any.' })
   serviceContractExpiration?: Date;
 
-  @Prop({ type: [DimensionSchema], default: [] })
-  @Field(() => [Dimension], { description: 'Physical dimensions of the equipment (up to 3 measurements).' })
-  dimensions: Dimension[];
+  @Prop({ type: DimensionSchema, required: false })
+  @Field(() => Dimension, { nullable: true, description: 'Length dimension.' })
+  dimensionL?: Dimension;
+
+  @Prop({ type: DimensionSchema, required: false })
+  @Field(() => Dimension, { nullable: true, description: 'Width dimension.' })
+  dimensionW?: Dimension;
+
+  @Prop({ type: DimensionSchema, required: false })
+  @Field(() => Dimension, { nullable: true, description: 'Height dimension.' })
+  dimensionH?: Dimension;
 
   @Prop({ required: false, default: false })
   @Field(() => Boolean, {
