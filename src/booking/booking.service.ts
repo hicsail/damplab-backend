@@ -4,7 +4,6 @@ import { Model } from 'mongoose';
 import { Booking, BookingBillingStatus, BookingDocument, BookingKind, BookingStatus } from './booking.model';
 import { CreateBookingInput } from './dtos/create-booking.input';
 import { InventoryService } from '../inventory/inventory.service';
-import { InventoryItemType } from '../inventory/inventory.model';
 import { AvailabilityService } from '../availability/availability.service';
 
 interface ActorIdentity {
@@ -52,7 +51,7 @@ export class BookingService {
   private inferKind(item: any): BookingKind {
     if (item.rateType === 'PER_UNIT') return BookingKind.QUANTITY;
     if (item.rateType === 'HOURLY') return BookingKind.TIMED;
-    return item.type === InventoryItemType.CONSUMABLE ? BookingKind.QUANTITY : BookingKind.TIMED;
+    return item.type === 'CONSUMABLE' ? BookingKind.QUANTITY : BookingKind.TIMED;
   }
 
   async create(input: CreateBookingInput, actor: ActorIdentity): Promise<Booking> {
