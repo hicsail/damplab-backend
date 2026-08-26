@@ -21,8 +21,12 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --forceExit --detectOpenHandles",
+    "test:integration": "jest --config ./test/jest-integration.json --runInBand --forceExit",
     "initdb": "cd ./scripts; npm install; npm run build; node --env-file=../.env ./bin/dev load all",
-    "migrate:sows": "node --env-file=.env dist/src/sow/migrate-sows.js"
+    "migrate:sows": "node --env-file=.env dist/sow/migrate-sows.js",
+    "migrate:job-editing": "node --env-file=.env dist/job/migrate-job-editing.js",
+    "migrate:job-contract-flow": "node --env-file=.env dist/job/migrate-job-contract-flow.js",
+    "migrate:inventory-types": "node --env-file=.env dist/src/inventory/migrate-inventory-types.js"
   },
   "dependencies": {
     "@apollo/server": "^5.2.0",

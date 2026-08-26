@@ -9,7 +9,8 @@ import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../workfl
 import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.model';
 import { DampLabServices } from '../services/damplab-services.services';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
-import { calculateServiceCost, CustomerCategory, RUN_COUNT_PARAM_ID } from '../pricing/service-pricing.util';
+import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
+import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
 
 /** Fields on a live WorkflowNode that a save is allowed to write. Everything else — state, assigneeId, startedAt, completedSteps, usedInventory, inventory reservations — belongs to the lab and is never touched here. */
 type NodeContentPatch = {
@@ -32,28 +33,6 @@ interface PreparedNode {
   clientId: string;
   patch: NodeContentPatch;
   snapshot: JobVersionNode;
-}
-
-/** True for a value that carries no information: never counted as an edit. */
-function isEmptyParamValue(value: unknown): boolean {
-  if (value === null || value === undefined || value === '') return true;
-  if (Array.isArray(value)) return value.every((v) => v === null || v === undefined || v === '');
-  return false;
-}
-
-function paramValuesById(formData: unknown): Map<string, unknown> {
-  const byId = new Map<string, unknown>();
-  const entries = Array.isArray(formData) ? formData : [];
-  for (const entry of entries) {
-    if (entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string') {
-      byId.set((entry as { id: string }).id, (entry as { value?: unknown }).value ?? null);
-    }
-  }
-  // An absent run count means one run — that is how pricing reads it — so a
-  // stored node from before the universal run-count entry existed must compare
-  // equal to an editor payload that spells the default out.
-  if (!byId.has(RUN_COUNT_PARAM_ID)) byId.set(RUN_COUNT_PARAM_ID, 1);
-  return byId;
 }
 
 /**
@@ -89,10 +68,8 @@ function parametersDiffer(before: unknown, after: unknown): boolean {
       continue;
     }
     if (isEmptyParamValue(beforeValue) && isEmptyParamValue(afterValue)) continue;
-    // A number typed into a text field arrives as a string; "10" and 10 are the
-    // same parameter value and must not read as an edit.
-    if (String(beforeValue) === String(afterValue)) continue;
-    if (JSON.stringify(beforeValue) !== JSON.stringify(afterValue)) return true;
+    if (paramValuesSemanticallyEqual(beforeValue, afterValue)) continue;
+    return true;
   }
 
   return false;
@@ -227,6 +204,71 @@ export class JobVersionService {
     }
   }
 
+  async getLatestContentVersion(jobId: string): Promise<JobVersion | null> {
+    return this.versionModel
+      .findOne({ jobId, isEvent: { $ne: true } })
+      .sort({ versionNumber: -1 })
+      .exec();
+  }
+
+  async getContentVersion(jobId: string, versionNumber: number): Promise<JobVersion | null> {
+    return this.versionModel.findOne({ jobId, versionNumber, isEvent: { $ne: true } }).exec();
+  }
+
+  /**
+   * Any version by number, event rows included.
+   *
+   * Events are not content — nothing is accepted or diffed against them — but
+   * they do carry a verbatim copy of the graph as it stood, and they are what
+   * the history calls "Submitted" or "Changes requested". Restoring to one is
+   * therefore a thing a user can reasonably ask for, and refusing it produced a
+   * bare "version not found" against a version plainly listed in the picker.
+   */
+  async getAnyVersion(jobId: string, versionNumber: number): Promise<JobVersion | null> {
+    return this.versionModel.findOne({ jobId, versionNumber }).exec();
+  }
+
+  async findByOperationId(jobId: string, operationId: string): Promise<JobVersion | null> {
+    return this.versionModel.findOne({ jobId, operationId }).exec();
+  }
+
+  async publishVersion(jobId: string, versionNumber: number, publishedBy: string): Promise<JobVersion> {
+    const version = await this.getContentVersion(jobId, versionNumber);
+    if (!version) {
+      throw new NotFoundException(`Job version ${versionNumber} for job ${jobId} not found`);
+    }
+
+    // Customer-authored, legacy-visible, and already-published rows are already
+    // part of the customer's immutable history. Publication must not rewrite
+    // their envelope metadata merely to record another review.
+    if (version.authorRole === JobVersionAuthorRole.CUSTOMER || version.visibleToCustomer !== false) {
+      return version;
+    }
+
+    const published = await this.versionModel
+      .findOneAndUpdate(
+        {
+          jobId,
+          versionNumber,
+          authorRole: JobVersionAuthorRole.STAFF,
+          visibleToCustomer: false,
+          isEvent: { $ne: true }
+        },
+        {
+          $set: {
+            visibleToCustomer: true,
+            publishedAt: new Date(),
+            publishedBy
+          }
+        },
+        { new: true }
+      )
+      .exec();
+
+    // A concurrent retry may have published between the read and update.
+    return published ?? ((await this.getContentVersion(jobId, versionNumber)) as JobVersion);
+  }
+
   /** The live workflow graph, in the denormalized shape a version stores. */
   async snapshotLiveWorkflows(job: Job): Promise<JobVersionWorkflow[]> {
     const snapshots: JobVersionWorkflow[] = [];
@@ -298,28 +340,41 @@ export class JobVersionService {
       isEvent?: boolean;
       bumpMajor?: boolean;
       visibleToCustomer?: boolean;
+      operationId?: string;
     }
   ): Promise<JobVersion> {
     const jobId = String(job._id);
+    if (meta.operationId) {
+      const existing = await this.findByOperationId(jobId, meta.operationId);
+      if (existing) return existing;
+    }
     const highest = await this.versionModel.findOne({ jobId }).sort({ versionNumber: -1 }).exec();
     const versionNumber = JobVersionService.nextVersionNumber(highest?.versionNumber ?? null, meta.bumpMajor === true);
 
-    return this.versionModel.create({
-      job: new mongoose.Types.ObjectId(jobId),
-      jobId,
-      versionNumber,
-      authorRole: meta.authorRole,
-      workflows,
-      note: meta.note,
-      // Explicit override first, so a transition can record the state it is
-      // moving *to* rather than whatever the in-memory job still says.
-      jobState: meta.jobState ?? job.state,
-      isEvent: meta.isEvent === true,
-      visibleToCustomer: meta.visibleToCustomer === true,
-      createdBy: meta.createdBy,
-      createdByName: meta.createdByName,
-      createdAt: meta.createdAt ?? new Date()
-    });
+    try {
+      return await this.versionModel.create({
+        job: new mongoose.Types.ObjectId(jobId),
+        jobId,
+        versionNumber,
+        authorRole: meta.authorRole,
+        workflows,
+        note: meta.note,
+        // Explicit override first, so a transition can record the state it is
+        // moving *to* rather than whatever the in-memory job still says.
+        jobState: meta.jobState ?? job.state,
+        isEvent: meta.isEvent === true,
+        visibleToCustomer: meta.visibleToCustomer === true,
+        operationId: meta.operationId,
+        createdBy: meta.createdBy,
+        createdByName: meta.createdByName,
+        createdAt: meta.createdAt ?? new Date()
+      });
+    } catch (error: any) {
+      if (error?.code !== 11000 || !meta.operationId) throw error;
+      const raced = await this.findByOperationId(jobId, meta.operationId);
+      if (raced) return raced;
+      throw error;
+    }
   }
 
   /**
@@ -333,7 +388,19 @@ export class JobVersionService {
    *
    * Modelled on the SOW's event versions, which exist for the same reason.
    */
-  async appendStateEvent(job: Job, newState: JobState, author: { role: JobVersionAuthorRole; sub: string; name: string }, note: string): Promise<JobVersion | null> {
+  async appendStateEvent(
+    job: Job,
+    newState: JobState,
+    author: { role: JobVersionAuthorRole; sub: string; name: string },
+    note: string,
+    operationId?: string,
+    sourceWorkflows?: JobVersionWorkflow[]
+  ): Promise<JobVersion | null> {
+    if (operationId) {
+      const existing = await this.findByOperationId(String(job._id), operationId);
+      if (existing) return existing;
+    }
+
     // Force the lazy v1 backfill first. On a job submitted before versioning
     // existed the event would otherwise be written as version 1, and listByJob
     // only backfills when it finds *no* versions — so the original submission
@@ -344,7 +411,7 @@ export class JobVersionService {
     // Nothing to snapshot means a job with no workflows; there is no history to
     // add an event to, and the lazy v1 backfill would be confused by a v1 that
     // carries no graph.
-    const workflows = await this.snapshotLiveWorkflows(job);
+    const workflows = sourceWorkflows ?? (await this.snapshotLiveWorkflows(job));
     if (workflows.length === 0) return null;
 
     return this.appendVersion(job, workflows, {
@@ -355,6 +422,7 @@ export class JobVersionService {
       jobState: newState,
       isEvent: true,
       visibleToCustomer: true,
+      operationId,
       bumpMajor: newState === JobState.CHANGES_REQUESTED
     });
   }
@@ -365,7 +433,58 @@ export class JobVersionService {
    * Live documents are reconciled node by node rather than rebuilt, so a node
    * that is already assigned, started or holding inventory keeps all of it.
    */
-  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string }): Promise<Job> {
+  /**
+   * Makes an earlier version the live graph again.
+   *
+   * Reverting has to move the live nodes, not just record that it happened: the
+   * staff canvas hydrates from `job.workflows`, so a history row alone would
+   * claim a revert the lab never actually received. Everything hard here —
+   * node reconciliation, preserving lab-owned fields, the work-in-flight guard,
+   * appending the resulting version — already lives in saveWorkflows, so this
+   * only has to translate a stored snapshot back into the shape it accepts.
+   *
+   * Shared by the staff/customer Revert action and by withdrawing a job from
+   * the customer, so the two cannot drift apart.
+   */
+  async restoreVersion(
+    jobId: string,
+    versionNumber: number,
+    author: { role: JobVersionAuthorRole; sub: string; name: string },
+    note: string,
+    opts: { visibleToCustomer?: boolean } = {}
+  ): Promise<Job> {
+    const source = await this.getAnyVersion(jobId, versionNumber);
+    if (!source) throw new NotFoundException(`Job version ${versionNumber} for job ${jobId} not found`);
+    if (!(source.workflows ?? []).length) {
+      throw new BadRequestException(`Version ${versionNumber} has no workflow to restore.`);
+    }
+
+    const workflows: SaveWorkflowInput[] = (source.workflows ?? []).map((workflow) => ({
+      workflowId: workflow.workflowId,
+      name: workflow.name,
+      nodes: (workflow.nodes ?? []).map((node) => {
+        // serviceId is optional on a snapshot but required to rebuild a node.
+        // Refuse rather than guess: a restore that silently dropped or
+        // mis-serviced a node would be worse than not restoring at all.
+        if (!node.serviceId) {
+          throw new BadRequestException(`Version ${versionNumber} cannot be restored: node "${node.label || node.id}" has no recorded service.`);
+        }
+        return {
+          id: node.id,
+          label: node.label,
+          serviceId: node.serviceId,
+          formData: node.formData,
+          additionalInstructions: node.additionalInstructions ?? '',
+          position: node.position ? { x: node.position.x, y: node.position.y } : undefined
+        };
+      }),
+      edges: (workflow.edges ?? []).map((edge) => ({ id: edge.id, source: edge.source, target: edge.target }))
+    }));
+
+    return this.saveWorkflows({ jobId, workflows, note } as SaveJobWorkflowsInput, author, opts);
+  }
+
+  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string }, opts: { visibleToCustomer?: boolean } = {}): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
 
@@ -394,8 +513,26 @@ export class JobVersionService {
 
     const workflowIds: mongoose.Types.ObjectId[] = [];
     const keptNodeIds = new Set<string>();
+    // A workflow may be claimed by one tree only.
+    //
+    // Splitting is routine — deleting an edge turns one tree into two — and both
+    // halves still remember the workflow they came from, so both arrive naming
+    // it. Reconciling them in turn overwrote that workflow's node list once per
+    // group, so every node but the last was orphaned: still in the database,
+    // owned by nothing, and gone from the canvas. The job also ended up listing
+    // the same workflow several times, which made the next snapshot report the
+    // surviving node once per group.
+    //
+    // The first group keeps the workflow; the rest become new ones, which is
+    // what a split actually means.
+    const claimed = new Set<string>();
     for (let i = 0; i < input.workflows.length; i++) {
-      const { workflowId, nodeIds } = await this.reconcileWorkflow(input.workflows[i], prepared[i], liveNodes);
+      const requested = input.workflows[i].workflowId;
+      const alreadyTaken = requested != null && claimed.has(String(requested));
+      const spec = alreadyTaken ? { ...input.workflows[i], workflowId: undefined } : input.workflows[i];
+      if (spec.workflowId != null) claimed.add(String(spec.workflowId));
+
+      const { workflowId, nodeIds } = await this.reconcileWorkflow(spec, prepared[i], liveNodes);
       workflowIds.push(workflowId);
       for (const nodeId of nodeIds) keptNodeIds.add(String(nodeId));
     }
@@ -423,7 +560,11 @@ export class JobVersionService {
       createdBy: author.sub,
       createdByName: author.name,
       note,
-      visibleToCustomer: author.role === JobVersionAuthorRole.CUSTOMER
+      // Staff edits stay hidden until acceptance publishes them; a customer's
+      // own edits are theirs to see. Withdrawal overrides this to true: undoing
+      // someone's work and then hiding the result would leave them believing
+      // their edits still stand.
+      visibleToCustomer: opts.visibleToCustomer ?? author.role === JobVersionAuthorRole.CUSTOMER
     });
 
     return refreshed!;

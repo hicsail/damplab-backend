@@ -14,13 +14,16 @@ import { JobFeedStatusEntity, JobFeedStatusEntitySchema } from './job-feed-statu
 import { ActivityModule } from '../activity/activity.module';
 import { JobVersionModule } from '../job-version/job-version.module';
 import { KeycloakModule } from '../keycloak/keycloak.module';
+import { JobReviewService } from './job-review.service';
+import { JobReviewOperation, JobReviewOperationSchema } from './job-review-operation.model';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Job.name, schema: JobSchema },
       { name: Comment.name, schema: CommentSchema },
-      { name: JobFeedStatusEntity.name, schema: JobFeedStatusEntitySchema }
+      { name: JobFeedStatusEntity.name, schema: JobFeedStatusEntitySchema },
+      { name: JobReviewOperation.name, schema: JobReviewOperationSchema }
     ]),
     forwardRef(() => WorkflowModule),
     forwardRef(() => CommentModule),
@@ -29,7 +32,7 @@ import { KeycloakModule } from '../keycloak/keycloak.module';
     JobVersionModule,
     KeycloakModule
   ],
-  providers: [JobService, JobResolver, CreateJobPipe, CommentService, JobAttachmentsService],
+  providers: [JobService, JobResolver, JobReviewService, CreateJobPipe, CommentService, JobAttachmentsService],
   exports: [JobService, JobAttachmentsService]
 })
 export class JobModule {}

@@ -8,6 +8,9 @@ export interface CreateActivityEventInput {
   message: string;
   actorDisplayName?: string | null;
   jobId?: string | null;
+  sowId?: string | null;
+  sowVersionNumber?: number | null;
+  operationId?: string | null;
   workflowId?: string | null;
   workflowNodeId?: string | null;
   serviceName?: string | null;
@@ -28,10 +31,24 @@ export class ActivityService {
       message: input.message,
       actorDisplayName: input.actorDisplayName ?? undefined,
       jobId: input.jobId ?? undefined,
+      sowId: input.sowId ?? undefined,
+      sowVersionNumber: input.sowVersionNumber ?? undefined,
+      operationId: input.operationId ?? undefined,
       workflowId: input.workflowId ?? undefined,
       workflowNodeId: input.workflowNodeId ?? undefined,
       serviceName: input.serviceName ?? undefined
     });
+  }
+
+  async createEventIdempotent(input: CreateActivityEventInput & { operationId: string }): Promise<ActivityEventEntity> {
+    try {
+      return await this.createEvent(input);
+    } catch (error: any) {
+      if (error?.code !== 11000) throw error;
+      const raced = await this.activityModel.findOne({ operationId: input.operationId }).exec();
+      if (!raced) throw error;
+      return raced;
+    }
   }
 
   async listEvents(input?: { limit?: number | null; since?: Date | null }): Promise<ActivityEventEntity[]> {

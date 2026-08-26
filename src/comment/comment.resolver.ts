@@ -8,6 +8,7 @@ import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 import { ActivityService } from '../activity/activity.service';
 import { JobAttachmentsService } from '../job/job-attachments.service';
+import { isStaff } from '../sow/sow-access';
 
 @Resolver(() => Comment)
 @UseGuards(AuthRolesGuard)
@@ -44,11 +45,9 @@ export class CommentResolver {
     return this.commentService.findById(id);
   }
 
-  @Query(() => [Comment], { description: 'Get all comments for a job' })
-  async commentsByJobId(@Args('jobId', { type: () => ID }) jobId: string): Promise<Comment[]> {
-    // TODO: Add visibility filtering based on user role
-    // For now, return all comments (visibility filtering can be added later based on auth context)
-    return this.commentService.findByJob(jobId);
+  @Query(() => [Comment], { description: 'Comments on a job. Staff see internal notes too; everyone else sees only what was written for the customer.' })
+  async commentsByJobId(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Comment[]> {
+    return this.commentService.findByJobWithVisibility(jobId, isStaff(user));
   }
 
   @Query(() => [Comment], { description: 'Get comments scoped to a single workflow node (technician bench-view notes)' })

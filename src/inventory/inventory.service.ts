@@ -79,7 +79,22 @@ export class InventoryService {
   }
 
   async create(item: CreateInventoryItem): Promise<InventoryItem> {
+    if (!item.uniqueId) {
+      item.uniqueId = await this.nextUniqueId();
+    }
     return this.inventoryModel.create(item);
+  }
+
+  /** Generates the next sequential unique ID (INV-0001, INV-0002, …). */
+  private async nextUniqueId(): Promise<string> {
+    const last = await this.inventoryModel
+      .findOne({ uniqueId: { $regex: /^INV-\d+$/ } })
+      .sort({ uniqueId: -1 })
+      .select('uniqueId')
+      .lean()
+      .exec();
+    const lastNum = last?.uniqueId ? parseInt(last.uniqueId.replace('INV-', ''), 10) : 0;
+    return `INV-${String(lastNum + 1).padStart(4, '0')}`;
   }
 
   async update(item: InventoryItem, changes: InventoryItemChange): Promise<InventoryItem> {

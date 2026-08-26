@@ -16,17 +16,18 @@ import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
-import { SowVersionService } from '../sow/sow-version.service';
 import { JobAttachmentsService } from './job-attachments.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
-import { UpdateSOWInput } from '../sow/dto/update-sow.input';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
 import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
+import { assertJobContractWritable } from './job-editing';
 import { KeycloakService } from '../keycloak/keycloak.service';
+import { RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
+import { JobReviewService } from './job-review.service';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -62,23 +63,20 @@ export class JobResolver {
     await this.jobService.recordAcceptance(String((job as any)._id), fingerprint, user.sub);
   }
 
-  private async syncSowServicesFromJobWorkflows(jobId: string): Promise<void> {
-    const job = await this.jobService.findById(jobId);
-    if (!job) return;
-
-    const existingSow = await this.sowService.findByJobId(jobId);
-    if (!existingSow) return;
-
-    const servicesInput = await this.sowService.collectSowServiceInputs(job, existingSow.services ?? []);
-    if (servicesInput.length === 0) return;
-
-    const updateInput: UpdateSOWInput = { services: servicesInput } as any;
-    await this.sowService.update(String(existingSow._id), updateInput);
-
-    // The billing core has moved; the SOW *document* has not. Flag it so staff
-    // see a banner and choose whether to revise, rather than silently rewriting a
-    // document that may already be sent, signed or finalized.
-    await this.sowVersionService.refreshDocumentStale(String(existingSow._id));
+  /**
+   * The one gate on changing what a job agrees to.
+   *
+   * Exactly one party may write at a time: the lab while it holds an
+   * uncommitted job, the customer while the job is with them and they have been
+   * asked for edits, nobody once the spec is accepted. To edit past either
+   * boundary, staff withdraw first — see withdrawJobFromCustomer and
+   * withdrawJobAcceptance.
+   */
+  private assertContractWritable(job: Job, user: User): void {
+    assertJobContractWritable(job, {
+      isStaff: (user.realm_access?.roles ?? []).includes(Role.DamplabStaff),
+      isOwner: job.sub === user.sub
+    });
   }
 
   constructor(
@@ -90,10 +88,9 @@ export class JobResolver {
     private readonly commentService: CommentService,
     @Inject(forwardRef(() => SOWService))
     private readonly sowService: SOWService,
-    @Inject(forwardRef(() => SowVersionService))
-    private readonly sowVersionService: SowVersionService,
     private readonly jobAttachmentsService: JobAttachmentsService,
     private readonly jobVersionService: JobVersionService,
+    private readonly jobReviewService: JobReviewService,
     private readonly keycloakService: KeycloakService
   ) {}
 
@@ -284,13 +281,16 @@ export class JobResolver {
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
+    // Adding a tree changes what the job agrees to, so it goes through the same
+    // gate as editing one.
+    this.assertContractWritable(job, user);
 
     const updated = await this.jobService.addWorkflow(jobId, workflow);
     if (!updated) {
       throw new Error('Unable to update job with new workflow');
     }
 
-    await this.syncSowServicesFromJobWorkflows(jobId);
+    await this.sowService.syncServicesFromJobWorkflows(jobId);
 
     await this.activityService.createEvent({
       type: 'JOB_UPDATED',
@@ -340,7 +340,7 @@ export class JobResolver {
     }
 
     for (const j of updatedJobs) {
-      await this.syncSowServicesFromJobWorkflows(String(j._id));
+      await this.sowService.syncServicesFromJobWorkflows(String(j._id));
     }
 
     const updatedJob = updatedJobs.find((j) => String(j._id) === String(jobId)) ?? (await this.jobService.findById(jobId));
@@ -433,13 +433,26 @@ export class JobResolver {
   }
 
   /**
-   * Staff, or the job's owner. Owners need this so "Resubmit job" can put a
-   * job that came back as CHANGES_REQUESTED into SUBMITTED again; they are held
-   * to exactly that transition so the customer cannot walk their own job
-   * through the lab's pipeline.
+   * The two transitions that are not a review decision: submitting a job at
+   * checkout, and closing one out when the work and the billing are done.
+   *
+   * Everything else — accepting, requesting changes, handing the job back — goes
+   * through reviewJob / respondToJobReview / the withdraw mutations, which write
+   * the state, the requested action and the history together and are retry-safe.
+   * This used to accept any state, which is how a caller could move a job into
+   * ACCEPTED without stamping what was accepted.
    */
-  @Mutation(() => Job)
-  async changeJobState(@Args('job', { type: () => ID }, JobPipe) job: Job, @Args('newState', { type: () => JobState }) newState: JobState, @CurrentUser() user: User): Promise<Job> {
+  @Mutation(() => Job, { description: 'Submit a job for review, or close a finished one. Other transitions go through reviewJob.' })
+  async changeJobState(
+    @Args('job', { type: () => ID }, JobPipe) job: Job,
+    @Args('newState', { type: () => JobState }) newState: JobState,
+    @CurrentUser() user: User,
+    @Args('note', { type: () => String, nullable: true }) note?: string
+  ): Promise<Job> {
+    if (newState !== JobState.SUBMITTED && newState !== JobState.CLOSED) {
+      throw new BadRequestException('Only submission and close-out go through changeJobState. Use reviewJob for review decisions.');
+    }
+
     const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
     if (!isStaff) {
       const isOwner = job.sub === user.sub;
@@ -450,30 +463,81 @@ export class JobResolver {
     }
 
     const wasResubmission = job.state === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
-    // Re-accepting a job that is already ACCEPTED re-stamps the fingerprint to
-    // release a locked send. It is not a transition, so it gets no history row:
-    // the customer's version list would otherwise fill with repeated "Accepted"
-    // entries during a negotiation. The re-stamp is still audited on the job
-    // itself via acceptedAt / acceptedBy.
-    const isReAcceptance = job.state === JobState.ACCEPTED && newState === JobState.ACCEPTED;
-    const updated = (await this.jobService.updateState(job, newState))!;
-
-    // Accepting stamps the spec the lab agreed to. Re-accepting an already
-    // ACCEPTED job re-stamps it, which is how staff release a send that a later
-    // job edit re-locked — see SowVersionService.actionGate.
-    if (newState === JobState.ACCEPTED) {
-      await this.stampAcceptance(updated, user);
-    }
+    const updated = (await this.jobService.updateState(job, newState, null))!;
 
     // Recorded after the state actually moved, so a failed transition leaves no
     // entry. A resubmission is called out by name: "Submitted" on the second
     // pass would read as a duplicate of the original submission.
-    const note = wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState];
-    if (note && !isReAcceptance) {
-      await this.jobVersionService.appendStateEvent(updated, newState, { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' }, note);
+    const historyNote = note?.trim() || (wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState]);
+    if (historyNote) {
+      await this.jobVersionService.appendStateEvent(updated, newState, { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' }, historyNote);
     }
 
     return updated;
+  }
+
+  @Mutation(() => Job, {
+    description: 'Staff-only. Accept the exact latest job version or request a specific customer action.'
+  })
+  @Roles(Role.DamplabStaff)
+  async reviewJob(@Args('input', { type: () => ReviewJobInput }) input: ReviewJobInput, @CurrentUser() user: User): Promise<Job> {
+    return this.jobReviewService.reviewJob(input, {
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? user.sub
+    });
+  }
+
+  @Mutation(() => Job, {
+    description: 'Job-owner-only. Complete the currently requested review action and return the job to staff.'
+  })
+  async respondToJobReview(@Args('input', { type: () => RespondToJobReviewInput }) input: RespondToJobReviewInput, @CurrentUser() user: User): Promise<Job> {
+    return this.jobReviewService.respondToJobReview(input, {
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? user.sub
+    });
+  }
+
+  @Mutation(() => Job, {
+    description: "Staff-only. Take a job back from the customer, restoring the workflow to the version they were handed. Their own versions stay in the job's history."
+  })
+  @Roles(Role.DamplabStaff)
+  async withdrawJobFromCustomer(@Args('input', { type: () => WithdrawJobInput }) input: WithdrawJobInput, @CurrentUser() user: User): Promise<Job> {
+    return this.jobReviewService.withdrawJobFromCustomer(input, {
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? user.sub
+    });
+  }
+
+  @Mutation(() => Job, {
+    description: 'Staff-only. Reopen an accepted job so its spec can be edited again. Any issued Statement of Work is left alone but stops being sendable until the job is re-accepted.'
+  })
+  @Roles(Role.DamplabStaff)
+  async withdrawJobAcceptance(@Args('input', { type: () => WithdrawJobInput }) input: WithdrawJobInput, @CurrentUser() user: User): Promise<Job> {
+    return this.jobReviewService.withdrawJobAcceptance(input, {
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? user.sub
+    });
+  }
+
+  @Mutation(() => Job, { description: 'Restore an earlier version of the workflow graph as a new version. Available to whoever currently holds the job.' })
+  async restoreJobVersion(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @Args('versionNumber', { type: () => Int }) versionNumber: number,
+    @CurrentUser() user: User,
+    @Args('note', { type: () => String, nullable: true }) note?: string
+  ): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    this.assertContractWritable(job, user);
+
+    const restored = await this.jobVersionService.restoreVersion(
+      jobId,
+      versionNumber,
+      { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' },
+      note?.trim() || `Restored version ${versionNumber}`
+    );
+    await this.sowService.syncServicesFromJobWorkflows(jobId);
+    return restored;
   }
 
   /**
@@ -481,7 +545,7 @@ export class JobResolver {
    * the result as a new version.
    *
    * Staff may edit any job that is not CLOSED. Customers may edit only their own
-   * job, and only while changes have been requested of them.
+   * job, and only while staff have enabled editing on it.
    */
   @Mutation(() => Job, {
     description: "Replace a job's workflow graph from the workflow editor and record the result as a new job version."
@@ -492,16 +556,7 @@ export class JobResolver {
       throw new NotFoundException(`Job with ID ${input.jobId} not found`);
     }
 
-    const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
-    if (isStaff) {
-      if (job.state === JobState.CLOSED) {
-        throw new ForbiddenException('This job is closed and can no longer be edited');
-      }
-    } else if (job.sub !== user.sub) {
-      throw new ForbiddenException('You do not have permission to edit this job');
-    } else if (job.state !== JobState.CHANGES_REQUESTED) {
-      throw new ForbiddenException('This job can only be edited while changes have been requested');
-    }
+    this.assertContractWritable(job, user);
 
     const updated = await this.jobVersionService.saveWorkflows(input, {
       role: this.authorRoleFor(user),
@@ -512,7 +567,7 @@ export class JobResolver {
     // The billing core has moved. This is a no-op on a job with no SOW, which is
     // most jobs being edited; where there is one it flags the document stale so
     // staff can decide whether to issue a new version for re-signature.
-    await this.syncSowServicesFromJobWorkflows(input.jobId);
+    await this.sowService.syncServicesFromJobWorkflows(input.jobId);
 
     await this.activityService.createEvent({
       type: 'JOB_WORKFLOWS_EDITED',
@@ -560,9 +615,9 @@ export class JobResolver {
     return withUrls;
   }
 
-  @ResolveField(() => [Comment])
-  async comments(@Parent() job: Job): Promise<Comment[]> {
-    return this.commentService.findByJob(job._id);
+  @ResolveField(() => [Comment], { description: 'Staff see internal notes too; everyone else sees only what was written for the customer.' })
+  async comments(@Parent() job: Job, @CurrentUser() user: User): Promise<Comment[]> {
+    return this.commentService.findByJobWithVisibility(job._id, (user.realm_access?.roles ?? []).includes(Role.DamplabStaff));
   }
 
   @ResolveField(() => SOW, { nullable: true, description: 'SOW associated with this job' })

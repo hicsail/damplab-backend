@@ -1,14 +1,11 @@
 import { Injectable, BadRequestException, NotFoundException, Inject, forwardRef, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { SOW, SOWDocument, SOWStatus, SOWSignature, SOWSignatureRole } from './sow.model';
+import { SOW, SOWDocument, SOWStatus } from './sow.model';
 import { CreateSOWInput } from './dto/create-sow.input';
 import { UpdateSOWInput } from './dto/update-sow.input';
-import { SubmitSOWSignatureInput } from './dto/submit-sow-signature.input';
 import { JobService } from '../job/job.service';
 import { Job } from '../job/job.model';
-import { User } from '../auth/user.interface';
-import { Role } from '../auth/roles/roles.enum';
 import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
@@ -51,6 +48,23 @@ export class SOWService {
       }
     }
     return this.generateSOWNumber();
+  }
+
+  /** Attempts to allocate a SOW number before giving up; see the retry in `create`. */
+  private static readonly SOW_NUMBER_ATTEMPTS = 5;
+
+  /**
+   * True for a MongoDB duplicate-key rejection, optionally narrowed to one
+   * indexed field. `sows` has unique indexes on both `jobId` and `sowNumber`,
+   * and the two mean very different things — one is a second SOW for the same
+   * job, the other is two SOWs reaching for the same number — so callers need
+   * to tell them apart rather than treating every 11000 alike.
+   */
+  private static isDuplicateKeyError(error: unknown, key?: string): boolean {
+    const candidate = error as { code?: number; keyPattern?: Record<string, unknown> } | null;
+    if (candidate?.code !== 11000) return false;
+    if (!key) return true;
+    return Object.prototype.hasOwnProperty.call(candidate.keyPattern ?? {}, key);
   }
 
   /** The numeric part of a SOW number, or null if it does not parse. */
@@ -305,6 +319,31 @@ export class SOWService {
   }
 
   /**
+   * Rewrites this job's SOW billing core from the live workflow graph.
+   *
+   * The parent `sow.services` is a working copy of the job, not a version.
+   * Versions stay frozen: this flags `documentStale` so staff Recalculate and
+   * Save a new draft rather than mutating a snapshot that may already be sent,
+   * signed, or finalized. No-op when the job has no SOW, which is most jobs
+   * being edited.
+   */
+  async syncServicesFromJobWorkflows(jobId: string): Promise<void> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) return;
+
+    const existingSow = await this.findByJobId(jobId);
+    if (!existingSow) return;
+
+    const servicesInput = await this.collectSowServiceInputs(job, existingSow.services ?? []);
+    if (servicesInput.length === 0) return;
+
+    const updateInput: UpdateSOWInput = { services: servicesInput } as any;
+    await this.update(String(existingSow._id), updateInput);
+
+    await this.sowVersionService.refreshDocumentStale(String(existingSow._id));
+  }
+
+  /**
    * The job a SOW belongs to, or null. Callers need it for the customer category
    * (which drives pricing) and the display job id shown on the document.
    */
@@ -342,6 +381,17 @@ export class SOWService {
 
     if (!updated) throw new NotFoundException(`SOW with ID ${sowId} not found`);
     return updated;
+  }
+
+  /**
+   * Puts a previously captured billing core back.
+   *
+   * Compensation for `applyDocumentBilling`, which a save performs before it
+   * knows whether its version row will win the parent-pointer CAS. A lost race
+   * would otherwise leave the document billing figures that no version records.
+   */
+  async restoreDocumentBilling(sowId: string, pricing: SOW['pricing']): Promise<void> {
+    await this.sowModel.findByIdAndUpdate(sowId, { $set: { pricing, updatedAt: new Date() } }).exec();
   }
 
   /** Default project length when nothing better is known; staff edit it in the editor. */
@@ -427,7 +477,7 @@ export class SOWService {
     const endDate = new Date(startDate);
     endDate.setUTCDate(endDate.getUTCDate() + SOWService.DEFAULT_DURATION_DAYS);
 
-    return this.create({
+    const input: CreateSOWInput = {
       jobId,
       // sowTitle is deliberately absent: the field calculator supplies the default
       // title, and a second copy of that string here is exactly the divergence the
@@ -449,7 +499,20 @@ export class SOWService {
       additionalInformation: '',
       createdBy,
       status: SOWStatus.DRAFT
-    });
+    };
+
+    try {
+      return await this.create(input);
+    } catch (error) {
+      // Two clicks on Generate race the `findOne` at the top of this method:
+      // both see no SOW, both build one, and the unique index on jobId lets
+      // exactly one through. The loser should end up where a single click would
+      // have left it — holding the job's SOW — rather than looking at a failure
+      // for work that did in fact get done.
+      const raced = await this.sowModel.findOne({ jobId }).exec();
+      if (raced) return raced;
+      throw error;
+    }
   }
 
   /**
@@ -472,7 +535,7 @@ export class SOWService {
     this.validateSOWData(createSOWInput);
 
     // Always assign on the server; ignore any client-provided sowNumber.
-    const sowNumber = await this.resolveSowNumberForNewSow(job);
+    let sowNumber = await this.resolveSowNumberForNewSow(job);
 
     // Transform services
     const services = await this.transformServices(createSOWInput.services, (job as any).customerCategory);
@@ -514,9 +577,34 @@ export class SOWService {
       updatedAt: new Date()
     };
 
-    const sow = await this.sowModel.create(sowData);
+    // Both checks above — "does this job have a SOW" and "is this number taken" —
+    // are reads followed by a write, so two callers can pass them at the same
+    // moment and disagree only at the insert. The unique indexes are what
+    // actually settle it, which makes this the one place either race is visible.
+    //
+    // A taken sowNumber just means someone else got that number: allocate the
+    // next one and try again. A taken jobId means the job already has its SOW,
+    // which is the same condition the check at the top of this method reports,
+    // so it is reported the same way.
+    let sow: SOWDocument | undefined;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        sow = await this.sowModel.create({ ...sowData, sowNumber });
+        break;
+      } catch (error) {
+        if (SOWService.isDuplicateKeyError(error, 'jobId')) {
+          throw new BadRequestException(`Job ${createSOWInput.jobId} already has a SOW`);
+        }
+        if (!SOWService.isDuplicateKeyError(error, 'sowNumber') || attempt >= SOWService.SOW_NUMBER_ATTEMPTS) throw error;
+        this.logger.warn(`SOW number ${sowNumber} was taken while creating a SOW for job ${createSOWInput.jobId}; allocating another (attempt ${attempt}).`);
+        sowNumber = await this.generateSOWNumber();
+      }
+    }
+
     // Every SOW owns a document from the moment it exists, so the editor and the
-    // customer view never have to cope with a SOW that has no version.
+    // customer view never have to cope with a SOW that has no version. Nothing
+    // above this line writes anything, so a create that lost either race leaves
+    // no half-built SOW behind.
     await this.sowVersionService.createInitialVersion(sow, job as any, createSOWInput.createdBy);
     // Re-read: creating the version sets the version pointers with a separate
     // update, so the document created above still reports currentVersionNumber 0.
@@ -626,80 +714,6 @@ export class SOWService {
 
   /** Max size for signatureDataUrl in bytes (500 KB). Base64 increases size ~4/3, so we limit string length. */
   private static readonly SIGNATURE_DATA_URL_MAX_BYTES = 500 * 1024;
-
-  /**
-   * Submit a signature for an SOW (client or technician). Idempotent per role.
-   * CLIENT: only the job owner (matching email or sub) can submit.
-   * TECHNICIAN: only users with DamplabStaff role can submit.
-   */
-  async submitSignature(input: SubmitSOWSignatureInput, user: User): Promise<SOW> {
-    const sow = await this.sowModel.findById(input.sowId).exec();
-    if (!sow) {
-      throw new NotFoundException(`SOW with ID ${input.sowId} not found`);
-    }
-
-    const job = await this.jobService.findById(sow.jobId);
-    if (!job) {
-      throw new BadRequestException('SOW job not found');
-    }
-
-    if (input.role === SOWSignatureRole.CLIENT) {
-      const isOwner = job.email === user.email || job.sub === user.sub;
-      if (!isOwner) {
-        throw new BadRequestException('Only the job owner (client) can submit the client signature');
-      }
-    } else if (input.role === SOWSignatureRole.TECHNICIAN) {
-      const roles = user.realm_access?.roles ?? [];
-      const isStaff = roles.includes(Role.DamplabStaff);
-      if (!isStaff) {
-        throw new BadRequestException('Only staff can submit the technician signature');
-      }
-    }
-
-    if (!input.name?.trim()) {
-      throw new BadRequestException('Signature name is required');
-    }
-
-    const signedAtDate = new Date(input.signedAt);
-    if (isNaN(signedAtDate.getTime())) {
-      throw new BadRequestException('signedAt must be a valid ISO 8601 date-time');
-    }
-
-    if (input.signatureDataUrl) {
-      const sizeBytes = Buffer.byteLength(input.signatureDataUrl, 'utf8');
-      if (sizeBytes > SOWService.SIGNATURE_DATA_URL_MAX_BYTES) {
-        throw new BadRequestException(`signatureDataUrl must be at most ${SOWService.SIGNATURE_DATA_URL_MAX_BYTES / 1024} KB`);
-      }
-    }
-
-    const signature: SOWSignature = {
-      name: input.name.trim(),
-      title: input.title?.trim(),
-      signedAt: input.signedAt,
-      signatureDataUrl: input.signatureDataUrl || undefined
-    };
-
-    const updateKey = input.role === SOWSignatureRole.CLIENT ? 'clientSignature' : 'technicianSignature';
-    const updateData: any = {
-      [updateKey]: signature,
-      updatedAt: new Date()
-    };
-
-    const updated = await this.sowModel.findByIdAndUpdate(input.sowId, { $set: updateData }, { new: true }).exec();
-    if (!updated) {
-      throw new NotFoundException(`SOW with ID ${input.sowId} not found`);
-    }
-
-    const hasClient = !!updated.clientSignature;
-    const hasTechnician = !!updated.technicianSignature;
-    if (hasClient && hasTechnician && updated.status !== SOWStatus.SIGNED) {
-      await this.sowModel.findByIdAndUpdate(input.sowId, { $set: { status: SOWStatus.SIGNED, updatedAt: new Date() } });
-      const final = await this.sowModel.findById(input.sowId).exec();
-      return final!;
-    }
-
-    return updated;
-  }
 
   /**
    * Upsert SOW for a job (create or update if exists)

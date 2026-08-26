@@ -1,5 +1,5 @@
 import { SowVersionService } from './sow-version.service';
-import { SOW, SOWAdjustmentType } from './sow.model';
+import { DocumentBlocker, SOW, SOWAdjustmentType } from './sow.model';
 
 function sow(overrides: Partial<SOW> = {}): SOW {
   return {
@@ -123,6 +123,26 @@ describe('billingFingerprint', () => {
     expect(SowVersionService.billingFingerprint(changed)).not.toBe(SowVersionService.billingFingerprint(base));
   });
 
+  it.each([
+    ['reason', { reason: 'Weekend processing' }],
+    ['unit amount', { unitAmount: 25 }],
+    ['multiplier', { multiplier: 4 }]
+  ])('changes when adjustment %s changes without changing its computed amount', (_label, patch) => {
+    const adjustment = {
+      type: SOWAdjustmentType.ADDITIONAL_COST,
+      description: 'Rush handling',
+      category: 'DAYS',
+      reason: 'Original reason',
+      unitAmount: 10,
+      multiplier: 2,
+      amount: 20
+    };
+    const before = { ...base, adjustments: [adjustment], totalCost: base.totalCost + 20 };
+    const after = { ...before, adjustments: [{ ...adjustment, ...patch }] };
+
+    expect(SowVersionService.billingFingerprint(after as any)).not.toBe(SowVersionService.billingFingerprint(before as any));
+  });
+
   it('ignores changes that do not affect the fee schedule', () => {
     const changed = SowVersionService.deriveInputs(sow({ resources: { projectManager: 'Someone Else', projectLead: 'X' } } as any), { customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC' });
     expect(SowVersionService.billingFingerprint(changed)).toBe(SowVersionService.billingFingerprint(base));
@@ -172,22 +192,29 @@ describe('previewCalculatedValues — prose blocks', () => {
   function harness(storedFields: Array<{ key: string; calculatedValue: string }>, blocks: Record<string, string>): SowVersionService {
     const stored = sow();
     (stored as any)._id = 'sow-1';
+    (stored as any).currentVersionNumber = 1;
 
+    const storedVersion = {
+      versionNumber: 1,
+      fields: storedFields.map((f) => ({ ...f, value: f.calculatedValue, isOverridden: false, isEnabled: true }))
+    };
     const versionModel: any = {
       findOne: () => ({
-        sort: () => ({
-          exec: async () => ({
-            versionNumber: 1,
-            fields: storedFields.map((f) => ({ ...f, value: f.calculatedValue, isOverridden: false, isEnabled: true }))
-          })
-        })
+        exec: async () => storedVersion,
+        sort: () => ({ exec: async () => storedVersion })
       })
     };
     const sowModel: any = { findById: () => ({ exec: async () => stored }) };
     const sowService: any = { getJobForSow: async () => ({ customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', jobId: '1234' }) };
     const presetService: any = { defaultTextByKey: async () => blocks };
+    const activityService: any = { createEventIdempotent: async () => undefined };
+    // Required now, rather than @Optional(): a missing wiring used to degrade
+    // silently into "no accepted source", which blocked every SOW.
+    const jobVersionService: any = { getContentVersion: async () => null, getLatestContentVersion: async () => null };
 
-    return new SowVersionService(versionModel, sowModel, sowService, presetService);
+    const commentService: any = { createIdempotent: async () => undefined };
+
+    return new SowVersionService(versionModel, sowModel, sowService, presetService, activityService, jobVersionService, commentService);
   }
 
   const valueFor = (rows: Array<{ key: string; calculatedValue: string }>, key: string): string | undefined => rows.find((r) => r.key === key)?.calculatedValue;
@@ -319,5 +346,23 @@ describe('feeScheduleInputs', () => {
     expect(after.services).toEqual(before.services);
     expect(after.baseCost).toBe(before.baseCost);
     expect(after.totalCost).toBe(375);
+  });
+});
+
+describe('contract lifecycle blocker guidance', () => {
+  it.each([DocumentBlocker.ACCEPTED_SOURCE_UNAVAILABLE])('gives the complete fail-closed repair sequence for %s', (blocker) => {
+    const message = SowVersionService.blockerMessage([blocker]);
+
+    expect(message).toMatch(/Re-accept/i);
+    expect(message).toMatch(/save a new SOW draft/i);
+    expect(message).toMatch(/reissue/i);
+  });
+
+  it('reports the first blocker because blocker order is the repair order', () => {
+    expect(SowVersionService.blockerMessage([DocumentBlocker.NOT_ACCEPTED, DocumentBlocker.DOCUMENT_STALE])).toMatch(/^Accept this job/);
+  });
+
+  it('tells staff to revert to the signed version when a draft sits above it', () => {
+    expect(SowVersionService.blockerMessage([DocumentBlocker.UNSENT_DRAFT])).toMatch(/Revert to the signed version/);
   });
 });
