@@ -9,6 +9,9 @@ import * as request from 'supertest';
 
 import { AppModule } from '../../src/app.module';
 import { AuthRolesGuard } from '../../src/auth/auth.guard';
+import { Permission } from '../../src/auth/permissions/permission.enum';
+import { hasAllPermissions } from '../../src/auth/permissions/permissions';
+import { PERMISSIONS_KEY } from '../../src/auth/permissions/permissions.decorator';
 import { ROLES_KEY } from '../../src/auth/roles/roles.decorator';
 import { Role } from '../../src/auth/roles/roles.enum';
 import { User } from '../../src/auth/user.interface';
@@ -43,7 +46,7 @@ export const ACTORS: Record<ActorName, User> = {
     sub: 'customer-sub-1',
     email: 'client@bu.test',
     preferred_username: 'Cara Client',
-    realm_access: { roles: [Role.InternalCustomers] }
+    realm_access: { roles: [Role.InternalCustomer] }
   },
   // A signed-in user who owns nothing here, for the ownership checks that a
   // staff/customer pair alone cannot tell apart from a role check.
@@ -51,15 +54,22 @@ export const ACTORS: Record<ActorName, User> = {
     sub: 'customer-sub-2',
     email: 'stranger@bu.test',
     preferred_username: 'Sam Stranger',
-    realm_access: { roles: [Role.InternalCustomers] }
+    realm_access: { roles: [Role.InternalCustomer] }
   }
 };
 
 /**
  * Stands in for AuthRolesGuard: reads an actor name off `x-test-user` instead of
- * verifying a Keycloak JWT, then applies the same @Roles check the real guard
- * does. Skipping that check would quietly turn every staff-only assertion in the
- * suite into a no-op, so it is reimplemented rather than dropped.
+ * verifying a Keycloak JWT, then applies the same @Roles **and**
+ * @RequirePermission checks the real guard does. Skipping either would quietly
+ * turn every staff-only assertion in the suite into a no-op, so both are
+ * reimplemented rather than dropped.
+ *
+ * The permission half matters most as resolvers gain `@RequirePermission`: a
+ * harness that only mirrored @Roles would keep passing while every narrowing went
+ * untested. Note the asymmetry it copies from the real guard — absent @Roles
+ * metadata allows, absent permission metadata is simply not checked, but a
+ * handler that *does* carry @RequirePermission fails closed.
  */
 class TestAuthGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
@@ -75,12 +85,16 @@ class TestAuthGuard implements CanActivate {
     request.user = user;
 
     const requiredRoles = this.reflector.getAllAndOverride<Role[]>(ROLES_KEY, [context.getHandler(), context.getClass()]);
-    if (!requiredRoles?.length) return true;
-
     const roles = user.realm_access?.roles ?? [];
-    if (!requiredRoles.some((role) => roles.includes(role))) {
+    if (requiredRoles?.length && !requiredRoles.some((role) => roles.includes(role))) {
       throw new ForbiddenException('You do not have the required role');
     }
+
+    const requiredPermissions = this.reflector.getAllAndOverride<Permission[]>(PERMISSIONS_KEY, [context.getHandler(), context.getClass()]);
+    if (requiredPermissions?.length && !hasAllPermissions(user, requiredPermissions)) {
+      throw new ForbiddenException(`Missing permission: ${requiredPermissions.join(', ')}`);
+    }
+
     return true;
   }
 }
