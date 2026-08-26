@@ -1,6 +1,8 @@
 import { Body, Controller, Post, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthRolesGuard } from '../auth/auth.guard';
+import { Roles } from '../auth/roles/roles.decorator';
+import { Role } from '../auth/roles/roles.enum';
 import { AgentService, ChatHistoryEntry } from './agent.service';
 
 interface ChatRequestBody {
@@ -16,7 +18,11 @@ export class AgentController {
 
   /**
    * Chat endpoint for the canvas agent. Any authenticated user may use it
-   * (no @Roles — the guard just enforces a valid Keycloak token). Responds as
+   * (no @Roles — the guard just enforces a valid Keycloak token). That is
+   * deliberate: this agent is the assistant on the client-facing canvas, so
+   * requiring staff here would remove a feature customers have today. Narrowing
+   * it, if wanted, belongs with the rest of the customer-facing narrowing.
+   * Responds as
    * Server-Sent Events:
    *   data: {"delta":"..."}          // streamed message text
    *   data: {"done":true,"type":..,"message":..,"workflow":{...}}
@@ -32,7 +38,15 @@ export class AgentController {
     return this.streamAgent('canvas', body, res);
   }
 
-  /** Lab-status agent (queries Mongo via n8n; staff-facing). */
+  /**
+   * Lab-status agent (queries Mongo via n8n; staff-facing).
+   *
+   * The class-level guard only requires a valid token, so until this decoration
+   * every authenticated user — including any customer — could drive this proxy.
+   * Its only surface in the app is /lab-assistant, which is already staff-only,
+   * so requiring the role here denies nobody who could reach it legitimately.
+   */
+  @Roles(Role.DamplabStaff)
   @Post('lab-status/chat')
   async labStatusChat(@Body() body: ChatRequestBody, @Res() res: Response): Promise<void> {
     return this.streamAgent('lab-status', body, res);

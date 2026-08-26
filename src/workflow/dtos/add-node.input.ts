@@ -5,7 +5,7 @@ import { DampLabServices } from '../../services/damplab-services.services';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-data.util';
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { REQUEST } from '@nestjs/core';
-import { Role } from '../../auth/roles/roles.enum';
+import { deriveCustomerCategory } from '../../pricing/pricing-groups';
 
 @InputType()
 export class AddNodeInput extends OmitType(WorkflowNode, ['_id', 'service', 'state'] as const, InputType) {
@@ -28,20 +28,7 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     const formData = normalizeFormDataToArray(value.formData, multiValueParamIds);
     const roles: string[] = this.request?.user?.realm_access?.roles ?? [];
     const groups: string[] = this.request?.user?.groups ?? [];
-    const claims = [...roles, ...groups];
-    const hasGroup = (groupName: string): boolean => claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
-    const category: CustomerCategory | undefined =
-      hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)
-        ? 'INTERNAL_CUSTOMERS'
-        : hasGroup(Role.ExternalCustomerAcademic)
-        ? 'EXTERNAL_CUSTOMER_ACADEMIC'
-        : hasGroup(Role.ExternalCustomerMarket)
-        ? 'EXTERNAL_CUSTOMER_MARKET'
-        : hasGroup(Role.ExternalCustomerNoSalary)
-        ? 'EXTERNAL_CUSTOMER_NO_SALARY'
-        : hasGroup(Role.ExternalCustomer)
-        ? 'EXTERNAL_CUSTOMER_MARKET'
-        : undefined;
+    const category: CustomerCategory | undefined = deriveCustomerCategory([...roles, ...groups]);
     const price = calculateServiceCost(service, formData, value.price, category);
     return { ...value, formData, service, state: WorkflowNodeState.QUEUED, price };
   }

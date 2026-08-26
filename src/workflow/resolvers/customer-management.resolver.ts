@@ -7,6 +7,7 @@ import { KeycloakService } from '../../keycloak/keycloak.service';
 import { CustomerCategory } from '../../job/job.model';
 import { KeycloakUserCustomerManagement } from '../dtos/keycloak-customer-user.dto';
 import { KeycloakUserCustomerManagementPage } from '../dtos/keycloak-customer-user-page.dto';
+import { CATEGORY_PRIMARY_GROUP, PricingGroup } from '../../pricing/pricing-groups';
 
 export enum CustomerManagementUserListCategory {
   ALL = 'ALL',
@@ -19,6 +20,17 @@ export enum CustomerManagementUserListCategory {
 }
 
 registerEnumType(CustomerManagementUserListCategory, { name: 'CustomerManagementUserListCategory' });
+
+/** The filter values that name a pricing category outright. */
+const LIST_CATEGORY_TO_CUSTOMER_CATEGORY: Record<
+  Exclude<CustomerManagementUserListCategory, CustomerManagementUserListCategory.ALL | CustomerManagementUserListCategory.STAFF | CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT>,
+  CustomerCategory
+> = {
+  [CustomerManagementUserListCategory.INTERNAL_CUSTOMERS]: CustomerCategory.INTERNAL_CUSTOMERS,
+  [CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_ACADEMIC]: CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC,
+  [CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_MARKET]: CustomerCategory.EXTERNAL_CUSTOMER_MARKET,
+  [CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_NO_SALARY]: CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY
+};
 
 @Resolver()
 export class CustomerManagementResolver {
@@ -50,18 +62,12 @@ export class CustomerManagementResolver {
     } else if (category === CustomerManagementUserListCategory.STAFF) {
       rows = await this.keycloakService.listLabStaffWithCustomerCategory(first, max);
     } else if (category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT) {
-      const raw = await this.keycloakService.listUsersInGroupWithCustomerCategory(Role.ExternalCustomer, first, max);
+      const raw = await this.keycloakService.listUsersInGroupWithCustomerCategory(PricingGroup.ExternalCustomers, first, max);
       rows = raw.filter((r) => r.isDefaultExternalCustomer === true);
     } else {
-      const groupName =
-        category === CustomerManagementUserListCategory.INTERNAL_CUSTOMERS
-          ? Role.InternalCustomers
-          : category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_ACADEMIC
-          ? Role.ExternalCustomerAcademic
-          : category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_MARKET
-          ? Role.ExternalCustomerMarket
-          : Role.ExternalCustomerNoSalary;
-      rows = await this.keycloakService.listUsersInGroupWithCustomerCategory(groupName, first, max);
+      // The remaining filter values name a CustomerCategory directly, so reuse the
+      // one category -> group table rather than keeping an inverted copy here.
+      rows = await this.keycloakService.listUsersInGroupWithCustomerCategory(CATEGORY_PRIMARY_GROUP[LIST_CATEGORY_TO_CUSTOMER_CATEGORY[category]], first, max);
     }
 
     const items = rows.slice(0, safeLimit) as unknown as KeycloakUserCustomerManagement[];

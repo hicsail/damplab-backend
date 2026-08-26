@@ -13,7 +13,25 @@ export default (): any => ({
     /* The JWKs endpoint at which to fetch keys for verifying JWTs */
     jwksEndpoint: process.env.JWKS_ENDPOINT,
     /* Disable auth for easier gql testing - use only in development */
-    disable: process.env.DISABLE_AUTH == 'true' || false
+    disable: process.env.DISABLE_AUTH == 'true' || false,
+    /**
+     * Roles to act as while DISABLE_AUTH is on, comma-separated
+     * (e.g. DEV_AS_ROLES=technician). Lets each role's gates be exercised locally
+     * instead of every request being omnipotent staff. Unset = damplab-staff,
+     * which is what the bypass has always granted.
+     */
+    devAsRoles: (process.env.DEV_AS_ROLES ?? '')
+      .split(',')
+      .map((r: string) => r.trim())
+      .filter(Boolean)
+  },
+  /**
+   * Dev-only database reset mutations (clearDatabase / loadData). Off unless
+   * explicitly enabled; read directly from process.env in app.module.ts because
+   * the decision is made at module-registration time, before ConfigService exists.
+   */
+  reset: {
+    enabled: process.env.ENABLE_RESET_MODULE === 'true'
   },
   /** Keycloak Admin API: used to fetch lab monitor staff from a realm group (e.g. damplab-staff). All optional. */
   keycloak: {
@@ -21,8 +39,22 @@ export default (): any => ({
     realm: process.env.KEYCLOAK_REALM || 'damplab',
     clientId: process.env.KEYCLOAK_CLIENT_ID,
     clientSecret: process.env.KEYCLOAK_CLIENT_SECRET,
-    /** Realm group name whose members are shown in the lab monitor assignee dropdown. Default: damplab-staff */
-    labStaffGroupName: process.env.KEYCLOAK_LAB_STAFF_GROUP_NAME || 'damplab-staff'
+    /**
+     * Realm groups whose members are shown in the lab monitor assignee dropdown and
+     * in Customer Management's STAFF filter. Comma-separated.
+     *
+     * This has to be a list, not a name: the moment someone moves from the
+     * `damplab-staff` group to `technician` they would vanish from the assignee
+     * dropdown, and technicians are precisely who should be assignable. Widening it
+     * is a code deploy and must land BEFORE anyone is moved in Keycloak.
+     *
+     * Falls back to the old singular KEYCLOAK_LAB_STAFF_GROUP_NAME so a deployed
+     * environment carrying only that variable does not silently lose its group.
+     */
+    labStaffGroupNames: (process.env.KEYCLOAK_LAB_STAFF_GROUP_NAMES || process.env.KEYCLOAK_LAB_STAFF_GROUP_NAME || 'damplab-staff,technician')
+      .split(',')
+      .map((n: string) => n.trim())
+      .filter(Boolean)
   },
   attachments: {
     bucket: process.env.JOB_ATTACHMENTS_BUCKET,

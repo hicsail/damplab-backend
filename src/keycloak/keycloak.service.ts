@@ -1,7 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CustomerCategory } from '../job/job.model';
-import { Role } from '../auth/roles/roles.enum';
+import {
+  CATEGORY_PRIMARY_GROUP,
+  claimsFromGroupList,
+  deriveCustomerCategoryFromGroups as deriveCategoryFromGroups,
+  isCustomerPricingGroupName,
+  isDefaultExternalCustomerClaims
+} from '../pricing/pricing-groups';
 
 export interface LabStaffMember {
   id: string;
@@ -33,23 +39,6 @@ interface KeycloakUser {
   email?: string;
 }
 
-/** Keycloak group names that affect pricing; must stay in sync with job submission logic. */
-const CUSTOMER_PRICING_GROUP_NAMES: readonly string[] = [
-  Role.InternalCustomer,
-  Role.InternalCustomers,
-  Role.ExternalCustomer,
-  Role.ExternalCustomerAcademic,
-  Role.ExternalCustomerMarket,
-  Role.ExternalCustomerNoSalary
-];
-
-const CATEGORY_PRIMARY_GROUP: Record<CustomerCategory, string> = {
-  [CustomerCategory.INTERNAL_CUSTOMERS]: Role.InternalCustomers,
-  [CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC]: Role.ExternalCustomerAcademic,
-  [CustomerCategory.EXTERNAL_CUSTOMER_MARKET]: Role.ExternalCustomerMarket,
-  [CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY]: Role.ExternalCustomerNoSalary
-};
-
 @Injectable()
 export class KeycloakService {
   private readonly logger = new Logger(KeycloakService.name);
@@ -57,15 +46,15 @@ export class KeycloakService {
   private readonly realm: string;
   private readonly clientId: string | undefined;
   private readonly clientSecret: string | undefined;
-  private readonly labStaffGroupName: string;
+  private readonly labStaffGroupNames: readonly string[];
 
   constructor(private readonly configService: ConfigService) {
-    const kc = this.configService.get<{ serverUrl?: string; realm?: string; clientId?: string; clientSecret?: string; labStaffGroupName?: string }>('keycloak');
+    const kc = this.configService.get<{ serverUrl?: string; realm?: string; clientId?: string; clientSecret?: string; labStaffGroupNames?: string[] }>('keycloak');
     this.serverUrl = kc?.serverUrl;
     this.realm = kc?.realm ?? 'damplab';
     this.clientId = kc?.clientId;
     this.clientSecret = kc?.clientSecret;
-    this.labStaffGroupName = kc?.labStaffGroupName ?? 'damplab-staff';
+    this.labStaffGroupNames = kc?.labStaffGroupNames?.length ? kc.labStaffGroupNames : ['damplab-staff'];
   }
 
   /** True if Keycloak Admin is configured (server URL and client credentials). */
@@ -124,41 +113,26 @@ export class KeycloakService {
     return (await res.json()) as KeycloakUser[];
   }
 
-  private claimsFromGroupList(groups: { name?: string; path?: string }[]): string[] {
-    const claims: string[] = [];
-    for (const g of groups) {
-      if (g.path) claims.push(g.path);
-      if (g.name) claims.push(g.name);
-    }
-    return claims;
-  }
-
-  /** Same precedence as `JobResolver.createJob` / `AddNodeInputPipe`. */
+  /**
+   * Delegates to the one shared derivation in `pricing/pricing-groups` — the same
+   * function `JobResolver.createJob` and `AddNodeInputPipe` use, so precedence
+   * cannot drift between the admin view and what a customer is billed.
+   */
   deriveCustomerCategoryFromGroups(groups: { name?: string; path?: string }[]): CustomerCategory | undefined {
-    const claims = this.claimsFromGroupList(groups);
-    const hasGroup = (groupName: string): boolean => claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
-    if (hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)) return CustomerCategory.INTERNAL_CUSTOMERS;
-    if (hasGroup(Role.ExternalCustomerAcademic)) return CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC;
-    if (hasGroup(Role.ExternalCustomerMarket)) return CustomerCategory.EXTERNAL_CUSTOMER_MARKET;
-    if (hasGroup(Role.ExternalCustomerNoSalary)) return CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY;
-    if (hasGroup(Role.ExternalCustomer)) return CustomerCategory.EXTERNAL_CUSTOMER_MARKET;
-    return undefined;
+    return deriveCategoryFromGroups(groups);
   }
 
   private isCustomerPricingGroupMember(g: { name?: string }): boolean {
-    return Boolean(g.name && CUSTOMER_PRICING_GROUP_NAMES.includes(g.name));
+    return isCustomerPricingGroupName(g.name);
   }
 
   /**
-   * True when the user's pricing-group membership consists solely of the legacy
-   * `external-customer` group (the default new sign-ups land in) and no more
-   * specific pricing group like external-customer-market or internal-customers.
+   * True when the user's pricing-group membership consists solely of the default
+   * external group (`external-customers`, or the legacy singular spelling) and no
+   * more specific pricing group like external-customer-market or internal-customers.
    */
-  private isDefaultExternalCustomer(groups: { name?: string }[]): boolean {
-    const claims = this.claimsFromGroupList(groups);
-    const has = (n: string): boolean => claims.some((e) => e === n || e.endsWith(`/${n}`));
-    if (!has(Role.ExternalCustomer)) return false;
-    return !(has(Role.InternalCustomer) || has(Role.InternalCustomers) || has(Role.ExternalCustomerAcademic) || has(Role.ExternalCustomerMarket) || has(Role.ExternalCustomerNoSalary));
+  private isDefaultExternalCustomer(groups: { name?: string; path?: string }[]): boolean {
+    return isDefaultExternalCustomerClaims(claimsFromGroupList(groups));
   }
 
   private rowFromUserAndGroups(user: KeycloakUser, groups: KeycloakGroup[]): KeycloakUserCustomerManagementRow {
@@ -301,8 +275,23 @@ export class KeycloakService {
     return rows;
   }
 
+  /**
+   * Customer Management's STAFF filter. Unions across every configured lab-staff
+   * group and de-duplicates by user id, so someone in both `damplab-staff` and
+   * `technician` appears once.
+   *
+   * Pagination is applied to the merged list rather than per group: asking each
+   * group for the same window and concatenating would skip rows once the groups
+   * overlap.
+   */
   async listLabStaffWithCustomerCategory(first: number, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
-    return this.listUsersInGroupWithCustomerCategory(this.labStaffGroupName, first, max);
+    const byId = new Map<string, KeycloakUserCustomerManagementRow>();
+    for (const groupName of this.labStaffGroupNames) {
+      for (const row of await this.listUsersInGroupWithCustomerCategory(groupName, 0, first + max)) {
+        if (!byId.has(row.id)) byId.set(row.id, row);
+      }
+    }
+    return [...byId.values()].slice(first, first + max);
   }
 
   /**
@@ -338,25 +327,36 @@ export class KeycloakService {
     }
 
     try {
-      const group = await this.findGroupByName(this.labStaffGroupName);
-      if (!group) {
-        this.logger.warn(`Keycloak group "${this.labStaffGroupName}" not found in realm ${this.realm}. Check group name and service account roles (e.g. realm-management: query-groups, view-users).`);
-        return [];
-      }
+      // De-duplicated union across every configured group. A technician moved out of
+      // damplab-staff must stay assignable, and someone in both groups must not
+      // appear twice.
+      const byId = new Map<string, LabStaffMember>();
+      for (const groupName of this.labStaffGroupNames) {
+        const group = await this.findGroupByName(groupName);
+        if (!group) {
+          // Not an error: `technician` legitimately does not exist until the realm
+          // is updated, and this code must deploy first.
+          this.logger.warn(`Keycloak group "${groupName}" not found in realm ${this.realm}. Check group name and service account roles (e.g. realm-management: query-groups, view-users).`);
+          continue;
+        }
 
-      const path = `/admin/realms/${this.realm}/groups/${group.id}/members?max=-1`;
-      const res = await this.fetchWithToken(path);
-      if (!res.ok) {
-        this.logger.warn(`Keycloak group members request failed: ${res.status} ${await res.text()}. Ensure service account has realm-management role view-users (or query-users).`);
-        return [];
-      }
+        const path = `/admin/realms/${this.realm}/groups/${group.id}/members?max=-1`;
+        const res = await this.fetchWithToken(path);
+        if (!res.ok) {
+          this.logger.warn(
+            `Keycloak group members request failed for "${groupName}": ${res.status} ${await res.text()}. Ensure service account has realm-management role view-users (or query-users).`
+          );
+          continue;
+        }
 
-      const users = (await res.json()) as KeycloakUser[];
-      const members = users.map((u) => {
-        const displayName = [u.firstName, u.lastName].filter(Boolean).join(' ')?.trim() || u.username || u.id;
-        return { id: u.id, displayName };
-      });
-      this.logger.log(`Keycloak lab staff group "${this.labStaffGroupName}": ${members.length} member(s)`);
+        for (const u of (await res.json()) as KeycloakUser[]) {
+          if (byId.has(u.id)) continue;
+          const displayName = [u.firstName, u.lastName].filter(Boolean).join(' ')?.trim() || u.username || u.id;
+          byId.set(u.id, { id: u.id, displayName });
+        }
+      }
+      const members = [...byId.values()];
+      this.logger.log(`Keycloak lab staff groups "${this.labStaffGroupNames.join(', ')}": ${members.length} member(s)`);
       return members;
     } catch (err) {
       this.logger.warn(`Keycloak getLabStaffGroupMembers failed: ${err instanceof Error ? err.message : String(err)}`);

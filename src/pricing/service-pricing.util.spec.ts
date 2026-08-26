@@ -1,5 +1,5 @@
 import { DampLabService, ServicePricingMode } from '../services/models/damplab-service.model';
-import { calculateServiceCost, calculateServiceCostBreakdown, extractRunCount, RUN_COUNT_PARAM_ID } from './service-pricing.util';
+import { calculateServiceCost, calculateServiceCostBreakdown, CustomerCategory, extractRunCount, RUN_COUNT_PARAM_ID } from './service-pricing.util';
 
 /**
  * The universal run count is injected into formData client-side under a synthetic
@@ -118,5 +118,56 @@ describe('calculateServiceCostBreakdown', () => {
   it('keeps a free service free rather than making its unit price unrecoverable', () => {
     const free = service({ price: 0 });
     expect(calculateServiceCostBreakdown(free, [{ id: RUN_COUNT_PARAM_ID, value: 70 }])).toEqual({ unitCost: 0, multiplier: 70, cost: 0 });
+  });
+});
+
+/**
+ * Category pricing had no coverage at all before Phase 0: no spec passed a category
+ * argument, so `resolveCategoryPrice`'s silent fallthrough to `pricing.legacy` was
+ * invisible. That fallthrough is exactly what default external customers were being
+ * billed at while `external-customers` was missing from the group list.
+ */
+describe('calculateServiceCost — customer category pricing', () => {
+  const tiered = (): DampLabService =>
+    service({
+      price: 100,
+      pricing: {
+        legacy: 100,
+        internal: 10,
+        externalAcademic: 20,
+        externalMarket: 30,
+        externalNoSalary: 40
+      }
+    } as Partial<DampLabService>);
+
+  it.each([
+    [CustomerCategory.INTERNAL_CUSTOMERS, 10],
+    [CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC, 20],
+    [CustomerCategory.EXTERNAL_CUSTOMER_MARKET, 30],
+    [CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY, 40]
+  ])('prices %s at its own tier', (category, expected) => {
+    expect(calculateServiceCost(tiered(), [], undefined, category)).toBe(expected);
+  });
+
+  it('falls back to the legacy price when the category is undefined — silently, by design', () => {
+    // Pinned deliberately: this is the branch an uncategorised user lands in, and
+    // it logs nothing. Phase 0 stops `external-customers` reaching it.
+    expect(calculateServiceCost(tiered(), [], undefined, undefined)).toBe(100);
+  });
+
+  it('falls back to the flat price when there is no legacy price either', () => {
+    expect(calculateServiceCost(service({ price: 7, pricing: undefined } as Partial<DampLabService>), [], undefined, undefined)).toBe(7);
+  });
+
+  it('falls back through `external` when a tier has no price of its own', () => {
+    const svc = service({ price: 100, pricing: { legacy: 100, external: 55 } } as Partial<DampLabService>);
+    expect(calculateServiceCost(svc, [], undefined, CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC)).toBe(55);
+    expect(calculateServiceCost(svc, [], undefined, CustomerCategory.EXTERNAL_CUSTOMER_MARKET)).toBe(55);
+    expect(calculateServiceCost(svc, [], undefined, CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY)).toBe(55);
+  });
+
+  it('does not use `external` for internal customers', () => {
+    const svc = service({ price: 100, pricing: { legacy: 100, external: 55 } } as Partial<DampLabService>);
+    expect(calculateServiceCost(svc, [], undefined, CustomerCategory.INTERNAL_CUSTOMERS)).toBe(100);
   });
 });

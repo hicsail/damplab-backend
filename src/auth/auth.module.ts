@@ -3,6 +3,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule, JwtSecretRequestType } from '@nestjs/jwt';
 import * as jwksClient from 'jwks-rsa';
 import * as jwt from 'jsonwebtoken';
+import { PermissionsResolver } from './permissions/permissions.resolver';
 
 /*
 This auth module extracts JWTs from request headers and verifies them with
@@ -36,6 +37,7 @@ the configured keys endpoint. It does not issue tokens or deal with IdPs.
       },
       inject: [ConfigService]
     })
-  ]
+  ],
+  providers: [PermissionsResolver]
 })
 export class AuthModule {}
