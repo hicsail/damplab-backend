@@ -5,15 +5,15 @@ import { UsageBillingService } from './usage-billing.service';
 import { BillableOwner, GenerateUsageBillingInput } from './dtos/usage-billing.dto';
 import { BookingService } from '../booking/booking.service';
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 
 /** Staff-only usage billing: pick a user, review their unbilled usage, generate a SOW + invoice. */
 @Resolver()
 @UseGuards(AuthRolesGuard)
-@Roles(Role.DamplabStaff)
+@RequirePermission(Permission.BillingView)
 export class UsageBillingResolver {
   constructor(private readonly usageBillingService: UsageBillingService, private readonly bookingService: BookingService) {}
 

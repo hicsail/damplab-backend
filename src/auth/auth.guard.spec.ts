@@ -114,6 +114,22 @@ describe('AuthRolesGuard — DISABLE_AUTH impersonates rather than bypasses', ()
     expect(request.user.realm_access.roles).toEqual([Role.DamplabStaff]);
   });
 
+  it('distinguishes DEV_AS_ROLES unset from DEV_AS_ROLES set-but-empty', async () => {
+    // Set-but-empty is the ONLY way to walk the client baseline locally. It used to
+    // collapse into the unset case and hand out an administrator, which silently
+    // turned every "as a client" walkthrough into an "as an admin" one.
+    const empty = guardWith({
+      config: { 'auth.disable': true, 'auth.devAsRoles': [] },
+      metadata: { [PERMISSIONS_KEY]: [Permission.CustomersManage] }
+    });
+    await expect(empty.canActivate(contextFor().context)).rejects.toBeInstanceOf(ForbiddenException);
+
+    const { context, request } = contextFor();
+    const baseline = guardWith({ config: { 'auth.disable': true, 'auth.devAsRoles': [] }, metadata: { [PERMISSIONS_KEY]: [Permission.JobsView] } });
+    await expect(baseline.canActivate(context)).resolves.toBe(true);
+    expect(request.user.realm_access.roles).toEqual([]);
+  });
+
   it('DEV_AS_ROLES=technician synthesises a technician, and that technician is denied admin-only work', async () => {
     const guard = guardWith({
       config: { 'auth.disable': true, 'auth.devAsRoles': [Role.Technician] },

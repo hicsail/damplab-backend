@@ -9,8 +9,8 @@ import { DampLabService } from './models/damplab-service.model';
 import { ServiceUpdatePipe } from './update.pipe';
 
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 
 @Resolver(() => DampLabService)
 @UseGuards(AuthRolesGuard)
@@ -23,7 +23,7 @@ export class DampLabServicesResolver {
   }
 
   @Mutation(() => DampLabService)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async updateService(
     @Args('service', { type: () => ID }, DampLabServicePipe) service: DampLabService,
     @Args('changes', { type: () => ServiceChange }, ServiceUpdatePipe) changes: ServiceChange
@@ -32,14 +32,14 @@ export class DampLabServicesResolver {
   }
 
   @Mutation(() => Boolean)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async deleteService(@Args('service', { type: () => ID }, DampLabServicePipe) service: DampLabService): Promise<boolean> {
     await this.dampLabServices.delete(service);
     return true;
   }
 
   @Mutation(() => DampLabService)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async createService(@Args('service', CreateServicePipe) service: CreateService): Promise<DampLabService> {
     return this.dampLabServices.create(service);
   }

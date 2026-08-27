@@ -11,8 +11,8 @@ import { Workflow } from '../models/workflow.model';
 import { getMultiValueParamIds, normalizeFormDataToArray, FormDataEntry } from '../utils/form-data.util';
 import JSON from 'graphql-type-json';
 import { AuthRolesGuard } from '../../auth/auth.guard';
-import { Roles } from '../../auth/roles/roles.decorator';
-import { Role } from '../../auth/roles/roles.enum';
+import { RequirePermission } from '../../auth/permissions/permissions.decorator';
+import { Permission } from '../../auth/permissions/permission.enum';
 import { LabMonitorStaffMember } from '../dtos/lab-monitor-staff.dto';
 import { KeycloakService } from '../../keycloak/keycloak.service';
 import { CurrentUser } from '../../auth/user.decorator';
@@ -48,7 +48,7 @@ export class WorkflowNodeResolver {
 
   @Mutation(() => WorkflowNode)
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async changeWorkflowNodeState(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState
@@ -67,7 +67,7 @@ export class WorkflowNodeResolver {
 
   @Mutation(() => WorkflowNode)
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async updateWorkflowNodeAssignee(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('assigneeId', { type: () => String, nullable: true }) assigneeId: string | null,
@@ -87,7 +87,7 @@ export class WorkflowNodeResolver {
 
   @Mutation(() => WorkflowNode, { description: 'Set which inventory items a node is holding while IN_PROGRESS. Rejects items already held by another in-progress node.' })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async setWorkflowNodeUsedInventory(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('inventoryIds', { type: () => [ID] }) inventoryIds: string[],
@@ -110,7 +110,7 @@ export class WorkflowNodeResolver {
     description: 'In-progress nodes currently holding any inventory (powers the availability board).'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.InventoryRead)
   async getInProgressNodesHoldingInventory(): Promise<WorkflowNode[]> {
     return this.nodeService.getInProgressNodesHoldingInventory();
   }
@@ -119,7 +119,7 @@ export class WorkflowNodeResolver {
     description: 'Inventory items unavailable in a time window — shared pool across operations + calendar bookings. Pass excludeNodeId to ignore the operation being edited.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.InventoryRead)
   async inventoryAvailability(
     @Args('from', { nullable: true }) from?: Date,
     @Args('to', { nullable: true }) to?: Date,
@@ -130,7 +130,7 @@ export class WorkflowNodeResolver {
 
   @Mutation(() => WorkflowNode)
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async updateWorkflowNodeEstimatedTime(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('estimatedMinutes', { type: () => Float, nullable: true }) estimatedMinutes: number | null
@@ -151,7 +151,7 @@ export class WorkflowNodeResolver {
     description: 'Nodes in this state that belong to approved-job workflows (lab monitor columns by node state).'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async getLabMonitorNodes(@Args('nodeState', { type: () => WorkflowNodeState }) nodeState: WorkflowNodeState): Promise<WorkflowNode[]> {
     return this.nodeService.getNodesByStateForApprovedJobs(nodeState);
   }
@@ -160,7 +160,7 @@ export class WorkflowNodeResolver {
     description: 'Operations (workflow nodes) assigned to the current staff member — powers the technician bench view.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.BenchUse)
   async assignedOperations(@CurrentUser() user: User): Promise<WorkflowNode[]> {
     if (!user?.sub) return [];
     return this.nodeService.getNodesByAssignee(user.sub);
@@ -170,7 +170,7 @@ export class WorkflowNodeResolver {
     description: 'Set the protocols.io step ids a technician has checked off for an operation (bench view). Replaces the full set.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.BenchUse)
   async setWorkflowNodeCompletedSteps(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('completedSteps', { type: () => [String] }) completedSteps: string[]
@@ -182,7 +182,7 @@ export class WorkflowNodeResolver {
     description: 'Staff members available for assignment on lab monitor cards. Sourced from Keycloak group (damplab-staff) when configured, else LAB_MONITOR_STAFF env.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async getLabMonitorStaffList(): Promise<LabMonitorStaffMember[]> {
     if (this.keycloakService.isConfigured()) {
       return this.keycloakService.getLabStaffGroupMembers();

@@ -42,7 +42,19 @@ const CLIENT = BASELINE_PERMISSIONS;
  * Q7, as the matrix specifies: an equipment user may submit a job for a client and a
  * technician may not. Odd-looking; encoded deliberately.
  */
-const EQUIPMENT_USER: readonly Permission[] = Object.freeze([...CLIENT, Permission.JobSubmitForClient, Permission.InventoryRead, Permission.InventoryBook, Permission.LabMonitorView]);
+const EQUIPMENT_USER: readonly Permission[] = Object.freeze([
+  ...CLIENT,
+  Permission.JobSubmitForClient,
+  Permission.InventoryRead,
+  Permission.InventoryBook,
+  // Amended after the transcription, on request: equipment users reach Inventory
+  // Schedule and My Bench. My Bench self-scopes (`assignedOperations` resolves by
+  // `user.sub`); the schedule does not, so cancel is owner-gated and confirm-usage
+  // stays Administrator-only. See docs/access-matrix.md, "Amendments".
+  Permission.InventorySchedule,
+  Permission.BenchUse,
+  Permission.LabMonitorView
+]);
 
 const TECHNICIAN: readonly Permission[] = Object.freeze([
   ...CLIENT,
@@ -57,6 +69,8 @@ const TECHNICIAN: readonly Permission[] = Object.freeze([
   Permission.InventorySchedule,
   Permission.LabMonitorView,
   Permission.BenchUse,
+  // Amended after the transcription, on request. See docs/access-matrix.md.
+  Permission.LabAssistantUse,
   Permission.InternalFieldsRead
 ]);
 

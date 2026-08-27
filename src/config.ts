@@ -17,13 +17,21 @@ export default (): any => ({
     /**
      * Roles to act as while DISABLE_AUTH is on, comma-separated
      * (e.g. DEV_AS_ROLES=technician). Lets each role's gates be exercised locally
-     * instead of every request being omnipotent staff. Unset = damplab-staff,
-     * which is what the bypass has always granted.
+     * instead of every request being omnipotent staff.
+     *
+     * Three distinct states, and the difference matters: **unset** is `undefined`
+     * and the guard substitutes `damplab-staff` — what the bypass has always
+     * granted. **Set but empty** (`DEV_AS_ROLES=`) is `[]`, a caller carrying no
+     * roles at all, which resolves to the client baseline. Collapsing those two
+     * made the client role unwalkable, because the one way to ask for it silently
+     * gave you an administrator instead.
      */
-    devAsRoles: (process.env.DEV_AS_ROLES ?? '')
-      .split(',')
-      .map((r: string) => r.trim())
-      .filter(Boolean)
+    devAsRoles:
+      process.env.DEV_AS_ROLES === undefined
+        ? undefined
+        : process.env.DEV_AS_ROLES.split(',')
+            .map((r: string) => r.trim())
+            .filter(Boolean)
   },
   /**
    * Dev-only database reset mutations (clearDatabase / loadData). Off unless

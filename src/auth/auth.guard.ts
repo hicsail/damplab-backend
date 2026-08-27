@@ -92,10 +92,18 @@ export class AuthRolesGuard implements CanActivate {
     return true;
   }
 
-  /** Roles to act as when DISABLE_AUTH is on. Defaults to today's behaviour. */
+  /**
+   * Roles to act as when DISABLE_AUTH is on.
+   *
+   * `undefined` means DEV_AS_ROLES was never set — fall back to `damplab-staff`,
+   * which is what the bypass granted before it could impersonate. An **empty
+   * array** means it was set to nothing on purpose: that caller carries no roles
+   * and resolves to the client baseline, which is the only way to walk the client
+   * tier locally. Treating the two the same handed out an administrator instead.
+   */
   private devRoles(): string[] {
-    const configured = this.configService.get<string[]>('auth.devAsRoles');
-    return configured?.length ? configured : [Role.DamplabStaff];
+    const configured = this.configService.get<string[] | undefined>('auth.devAsRoles');
+    return configured === undefined ? [Role.DamplabStaff] : configured;
   }
 
   private devUser(): User {

@@ -38,6 +38,7 @@ describe('ROLE_PERMISSIONS — the matrix', () => {
         Permission.InventorySchedule,
         Permission.LabMonitorView,
         Permission.BenchUse,
+        Permission.LabAssistantUse,
         Permission.InternalFieldsRead
       ])
     );
@@ -55,6 +56,8 @@ describe('ROLE_PERMISSIONS — the matrix', () => {
         Permission.JobSubmitForClient,
         Permission.InventoryRead,
         Permission.InventoryBook,
+        Permission.InventorySchedule,
+        Permission.BenchUse,
         Permission.LabMonitorView
       ])
     );
@@ -73,6 +76,18 @@ describe('ROLE_PERMISSIONS — the matrix', () => {
     }
     // Protocol Library is the exception: the matrix gives technicians write too.
     expect(technician.has(Permission.ProtocolLibraryWrite)).toBe(true);
+  });
+
+  it('encodes the three amendments to the transcription', () => {
+    // docs/access-matrix.md, "Amendments to the transcription". These are NOT in
+    // the source spreadsheet yet; this test is what keeps doc and code together.
+    const technician = permissionsForRoles([Role.Technician]);
+    const equipmentUser = permissionsForRoles([Role.ClientUnassistedEquipmentUser]);
+    expect(technician.has(Permission.LabAssistantUse)).toBe(true);
+    expect(equipmentUser.has(Permission.InventorySchedule)).toBe(true);
+    expect(equipmentUser.has(Permission.BenchUse)).toBe(true);
+    // Widening the pages did not widen the billing act inside one of them.
+    expect(equipmentUser.has(Permission.BillingView)).toBe(false);
   });
 
   it('has an entry for every role string the app knows about', () => {

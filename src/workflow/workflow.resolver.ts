@@ -8,8 +8,8 @@ import { WorkflowEdge } from './models/edge.model';
 import { WorkflowEdgeService } from './services/edge.service';
 import { WorkflowPipe } from './workflow.pipe';
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 import { Job } from '../job/job.model';
 import { JobService } from '../job/job.service';
 
@@ -27,19 +27,19 @@ export class WorkflowResolver {
   ) {}
 
   @Query(() => Workflow, { nullable: true })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async workflowById(@Args('id', { type: () => ID }) id: string): Promise<Workflow | null> {
     return this.workflowService.findById(id);
   }
 
   @Mutation(() => Workflow)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async changeWorkflowState(@Args('workflow', { type: () => ID }, WorkflowPipe) workflow: Workflow, @Args('newState', { type: () => WorkflowState }) newState: WorkflowState): Promise<Workflow> {
     return (await this.workflowService.updateState(workflow, newState))!;
   }
 
   @Query(() => [Workflow])
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async getWorkflowByState(@Args('state', { type: () => WorkflowState }) state: WorkflowState): Promise<Workflow[]> {
     return this.workflowService.getByState(state);
   }
@@ -47,7 +47,7 @@ export class WorkflowResolver {
   @Query(() => [Workflow], {
     description: 'Workflows in this state that belong to jobs accepted by technicians (for lab monitor).'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async getWorkflowsByStateForLabMonitor(@Args('state', { type: () => WorkflowState }) state: WorkflowState): Promise<Workflow[]> {
     return this.workflowService.getByStateForApprovedJobs(state);
   }

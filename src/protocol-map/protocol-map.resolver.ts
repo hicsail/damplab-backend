@@ -7,8 +7,8 @@ import { ProtocolsService } from '../protocols/protocols.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { StationService } from '../station/station.service';
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 
@@ -22,9 +22,14 @@ function toLabel(html: string, max = 120): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/**
+ * The class-level `@Roles(Role.DamplabStaff)` this replaces covered the read
+ * queries too, so `/protocol-map` 403'd on load for a `protocol-library:read`
+ * holder. Read and write are split per the matrix — which gives technicians
+ * write here, unlike the catalog and the lab layout.
+ */
 @Resolver(() => ProtocolStepMapping)
 @UseGuards(AuthRolesGuard)
-@Roles(Role.DamplabStaff)
 export class ProtocolMapResolver {
   constructor(
     private readonly mapService: ProtocolMapService,
@@ -34,16 +39,19 @@ export class ProtocolMapResolver {
   ) {}
 
   @Query(() => [ProtocolStepMapping], { description: 'All author-defined step mappings for a protocol.' })
+  @RequirePermission(Permission.ProtocolLibraryRead)
   async protocolStepMappings(@Args('protocolId') protocolId: string): Promise<ProtocolStepMapping[]> {
     return this.mapService.findByProtocol(protocolId);
   }
 
   @Mutation(() => ProtocolStepMapping, { description: 'Create or update the mapping for one protocol step.' })
+  @RequirePermission(Permission.ProtocolLibraryWrite)
   async upsertProtocolStepMapping(@Args('input') input: UpsertProtocolStepMappingInput, @CurrentUser() user: User): Promise<ProtocolStepMapping> {
     return this.mapService.upsert(input, user?.preferred_username || user?.email);
   }
 
   @Mutation(() => Boolean, { description: 'Remove the mapping for one protocol step.' })
+  @RequirePermission(Permission.ProtocolLibraryWrite)
   async deleteProtocolStepMapping(@Args('protocolId') protocolId: string, @Args('stepId') stepId: string): Promise<boolean> {
     return this.mapService.remove(protocolId, stepId);
   }
@@ -59,6 +67,7 @@ export class ProtocolMapResolver {
    * DampLabService.protocolIds, so a step is "mapped" purely on equipment.
    */
   @Query(() => ResolvedProtocol, { description: 'Resolve a protocol into its full step → equipment → station chain with validation. Steps come back in execution order.' })
+  @RequirePermission(Permission.ProtocolLibraryRead)
   async resolveProtocol(@Args('protocolId') protocolId: string): Promise<ResolvedProtocol> {
     const [protocol, mappings, inventory, stations] = await Promise.all([
       this.protocolsService.getProtocol(protocolId),

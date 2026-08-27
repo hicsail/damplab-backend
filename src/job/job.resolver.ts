@@ -13,6 +13,8 @@ import { WorkflowPipe } from '../workflow/workflow.pipe';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
@@ -118,8 +120,17 @@ export class JobResolver {
     [JobState.CLOSED]: 'Closed'
   };
 
+  /**
+   * The six mutations still carrying `@Roles(Role.DamplabStaff)` below —
+   * `addWorkflowToJob`, `changeJobCustomerCategory`, `createSowForJob`,
+   * `reviewJob`, `withdrawJobFromCustomer`, `withdrawJobAcceptance` — are contract
+   * and pricing acts, not view acts, and stay Administrator-only. Reading a job is
+   * `jobs:view-all`, which technicians hold; changing what a job costs or what it
+   * commits the lab to is not covered by that, and the 2b widening table does not
+   * list them. Widening them is a separate decision.
+   */
   @Query(() => [Job])
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobs(): Promise<Job[]> {
     return this.jobService.findAll();
   }
@@ -132,21 +143,21 @@ export class JobResolver {
   }
 
   @Query(() => JobsResult, {
-    description: 'Staff-only. Paginated, filterable list of all jobs (Dashboard).'
+    description: 'Every job, paginated and filterable (Dashboard). Requires jobs:view-all; the baseline reaches ownJobs instead.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async allJobs(@Args('input', { type: () => AllJobsInput, nullable: true }) input: AllJobsInput | null): Promise<JobsResult> {
     return this.jobService.findAllJobsPaginated(input ?? {});
   }
 
   @Query(() => Job, { nullable: true })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobByName(@Args('name') name: string): Promise<Job | null> {
     return this.jobService.findByName(name);
   }
 
   @Query(() => Job, { nullable: true })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
     return this.jobService.findById(id);
   }
@@ -162,23 +173,23 @@ export class JobResolver {
   }
 
   @Query(() => Job)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobByWorkflowId(@Args('workflow', { type: () => ID }, WorkflowPipe) workflow: Workflow): Promise<Job | null> {
     return this.jobService.findByWorkflow(workflow);
   }
 
   @Query(() => JobFeedStatus, {
-    description: 'Staff-only. Global unseen/submitted jobs feed status for the Home Jobs button badge.'
+    description: 'Global unseen/submitted jobs feed status for the Home Jobs button badge. Requires jobs:view-all.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobsFeedStatus(): Promise<JobFeedStatus> {
     return this.jobService.getJobsFeedStatus();
   }
 
   @Mutation(() => JobFeedStatus, {
-    description: 'Staff-only. Marks the shared jobs feed as viewed by setting the global viewed timestamp.'
+    description: 'Marks the shared jobs feed as viewed by setting the global viewed timestamp. Requires jobs:view-all.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async markJobsFeedViewed(): Promise<JobFeedStatus> {
     return this.jobService.markJobsFeedViewed();
   }
@@ -220,7 +231,7 @@ export class JobResolver {
     description:
       'Staff-only. Archive a job: hides it from the default jobs dashboard and the live lab boards while retaining everything. Permitted even when the job is IN_PROGRESS — the caller is expected to have confirmed — and the state at archive time is recorded.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async archiveJob(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const actor = user?.email || user?.preferred_username || 'unknown';
     const updated = await this.jobService.setArchived(jobId, true, actor);
@@ -239,7 +250,7 @@ export class JobResolver {
   @Mutation(() => Job, {
     description: 'Staff-only. Restore an archived job, putting it back in the dashboard and on the live boards. Its lifecycle state was never changed, so it returns exactly where it left off.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async unarchiveJob(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const actor = user?.email || user?.preferred_username || 'unknown';
     const updated = await this.jobService.setArchived(jobId, false, actor);

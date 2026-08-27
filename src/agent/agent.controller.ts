@@ -1,8 +1,8 @@
 import { Body, Controller, Post, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 import { AgentService, ChatHistoryEntry } from './agent.service';
 
 interface ChatRequestBody {
@@ -39,14 +39,20 @@ export class AgentController {
   }
 
   /**
-   * Lab-status agent (queries Mongo via n8n; staff-facing).
+   * Lab-status agent (queries Mongo via n8n).
    *
-   * The class-level guard only requires a valid token, so until this decoration
+   * The class-level guard only requires a valid token, so before this decoration
    * every authenticated user — including any customer — could drive this proxy.
-   * Its only surface in the app is /lab-assistant, which is already staff-only,
-   * so requiring the role here denies nobody who could reach it legitimately.
+   *
+   * `labassistant:use` rather than the `damplab-staff` role it replaces: the matrix
+   * amendment grants the AI Lab Assistant to technicians, and this endpoint is the
+   * only backend surface of `/lab-assistant`. Gating on the role would have left
+   * technicians with the button and a 403.
+   *
+   * `POST /chat` above stays open — deferred decision #2 in the 2b checklist,
+   * answered there: narrowing it would remove a customer feature.
    */
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabAssistantUse)
   @Post('lab-status/chat')
   async labStatusChat(@Body() body: ChatRequestBody, @Res() res: Response): Promise<void> {
     return this.streamAgent('lab-status', body, res);

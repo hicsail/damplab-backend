@@ -1,8 +1,8 @@
 import { BadRequestException, NotFoundException, UseGuards } from '@nestjs/common';
 import { Args, ID, Int, Mutation, Query, Resolver, registerEnumType } from '@nestjs/graphql';
 import { AuthRolesGuard } from '../../auth/auth.guard';
-import { Roles } from '../../auth/roles/roles.decorator';
-import { Role } from '../../auth/roles/roles.enum';
+import { RequirePermission } from '../../auth/permissions/permissions.decorator';
+import { Permission } from '../../auth/permissions/permission.enum';
 import { KeycloakService } from '../../keycloak/keycloak.service';
 import { CustomerCategory } from '../../job/job.model';
 import { KeycloakUserCustomerManagement } from '../dtos/keycloak-customer-user.dto';
@@ -40,7 +40,7 @@ export class CustomerManagementResolver {
     description: 'Staff: list Keycloak users by staff/customer category group membership, paginated. Intended for customer management UI browsing (default STAFF).'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CustomersManage)
   async listKeycloakUsersForCustomerManagement(
     @Args('category', { type: () => CustomerManagementUserListCategory }) category: CustomerManagementUserListCategory,
     @Args('offset', { type: () => Int, nullable: true, defaultValue: 0 }) offset: number,
@@ -81,7 +81,7 @@ export class CustomerManagementResolver {
     description: 'Staff: search Keycloak users by name/email/username and return inferred customer pricing category from group membership.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CustomersManage)
   async searchKeycloakUsersForCustomerManagement(
     @Args('search', { type: () => String }) search: string,
     @Args('max', { type: () => Int, nullable: true, defaultValue: 25 }) max: number
@@ -101,7 +101,7 @@ export class CustomerManagementResolver {
     description: 'Staff: set a user’s Keycloak pricing customer group to match the given category, or clear all such groups when category is omitted.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CustomersManage)
   async setUserKeycloakCustomerCategory(
     @Args('userId', { type: () => ID }) userId: string,
     @Args('category', { type: () => CustomerCategory, nullable: true }) category: CustomerCategory | null

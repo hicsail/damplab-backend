@@ -4,15 +4,15 @@ import { ApiKey } from './api-key.model';
 import { ApiKeyService } from './api-key.service';
 import { CreateApiKeyResult } from './api-key.dto';
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 
 /** Staff-only provisioning of read-only API keys for external systems. */
 @Resolver(() => ApiKey)
 @UseGuards(AuthRolesGuard)
-@Roles(Role.DamplabStaff)
+@RequirePermission(Permission.ApiKeysManage)
 export class ApiKeyResolver {
   constructor(private readonly apiKeyService: ApiKeyService) {}
 
