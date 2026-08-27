@@ -93,6 +93,12 @@ const GATES: Row[] = [
   [WorkflowResolver, 'getWorkflowsByStateForLabMonitor', Permission.LabMonitorView],
   [WorkflowResolver, 'changeWorkflowState', Permission.LabMonitorView],
 
+  // Lab monitor archiving — a state-transition permission, not a page one.
+  // Everyone with labmonitor:view may move a card to COMPLETE; only an
+  // administrator may take it off the board.
+  [WorkflowNodeResolver, 'archiveWorkflowNode', Permission.LabMonitorArchive],
+  [WorkflowNodeResolver, 'unarchiveWorkflowNode', Permission.LabMonitorArchive],
+
   // /technician_bench
   [WorkflowNodeResolver, 'assignedOperations', Permission.BenchUse],
   [WorkflowNodeResolver, 'setWorkflowNodeCompletedSteps', Permission.BenchUse],

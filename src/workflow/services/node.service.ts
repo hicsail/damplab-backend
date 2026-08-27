@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Inject, forwardRef } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
@@ -6,6 +6,7 @@ import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../models
 import { AddNodeInputFull } from '../dtos/add-node.input';
 import { Workflow, WorkflowDocument } from '../models/workflow.model';
 import { JobService } from '../../job/job.service';
+import { archiveQuery, NodeArchiveFilter } from '../dtos/node-archive-filter.dto';
 import { Job } from '../../job/job.model';
 import { AvailabilityService } from '../../availability/availability.service';
 
@@ -139,7 +140,7 @@ export class WorkflowNodeService {
   }
 
   /** Nodes in this state that belong to workflows on approved jobs (for lab monitor by node state). */
-  async getNodesByStateForApprovedJobs(nodeState: WorkflowNodeState): Promise<WorkflowNode[]> {
+  async getNodesByStateForApprovedJobs(nodeState: WorkflowNodeState, archiveFilter: NodeArchiveFilter = NodeArchiveFilter.ACTIVE): Promise<WorkflowNode[]> {
     const approvedWorkflowIds = await this.jobService.getWorkflowIdsForApprovedJobs();
     if (approvedWorkflowIds.length === 0) return [];
     const workflows = await this.workflowModel
@@ -149,6 +150,30 @@ export class WorkflowNodeService {
       .exec();
     const nodeIds = workflows.flatMap((w) => (w.nodes ?? []).map((id) => id.toString()));
     if (nodeIds.length === 0) return [];
-    return this.workflowNodeModel.find({ _id: { $in: nodeIds }, state: nodeState }).exec();
+    return this.workflowNodeModel.find({ _id: { $in: nodeIds }, state: nodeState, ...archiveQuery(archiveFilter) }).exec();
+  }
+
+  /**
+   * Archive or restore a lab monitor card.
+   *
+   * Mirrors `JobService.setArchived`, including the `$unset`: Mongoose strips
+   * undefined values from `$set`, so setting the audit fields to undefined would
+   * leave them behind and make a restored card still look archived-by-someone.
+   * The node's own `state` is left untouched, so restoring puts it back exactly
+   * where it was on the board.
+   */
+  async setArchived(nodeId: string, archived: boolean, actor?: string): Promise<WorkflowNode | null> {
+    const node = await this.workflowNodeModel.findById(nodeId).exec();
+    if (!node) {
+      throw new NotFoundException(`Workflow node with ID ${nodeId} not found`);
+    }
+    if (archived) {
+      return this.workflowNodeModel
+        .findOneAndUpdate({ _id: nodeId }, { $set: { isArchived: true, archivedAt: new Date(), archivedBy: actor ?? 'unknown', archivedFromState: node.state } }, { new: true })
+        .exec();
+    }
+    return this.workflowNodeModel
+      .findOneAndUpdate({ _id: nodeId }, { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } }, { new: true })
+      .exec();
   }
 }
