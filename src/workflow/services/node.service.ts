@@ -112,12 +112,29 @@ export class WorkflowNodeService {
     return this.workflowNodeModel.find({ state: WorkflowNodeState.IN_PROGRESS, usedInventory: { $exists: true, $ne: [] } }).exec();
   }
 
+  /**
+   * Assign or **unassign** an operation.
+   *
+   * `$unset` on the clear path, not `$set` to undefined: Mongoose strips undefined
+   * values out of `$set`, so the previous version made unassigning a silent no-op —
+   * the mutation returned success and the old assignee stayed. Same trap the Job
+   * archive code documents (`job.service.ts`).
+   *
+   * It matters more now: the merged jobs page's "Worked by me" scope and its
+   * technician filter both join on `assigneeId`, so a stale one keeps a technician
+   * attached to work they were taken off.
+   */
   async updateAssignee(node: WorkflowNode, assigneeId: string | null, assigneeDisplayName: string | null): Promise<WorkflowNode | null> {
-    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { assigneeId: assigneeId ?? undefined, assigneeDisplayName: assigneeDisplayName ?? undefined } }, { new: true });
+    const update = assigneeId
+      ? { $set: { assigneeId, assigneeDisplayName: assigneeDisplayName ?? undefined } }
+      : { $unset: { assigneeId: '', assigneeDisplayName: '' } };
+    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, update, { new: true });
   }
 
+  /** Same `$unset` reasoning as `updateAssignee`: clearing an estimate was a no-op. */
   async updateEstimatedMinutes(node: WorkflowNode, estimatedMinutes: number | null): Promise<WorkflowNode | null> {
-    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { estimatedMinutes: estimatedMinutes ?? undefined } }, { new: true });
+    const update = estimatedMinutes == null ? { $unset: { estimatedMinutes: '' } } : { $set: { estimatedMinutes } };
+    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, update, { new: true });
   }
 
   /** All operations (nodes) assigned to a given user, for the technician bench view. */

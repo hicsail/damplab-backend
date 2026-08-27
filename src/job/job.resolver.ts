@@ -1,7 +1,7 @@
 import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
-import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
+import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { deriveCustomerCategory } from '../pricing/pricing-groups';
 import { JobService } from './job.service';
@@ -14,6 +14,7 @@ import { AuthRolesGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
 import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { hasPermission } from '../auth/permissions/permissions';
 import { Permission } from '../auth/permissions/permission.enum';
 import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
@@ -143,11 +144,47 @@ export class JobResolver {
   }
 
   @Query(() => JobsResult, {
-    description: 'Every job, paginated and filterable (Dashboard). Requires jobs:view-all; the baseline reaches ownJobs instead.'
+    deprecationReason: 'Use jobsForViewer, which serves both tiers and enforces scope server-side. Kept because API_KEY_PERMISSIONS includes jobs:view-all and external integrations may call it.',
+    description: 'Every job, paginated and filterable. Requires jobs:view-all; the baseline reaches ownJobs instead.'
   })
   @RequirePermission(Permission.JobsViewAll)
   async allJobs(@Args('input', { type: () => AllJobsInput, nullable: true }) input: AllJobsInput | null): Promise<JobsResult> {
     return this.jobService.findAllJobsPaginated(input ?? {});
+  }
+
+  /**
+   * The merged jobs page: one query for what `/my_jobs` and `/dashboard` used to
+   * split between them.
+   *
+   * Open to the **baseline** (`jobs:view`), because scope is enforced here rather
+   * than by the route. A caller without `jobs:view-all` is silently forced to
+   * their own jobs and their `createdBySub` / `assigneeId` filters are dropped —
+   * silently, and not with an error, because sending `scope: ALL` is what the page
+   * does by default and a client should get their jobs rather than a failure.
+   *
+   * That is the security-relevant half of the merge. Everything else is deletion.
+   */
+  @Query(() => JobsResult, { description: "Jobs the caller may see. Scope is enforced server-side: without jobs:view-all it is forced to the caller's own jobs whatever is asked for." })
+  @RequirePermission(Permission.JobsView)
+  async jobsForViewer(@Args('input', { type: () => JobsForViewerInput, nullable: true }) input: JobsForViewerInput | null, @CurrentUser() user: User): Promise<JobsResult> {
+    const requested = input ?? {};
+    const seesEveryJob = hasPermission(user, Permission.JobsViewAll);
+
+    const scope = seesEveryJob ? requested.scope ?? JobScope.ALL : JobScope.CREATED_BY_ME;
+
+    return this.jobService.findJobsForViewer(requested, {
+      scope,
+      viewerSub: user.sub,
+      createdBySub: seesEveryJob ? requested.createdBySub : undefined,
+      assigneeId: seesEveryJob ? requested.assigneeId : undefined
+    });
+  }
+
+  /** The distinct clients who have submitted a job — the merged page's client filter. */
+  @Query(() => [JobClient], { description: 'Distinct submitters, for the jobs page client filter. Requires jobs:view-all.' })
+  @RequirePermission(Permission.JobsViewAll)
+  async jobClients(): Promise<JobClient[]> {
+    return this.jobService.findDistinctJobClients();
   }
 
   @Query(() => Job, { nullable: true })

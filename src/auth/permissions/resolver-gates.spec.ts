@@ -81,6 +81,11 @@ const GATES: Row[] = [
   [JobResolver, 'archiveJob', Permission.JobsViewAll],
   [JobResolver, 'unarchiveJob', Permission.JobsViewAll],
   [WorkflowResolver, 'workflowById', Permission.JobsViewAll],
+  [JobResolver, 'jobClients', Permission.JobsViewAll],
+  // The merged jobs page. Deliberately the BASELINE permission: this one query
+  // serves a client and a technician, and the scope is enforced inside the
+  // resolver rather than by the gate. See JobResolver.jobsForViewer.
+  [JobResolver, 'jobsForViewer', Permission.JobsView],
 
   // /lab-monitor/:screen
   [WorkflowNodeResolver, 'getLabMonitorNodes', Permission.LabMonitorView],
@@ -214,9 +219,14 @@ describe('Phase 2b widening — who each gate lets through', () => {
     // client-facing catalog, which clients are supposed to reach. Everything else
     // here is above the floor.
     for (const [, , permission] of GATES) {
-      if (permission === Permission.CatalogView) continue;
+      // The two baseline permissions in the table. `catalog:view` gates the
+      // client-facing catalog; `jobs:view` gates the merged jobs page, whose scope
+      // is narrowed inside the resolver rather than at the gate. Everything else
+      // here is above the floor.
+      if (permission === Permission.CatalogView || permission === Permission.JobsView) continue;
       expect({ permission, client: reach(permission).includes('client') }).toEqual({ permission, client: false });
     }
     expect(reach(Permission.CatalogView)).toContain('client');
+    expect(reach(Permission.JobsView)).toContain('client');
   });
 });

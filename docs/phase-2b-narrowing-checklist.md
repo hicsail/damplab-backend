@@ -235,16 +235,17 @@ what makes a booking chargeable — a billing act, not a scheduling one.
 
 Two smaller consequences of the same widening:
 
-- **`Home.tsx` still keys the Jobs badge off `isStaff`.** `JOBS_FEED_STATUS` is
-  fetched with `skip: !isStaff` and `markJobsFeedViewed()` is called only when
-  `isStaff`. A technician now sees the Jobs button with no unseen dot. Both should key
-  off `jobs:view-all` — and `markJobsFeedViewed` is itself `@Roles(DamplabStaff)`, so
-  it is one of the rows in the table above.
-- **`/technician_view/:id` is administrator-only under Q8**, but `/dashboard` is
+- ~~**`Home.tsx` still keys the Jobs badge off `isStaff`.**~~ **Done.** Both the
+  query skip and the mark-viewed call key off `jobs:view-all` now, and
+  `markJobsFeedViewed` moved to that permission with the rest of the table. The badge
+  is a *shared feed* concept — there is no unseen count for one client's own jobs —
+  so a client neither sees the dot nor 403s asking for it.
+- ~~**`/technician_view/:id` is administrator-only under Q8**, but `/dashboard` is
   `jobs:view-all`. So a technician reaches the jobs dashboard and is bounced to `/`
-  when they click into a job — and `AppBreadcrumbs` carries a trail for exactly that
-  path. Encoded as the matrix specifies. Worth checking against the source
-  spreadsheet: this looks more like a transcription artifact than an intent.
+  when they click into a job.~~ **Resolved as the transcription artifact it looked
+  like.** The cell is amended to `jobs:view-all` and the route moved to
+  `PrivateRouteJobsViewAll` — which that layout is free to hold now that
+  `/dashboard` has vacated it for the baseline tier.
 
 ## The 14 inline staff checks — re-point, do not duplicate
 
