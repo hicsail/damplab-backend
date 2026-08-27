@@ -18,11 +18,12 @@ export function isStaff(user: User | undefined): boolean {
   return (user?.realm_access?.roles ?? []).includes(Role.DamplabStaff);
 }
 
-export function isJobOwner(job: { email?: string; sub?: string } | null | undefined, user: User | undefined): boolean {
+export function isJobOwner(job: { email?: string; sub?: string; clientEmail?: string } | null | undefined, user: User | undefined): boolean {
   if (!job || !user) return false;
   // Guard against a job with no owner fields matching a user with none either.
   if (job.sub && user.sub && job.sub === user.sub) return true;
   if (job.email && user.email && job.email === user.email) return true;
+  if (job.clientEmail && user.email && job.clientEmail === user.email) return true;
   return false;
 }
 
