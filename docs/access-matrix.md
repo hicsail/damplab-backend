@@ -41,6 +41,7 @@ access group. See `damplab-backend/src/pricing/pricing-groups.ts`.
 | `job:submit-for-client` — Staff submit job (Q7) | ✓ | | ✓ | |
 | `releasenotes:view` | ✓ | ✓ | ✓ | ✓ |
 | `announcements:read` | ✓ | ✓ | ✓ | ✓ |
+| *(An announcement may be addressed to any subset of these four columns. The permission gates the page; the audience gates the rows, server-side. Absent or empty audience = everyone, which is how notices written before targeting existed keep working.)* | | | | |
 | `announcements:write` | ✓ | | | |
 | `training:read` — Learning Hub | ✓ | ✓ | ✓ | ✓ |
 | `training:write` | ✓ | | | |
@@ -120,9 +121,10 @@ that is the only coupling between grouping and permission.
 | Section | Buttons |
 |---|---|
 | **Client Tools** | Jobs, Order Services, Catalog, Book Inventory, Learning Hub, Announcements, Bugs, Bug Backlog, DAMP Lab Website |
+| *(Announcements here is the read-only feed at `/announcements`, `announcements:read` — baseline. The editor is "Edit Announcements" under Admin Operational Tools, `announcements:write`.)* | |
 | **Technician Tools** | Staff submit job, My Bench |
 | **Operational Tools** | Inventory Availability, Inventory Schedule |
-| **Admin Operational Tools** | Release Notes, Catalog & Inventory Editor, Protocol Library, Lab Layout, Announcements, Billing, AI Lab Assistant |
+| **Admin Operational Tools** | Release Notes, Catalog & Inventory Editor, Protocol Library, Lab Layout, Edit Announcements, Billing, AI Lab Assistant |
 | **Admin Management Tools** | Customer Management, API Keys, Data Translation, Lab Monitor North, Lab Monitor South, Lab Status TV |
 
 Two deliberate oddities, both consequences of the topical grouping:
