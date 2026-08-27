@@ -16,7 +16,7 @@ import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 import { CustomerCategory } from '../pricing/customer-category';
 import { Pricing } from '../pricing/pricing.model';
-import { visibleFlatPrice, visiblePricing, callerCustomerCategory, canSeeAllPricingTiers } from '../pricing/pricing-visibility';
+import { visibleExternalFallbackPrice, visibleFlatPrice, visiblePricing, callerCustomerCategory, canSeeAllPricingTiers } from '../pricing/pricing-visibility';
 import { resolveCategoryPrice } from '../pricing/service-pricing.util';
 import { ServicePricingMode } from './models/damplab-service.model';
 import { CatalogServiceView } from './dtos/catalog-service-view.dto';
@@ -46,6 +46,7 @@ export class DampLabServicesResolver {
    * table and parameter definitions come back null without `internal-fields:read`.
    */
   @Query(() => [CatalogServiceView], { description: "The services catalog as the caller may see it: their own price, and the full tier table only with internal-fields:read." })
+  @RequirePermission(Permission.CatalogView)
   async catalogServices(@CurrentUser() user: User): Promise<CatalogServiceView[]> {
     const services = await this.dampLabServices.findAll();
     const category = callerCustomerCategory(user);
@@ -155,7 +156,14 @@ export class DampLabServicesResolver {
   }
 
   /**
-   * `externalPrice` is the oldest of the flat fields and, like `pricing.external`,
-   * is a generic rather than a tier. Left visible for the same reason.
+   * `externalPrice` is the flat twin of `pricing.external`: the pre-split
+   * undifferentiated external rate that all three external chains fall back to.
+   * External and uncategorised callers need it; internal customers never read it
+   * and, on real records, it carries an actual external rate — so they do not get
+   * it.
    */
+  @ResolveField(() => Float, { nullable: true })
+  externalPrice(@Parent() service: DampLabService, @CurrentUser() user: User): number | undefined {
+    return visibleExternalFallbackPrice(service.externalPrice, user);
+  }
 }

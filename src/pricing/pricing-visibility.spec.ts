@@ -2,7 +2,7 @@ import { Role } from '../auth/roles/roles.enum';
 import { User } from '../auth/user.interface';
 import { CustomerCategory } from './customer-category';
 import { Pricing } from './pricing.model';
-import { callerCustomerCategory, canSeeAllPricingTiers, visibleFlatPrice, visiblePricing } from './pricing-visibility';
+import { callerCustomerCategory, canSeeAllPricingTiers, visibleExternalFallbackPrice, visibleFlatPrice, visiblePricing } from './pricing-visibility';
 
 const ALL_TIERS: Pricing = {
   internal: 1,
@@ -23,26 +23,32 @@ describe('visiblePricing — the catalog leak, closed', () => {
     }
   });
 
-  it('gives an internal customer their own tier and the generic fallbacks, and nothing else', () => {
+  it('gives an internal customer their own tier and legacy, and NOT the external fallback', () => {
+    // `external` is withheld from internal customers specifically. Their chain is
+    // `internal ?? internalPrice` then straight to `legacy` — they never read it —
+    // and on real records it carries an actual external rate, so handing it over
+    // would have leaked the number the strip exists to hide.
     expect(visiblePricing(ALL_TIERS, userWith([], ['internal-customers']))).toEqual({
       internal: 1,
       externalAcademic: undefined,
       externalMarket: undefined,
       externalNoSalary: undefined,
-      external: 5,
+      external: undefined,
       legacy: 6
     });
   });
 
-  it('gives an academic customer theirs and not the market or no-salary rate', () => {
+  it('gives an academic customer theirs, the external fallback, and no sibling tier', () => {
     const visible = visiblePricing(ALL_TIERS, userWith([], ['external-customer-academic']))!;
     expect(visible.externalAcademic).toBe(2);
+    // The second step of their own chain: externalAcademic ?? external ?? legacy.
+    expect(visible.external).toBe(5);
     expect(visible.internal).toBeUndefined();
     expect(visible.externalMarket).toBeUndefined();
     expect(visible.externalNoSalary).toBeUndefined();
   });
 
-  it('gives an uncategorised caller only the generic fallbacks', () => {
+  it('gives an uncategorised caller only the fallbacks', () => {
     // The one population with no pricing group at all. They must not be handed the
     // internal rate — it is the cheapest tier.
     expect(visiblePricing(ALL_TIERS, userWith([]))).toEqual({
@@ -85,6 +91,21 @@ describe('visiblePricing — the catalog leak, closed', () => {
     const original = { ...ALL_TIERS };
     visiblePricing(original, userWith([]));
     expect(original).toEqual(ALL_TIERS);
+  });
+});
+
+describe('visibleExternalFallbackPrice — externalPrice, the flat twin of pricing.external', () => {
+  it('reaches external and uncategorised callers, whose chains fall back to it', () => {
+    expect(visibleExternalFallbackPrice(5, userWith([], ['external-customer-academic']))).toBe(5);
+    expect(visibleExternalFallbackPrice(5, userWith([]))).toBe(5);
+  });
+
+  it('does not reach an internal customer', () => {
+    expect(visibleExternalFallbackPrice(5, userWith([], ['internal-customers']))).toBeUndefined();
+  });
+
+  it('reaches staff, who see everything', () => {
+    expect(visibleExternalFallbackPrice(5, userWith([Role.DamplabStaff]))).toBe(5);
   });
 });
 

@@ -56,6 +56,12 @@ const GATES: Row[] = [
   [ProtocolMapResolver, 'upsertProtocolStepMapping', Permission.ProtocolLibraryWrite],
   [ProtocolMapResolver, 'deleteProtocolStepMapping', Permission.ProtocolLibraryWrite],
 
+  // The client-facing catalog page. `catalog:view` is baseline, so this denies
+  // nobody — it is here so the gate is explicit and a later edit cannot widen it
+  // silently. The wide `services` query stays open by omission: the canvas needs
+  // it, and its narrowing happens on the fields (see the pricing strip).
+  [DampLabServicesResolver, 'catalogServices', Permission.CatalogView],
+
   // /data_translation — this resolver had NO guard at all before.
   [TemplateResolver, 'templates', Permission.DataTranslationUse],
   [TemplateResolver, 'template', Permission.DataTranslationUse],
@@ -198,8 +204,13 @@ describe('Phase 2b widening — who each gate lets through', () => {
   });
 
   it('keeps the client baseline out of every widened page', () => {
+    // `catalog:view` is the one baseline permission in the table — it gates the
+    // client-facing catalog, which clients are supposed to reach. Everything else
+    // here is above the floor.
     for (const [, , permission] of GATES) {
+      if (permission === Permission.CatalogView) continue;
       expect({ permission, client: reach(permission).includes('client') }).toEqual({ permission, client: false });
     }
+    expect(reach(Permission.CatalogView)).toContain('client');
   });
 });

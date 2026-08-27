@@ -40,8 +40,29 @@ const TIER_FIELD: Record<CustomerCategory, keyof Pricing> = {
   [CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY]: 'externalNoSalary'
 };
 
-/** Always visible: generic and legacy fallbacks, not a distinct customer's rate. */
-const ALWAYS_VISIBLE: readonly (keyof Pricing)[] = Object.freeze(['external', 'legacy']);
+/**
+ * The true universal fallback. `resolveCategoryPrice` ends every chain — internal,
+ * academic, market, no-salary and uncategorised alike — in `pricing.legacy ?? price`,
+ * so stripping this would leave a caller with a blank price rather than a correct one.
+ */
+const ALWAYS_VISIBLE: readonly (keyof Pricing)[] = Object.freeze(['legacy']);
+
+/**
+ * `external` is the pre-split undifferentiated external price, and it is the second
+ * step in all three *external* chains (`externalAcademic ?? external ?? …`). So it
+ * has to reach external and uncategorised callers, or their price goes blank.
+ *
+ * It must **not** reach internal customers. Their chain is
+ * `internal ?? internalPrice`, then straight to `legacy` — they never read
+ * `external` — and on real records this field is often populated with what is
+ * effectively the market rate. Publishing it to them would have made the tier strip
+ * leak the number it was there to hide.
+ */
+const EXTERNAL_FALLBACK: keyof Pricing = 'external';
+
+function seesExternalFallback(category: CustomerCategory | undefined): boolean {
+  return category !== CustomerCategory.INTERNAL_CUSTOMERS;
+}
 
 /**
  * Strip every pricing tier the caller is not in.
@@ -57,23 +78,40 @@ export function visiblePricing(pricing: Pricing | undefined | null, user: (User 
   if (!pricing) return pricing ?? undefined;
   if (canSeeAllPricingTiers(user)) return pricing;
 
-  const ownTier = TIER_FIELD[callerCustomerCategory(user) as CustomerCategory];
-  const keep = new Set<keyof Pricing>([...ALWAYS_VISIBLE, ...(ownTier ? [ownTier] : [])]);
+  const category = callerCustomerCategory(user);
+  const ownTier = TIER_FIELD[category as CustomerCategory];
+  const keep = new Set<keyof Pricing>([
+    ...ALWAYS_VISIBLE,
+    ...(ownTier ? [ownTier] : []),
+    ...(seesExternalFallback(category) ? [EXTERNAL_FALLBACK] : [])
+  ]);
 
+  const everyField: (keyof Pricing)[] = [...Object.values(TIER_FIELD), EXTERNAL_FALLBACK, ...ALWAYS_VISIBLE];
   const stripped: Pricing = {};
-  for (const key of Object.keys(TIER_FIELD).map((category) => TIER_FIELD[category as CustomerCategory]).concat(ALWAYS_VISIBLE as (keyof Pricing)[])) {
+  for (const key of everyField) {
     stripped[key] = keep.has(key) ? (pricing as Pricing)[key] : undefined;
   }
   return stripped;
 }
 
 /**
- * The same rule for the five deprecated flat price fields on DampLabService
- * (`internalPrice`, `externalAcademicPrice`, …). They are superseded by `pricing`
- * but still populated on older documents and still read by the frontend's fallback
- * chains, so leaving them would make the `pricing` strip cosmetic.
+ * The same rule for the four deprecated per-tier flat price fields on
+ * DampLabService (`internalPrice`, `externalAcademicPrice`, …). They are superseded
+ * by `pricing` but still populated on older documents and still read by the
+ * frontend's fallback chains, so leaving them would make the `pricing` strip
+ * cosmetic.
  */
 export function visibleFlatPrice(value: number | undefined, tier: CustomerCategory, user: (User & PermissionActor) | undefined | null): number | undefined {
   if (canSeeAllPricingTiers(user)) return value;
   return callerCustomerCategory(user) === tier ? value : undefined;
+}
+
+/**
+ * `externalPrice`, the flat twin of `pricing.external`. Same rule: every external
+ * chain falls back to it, and internal customers never read it — so they do not get
+ * it, because in practice this field carries a real external rate.
+ */
+export function visibleExternalFallbackPrice(value: number | undefined, user: (User & PermissionActor) | undefined | null): number | undefined {
+  if (canSeeAllPricingTiers(user)) return value;
+  return seesExternalFallback(callerCustomerCategory(user)) ? value : undefined;
 }
