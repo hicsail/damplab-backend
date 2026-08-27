@@ -20,6 +20,8 @@ import { ActivityResolver } from '../../activity/activity.resolver';
 import { ApiKeyResolver } from '../../api-key/api-key.resolver';
 import { AgentController } from '../../agent/agent.controller';
 import { ProtocolsController } from '../../protocols/protocols.controller';
+import { TrainingResolver } from '../../training/training.resolver';
+import { AnnouncementResolver } from '../../announcements/announcement.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -132,6 +134,23 @@ const GATES: Row[] = [
   [CategoryResolver, 'updateCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'deleteCategory', Permission.CatalogEditorWrite],
 
+  // Learning Hub. `training:read` is baseline; whether *drafts* come back is
+  // decided from the caller's training:write inside the resolver, not from an
+  // argument, so an unpublished guide cannot be read by asking for it.
+  [TrainingResolver, 'guides', Permission.TrainingRead],
+  [TrainingResolver, 'guideBySlug', Permission.TrainingRead],
+  [TrainingResolver, 'createGuide', Permission.TrainingWrite],
+  [TrainingResolver, 'updateGuide', Permission.TrainingWrite],
+  [TrainingResolver, 'deleteGuide', Permission.TrainingWrite],
+
+  // Announcements. `announcements:read` is baseline and stays open to everyone —
+  // what narrows is the rows, by audience, inside the resolver.
+  [AnnouncementResolver, 'announcements', Permission.AnnouncementsRead],
+  [AnnouncementResolver, 'allAnnouncements', Permission.AnnouncementsWrite],
+  [AnnouncementResolver, 'createAnnouncement', Permission.AnnouncementsWrite],
+  [AnnouncementResolver, 'updateAnnouncement', Permission.AnnouncementsWrite],
+  [AnnouncementResolver, 'deleteAnnouncement', Permission.AnnouncementsWrite],
+
   // Administrator-only surfaces, re-pointed off the role so there is one vocabulary.
   [ActivityResolver, 'activityEvents', Permission.LabStatusTvView],
   [ApiKeyResolver, 'createApiKey', Permission.ApiKeysManage],
@@ -219,14 +238,16 @@ describe('Phase 2b widening — who each gate lets through', () => {
     // client-facing catalog, which clients are supposed to reach. Everything else
     // here is above the floor.
     for (const [, , permission] of GATES) {
-      // The two baseline permissions in the table. `catalog:view` gates the
-      // client-facing catalog; `jobs:view` gates the merged jobs page, whose scope
-      // is narrowed inside the resolver rather than at the gate. Everything else
-      // here is above the floor.
-      if (permission === Permission.CatalogView || permission === Permission.JobsView) continue;
+      // The four baseline permissions in the table. Each gates a page everyone
+      // reaches, and each narrows *what comes back* inside its resolver rather than
+      // at the gate: the catalog's pricing tiers, the jobs scope, announcement
+      // audiences, and unpublished guides. Everything else here is above the floor.
+      if ([Permission.CatalogView, Permission.JobsView, Permission.TrainingRead, Permission.AnnouncementsRead].includes(permission)) continue;
       expect({ permission, client: reach(permission).includes('client') }).toEqual({ permission, client: false });
     }
     expect(reach(Permission.CatalogView)).toContain('client');
     expect(reach(Permission.JobsView)).toContain('client');
+    expect(reach(Permission.TrainingRead)).toContain('client');
+    expect(reach(Permission.AnnouncementsRead)).toContain('client');
   });
 });

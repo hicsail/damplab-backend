@@ -18,6 +18,7 @@ import { SowPresetModule } from './sow-preset/sow-preset.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
 import { AnnouncementModule } from './announcements/announcement.module';
+import { TrainingModule } from './training/training.module';
 import { TemplateModule } from './template/template.module';
 import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
@@ -69,6 +70,7 @@ import { ClickUpModule } from './clickup/clickup.module';
 
     CommentModule,
     AnnouncementModule,
+    TrainingModule,
     TemplateModule,
     BugReportModule,
     CustomerManagementModule,
