@@ -60,7 +60,12 @@ function normalizePrice(value: unknown): number | undefined {
   return undefined;
 }
 
-function resolveCategoryPrice(
+/**
+ * THE category → price resolution, exported so the catalog view can quote a
+ * caller their own price rather than shipping the whole tier table and letting the
+ * browser pick. Do not write a second copy of this chain.
+ */
+export function resolveCategoryPrice(
   input:
     | {
         internalPrice?: unknown;

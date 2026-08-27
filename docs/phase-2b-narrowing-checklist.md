@@ -77,7 +77,12 @@ Plus the Q4 field strip on `inventory.model.ts`: `serialNumber` (:195),
 `hasServiceContract` (:199), `serviceContractExpiration` (:203) become
 `@ResolveField`s returning `null` without `internal-fields:read`. All three are
 already `nullable: true`, so this is legal; all three already carry doc comments
-claiming a restriction nothing enforces.
+claiming a restriction nothing enforces. **DONE.**
+
+**Also done, and not on this list:** `InventoryItem.pricing` carries booking rates by
+customer category and rides the same open `activeInventoryItems` query that
+BookInventory (a client-facing page) reads — the identical leak to the service
+catalog's, by the identical mechanism. Same treatment.
 
 ### `sow/` — 15 open, and `sow-access.ts` is the real work
 
@@ -138,11 +143,28 @@ else moves to completed. Low cost.
 Q4 field strip on `services/models/damplab-service.model.ts:162-166`: `notes` becomes
 a `@ResolveField` returning `null` without `internal-fields:read`. **Keep `notes` in
 `GET_SERVICES`** — staff read and edit it (`AdminEditService.tsx:141`) and it is one
-shared query, so deleting the field would strip it from staff too.
+shared query, so deleting the field would strip it from staff too. **DONE.**
 
-**Not in scope, stated so it is not forgotten:** all internal / academic / market /
+~~**Not in scope, stated so it is not forgotten:** all internal / academic / market /
 no-salary prices still ship to every caller of `services`, which has no `@Roles`.
-Enforcing that needs a *separate reduced query* for the catalog page. Follow-on work.
+Enforcing that needs a *separate reduced query* for the catalog page. Follow-on
+work.~~ **DONE, and the reduced query was not sufficient on its own.**
+
+A reduced `catalogServices` exists and the catalog page runs it. But the wide
+`services` query still had to be fixed, because it is what the canvas fetches into
+the frontend's global AppContext — so a client could read every tier straight off
+the endpoint no matter what the catalog page asked for. `DampLabService.pricing` is
+now a `@ResolveField` returning only the caller's own tier plus the generic
+`external` / `legacy` fallbacks, and the five deprecated flat price fields
+(`internalPrice`, `externalAcademicPrice`, …) get the same treatment — leaving them
+would have made the strip cosmetic.
+
+One frontend consequence, recorded because it is a behaviour change and not just a
+gate: `BookInventory`'s price fallback for an **uncategorised** caller used to end in
+`externalMarket`. That reach-through is removed rather than accommodated. It now ends
+where the server's own `resolveCategoryPrice` ends — `legacy`, then `external` —
+because the alternative was publishing the market rate to people not in that tier
+purely so one line could read it.
 
 ### The rest
 

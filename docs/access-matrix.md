@@ -68,9 +68,19 @@ access group. See `damplab-backend/src/pricing/pricing-groups.ts`.
 | `labassistant:use` — AI Lab Assistant | ✓ | ✓ | | |
 | `internal-fields:read` — staff-only model fields | ✓ | ✓ | | |
 
-`internal-fields:read` is **enforced** as of the catalog work: `DampLabService.notes`
-and inventory's `serialNumber` / `hasServiceContract` / `serviceContractExpiration`
-resolve to `null` without it, rather than being omitted from the query shape.
+`internal-fields:read` is **enforced** as of the catalog work. Without it:
+
+- `DampLabService.notes` and inventory's `serialNumber` / `hasServiceContract` /
+  `serviceContractExpiration` resolve to `null` (rather than being omitted from the
+  query shape — one shared query drives both staff and client pages).
+- Every **pricing tier the caller is not in** resolves to null, on both
+  `DampLabService.pricing` and `InventoryItem.pricing`, and on the five deprecated
+  flat price fields. The generic `external` and `legacy` fallbacks stay visible:
+  they are not another customer's rate, they are where every tier's resolution chain
+  ends.
+- `catalogServices.pricing` and `catalogServices.parameters` are null entirely — the
+  client-facing catalog page shows one price, the caller's own, resolved
+  server-side.
 
 ### Amendments to the transcription
 
