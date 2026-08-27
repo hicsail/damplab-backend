@@ -15,6 +15,12 @@ export class MyPermissions {
       'The same, with staff-flavoured roles (damplab-staff, technician) removed — what the staff "Client View" toggle previews. Note client-unassisted-equipment-user is NOT removed; it is a client variant. For a non-staff caller this equals effective. This is a UI illusion only: the caller\'s real token is unchanged and retains full backend authority.'
   })
   asCustomer: string[];
+
+  @Field(() => [String], {
+    description:
+      "The realm roles the *server* resolved for this caller. Exposed so the UI can detect DEV_AS_ROLES / VITE_DEV_AS_ROLES drift under the local auth bypass: only the backend's value decides what `effective` contains, so if the two halves disagree the UI renders one role's menu while claiming another. Discloses nothing — the caller's own token already carries these."
+  })
+  roles: string[];
 }
 
 @Resolver()
@@ -29,7 +35,8 @@ export class PermissionsResolver {
   myPermissions(@CurrentUser() user: User): MyPermissions {
     return {
       effective: [...permissionsFor(user)],
-      asCustomer: [...customerPermissionsFor(user)]
+      asCustomer: [...customerPermissionsFor(user)],
+      roles: user?.realm_access?.roles ?? []
     };
   }
 }
