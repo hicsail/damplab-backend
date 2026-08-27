@@ -1,4 +1,4 @@
-import { ProtocolsService } from './protocols.service';
+import { ProtocolsService, ProtocolView } from './protocols.service';
 
 /**
  * The cache is what makes the Protocol Library page viable at all: it assembles
@@ -14,7 +14,7 @@ describe('ProtocolsService — the TTL cache', () => {
     return service;
   };
 
-  const protocol = (id: string) => ({ id, title: `Protocol ${id}`, url: '', description: '', steps: [] });
+  const protocol = (id: string): ProtocolView => ({ id, title: `Protocol ${id}`, url: '', description: '', steps: [] });
 
   it('fetches once and serves the rest from memory', async () => {
     const fetchProtocol = jest.fn(async (id: string) => protocol(id));

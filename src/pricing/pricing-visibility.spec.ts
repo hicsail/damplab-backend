@@ -13,8 +13,7 @@ const ALL_TIERS: Pricing = {
   legacy: 6
 };
 
-const userWith = (roles: string[], groups: string[] = []): User =>
-  ({ preferred_username: 'u', sub: 's', email: 'e', realm_access: { roles }, groups } as User);
+const userWith = (roles: string[], groups: string[] = []): User => ({ preferred_username: 'u', sub: 's', email: 'e', realm_access: { roles }, groups } as User);
 
 describe('visiblePricing — the catalog leak, closed', () => {
   it('leaves everything alone for a caller with internal-fields:read', () => {

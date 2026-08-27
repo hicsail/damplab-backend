@@ -16,7 +16,7 @@ import { Pricing } from '../../pricing/pricing.model';
  * without it, `catalogServices` would be a thinner query over data the wide one
  * still hands out.
  */
-@ObjectType({ description: 'A service as the client-facing catalog page shows it: name, description, the caller\'s own price, and — for staff only — the full tier table and parameters.' })
+@ObjectType({ description: "A service as the client-facing catalog page shows it: name, description, the caller's own price, and — for staff only — the full tier table and parameters." })
 export class CatalogServiceView {
   @Field(() => ID)
   id: string;
@@ -35,7 +35,8 @@ export class CatalogServiceView {
 
   @Field(() => Float, {
     nullable: true,
-    description: "The caller's own resolved price, computed server-side from their pricing group. Null when the service prices per parameter rather than per service, or when no rate is set for their category."
+    description:
+      "The caller's own resolved price, computed server-side from their pricing group. Null when the service prices per parameter rather than per service, or when no rate is set for their category."
   })
   price?: number;
 

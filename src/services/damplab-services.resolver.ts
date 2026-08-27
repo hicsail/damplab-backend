@@ -45,7 +45,7 @@ export class DampLabServicesResolver {
    * price — their own, resolved server-side from their pricing group — and the tier
    * table and parameter definitions come back null without `internal-fields:read`.
    */
-  @Query(() => [CatalogServiceView], { description: "The services catalog as the caller may see it: their own price, and the full tier table only with internal-fields:read." })
+  @Query(() => [CatalogServiceView], { description: 'The services catalog as the caller may see it: their own price, and the full tier table only with internal-fields:read.' })
   @RequirePermission(Permission.CatalogView)
   async catalogServices(@CurrentUser() user: User): Promise<CatalogServiceView[]> {
     const services = await this.dampLabServices.findAll();

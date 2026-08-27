@@ -10,8 +10,11 @@ import { WorkflowNodeService } from './node.service';
  * taken off.
  */
 describe('WorkflowNodeService.updateAssignee', () => {
-  const harness = () => {
-    const findOneAndUpdate = jest.fn(async (_filter: unknown, _update: unknown, _options?: unknown) => ({ _id: 'node-1' }));
+  // `jest.Mock` without generics so `mock.calls[0][1]` is reachable — a typed
+  // `jest.fn(async (...) => …)` narrows calls to a zero-length tuple, which is why
+  // an earlier version carried three unused dummy parameters.
+  const harness = (): { service: WorkflowNodeService; findOneAndUpdate: jest.Mock } => {
+    const findOneAndUpdate: jest.Mock = jest.fn().mockResolvedValue({ _id: 'node-1' });
     const service = new WorkflowNodeService({ findOneAndUpdate } as any, {} as any, {} as any, {} as any);
     return { service, findOneAndUpdate };
   };
@@ -30,8 +33,8 @@ describe('WorkflowNodeService.updateAssignee', () => {
 });
 
 describe('WorkflowNodeService.updateEstimatedMinutes', () => {
-  const harness = () => {
-    const findOneAndUpdate = jest.fn(async (_filter: unknown, _update: unknown, _options?: unknown) => ({ _id: 'node-1' }));
+  const harness = (): { service: WorkflowNodeService; findOneAndUpdate: jest.Mock } => {
+    const findOneAndUpdate: jest.Mock = jest.fn().mockResolvedValue({ _id: 'node-1' });
     const service = new WorkflowNodeService({ findOneAndUpdate } as any, {} as any, {} as any, {} as any);
     return { service, findOneAndUpdate };
   };

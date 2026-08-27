@@ -80,11 +80,7 @@ export function visiblePricing(pricing: Pricing | undefined | null, user: (User 
 
   const category = callerCustomerCategory(user);
   const ownTier = TIER_FIELD[category as CustomerCategory];
-  const keep = new Set<keyof Pricing>([
-    ...ALWAYS_VISIBLE,
-    ...(ownTier ? [ownTier] : []),
-    ...(seesExternalFallback(category) ? [EXTERNAL_FALLBACK] : [])
-  ]);
+  const keep = new Set<keyof Pricing>([...ALWAYS_VISIBLE, ...(ownTier ? [ownTier] : []), ...(seesExternalFallback(category) ? [EXTERNAL_FALLBACK] : [])]);
 
   const everyField: (keyof Pricing)[] = [...Object.values(TIER_FIELD), EXTERNAL_FALLBACK, ...ALWAYS_VISIBLE];
   const stripped: Pricing = {};

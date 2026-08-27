@@ -110,8 +110,10 @@ describe('JobResolver.restoreJobVersion', () => {
 describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
   const viewer = (roles: string[], sub = 'viewer-1'): any => ({ sub, email: 'v@example.org', preferred_username: 'V', realm_access: { roles } });
 
-  const harness = () => {
-    const findJobsForViewer = jest.fn(async (_input: unknown, _resolved: unknown) => ({ items: [], totalCount: 0 }));
+  // Untyped `jest.Mock` so `mock.calls[0][1]` — the resolved scope, which is what
+  // these tests are actually about — is reachable.
+  const harness = (): { resolver: JobResolver; findJobsForViewer: jest.Mock } => {
+    const findJobsForViewer: jest.Mock = jest.fn().mockResolvedValue({ items: [], totalCount: 0 });
     const resolver = new JobResolver({ findJobsForViewer } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     return { resolver, findJobsForViewer };
   };

@@ -18,3 +18,30 @@ process.env.JWKS_ENDPOINT = 'http://127.0.0.1:1/jwks-never-fetched';
 // harness.ts supplies real identities instead; this makes sure a developer's
 // local .env cannot quietly switch that off.
 delete process.env.DISABLE_AUTH;
+
+/**
+ * Unconfigure the Keycloak Admin API for the duration of the run.
+ *
+ * `KeycloakService.isConfigured()` is true whenever a server URL, client id and
+ * secret are all present, and a developer's `.env` normally has all three pointing
+ * at the shared **staging** realm. So `changeJobCustomerCategory` would try to add
+ * the fixture user `customer-sub-1` to a real group there, get a 404, and — quite
+ * correctly — refuse to reprice the job. The DOCUMENT_STALE test then fails.
+ *
+ * Two reasons this is neutralised rather than mocked: the suite passed in CI and
+ * failed on every machine with a populated `.env`, which is the exact asymmetry this
+ * file exists to remove; and an integration run should not be making live calls
+ * against a shared realm at all. Unconfigured, the resolver takes its documented
+ * "no Admin API" branch, logs a warning, and updates the job categories — which is
+ * what these tests are about.
+ *
+ * **Set to empty, not `delete`d** — and that difference is the whole trick. dotenv
+ * skips a key that is already present in `process.env`, so assigning wins; deleting
+ * one merely clears the way for `.env` to put it back a moment later, when
+ * ConfigModule runs. `MONGO_URI` above works for the same reason. (`DISABLE_AUTH`
+ * gets away with `delete` only because it is usually absent from `.env` — assigning
+ * would be safer there too.)
+ */
+process.env.KEYCLOAK_SERVER_URL = '';
+process.env.KEYCLOAK_CLIENT_ID = '';
+process.env.KEYCLOAK_CLIENT_SECRET = '';

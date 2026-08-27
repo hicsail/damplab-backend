@@ -125,9 +125,7 @@ export class WorkflowNodeService {
    * attached to work they were taken off.
    */
   async updateAssignee(node: WorkflowNode, assigneeId: string | null, assigneeDisplayName: string | null): Promise<WorkflowNode | null> {
-    const update = assigneeId
-      ? { $set: { assigneeId, assigneeDisplayName: assigneeDisplayName ?? undefined } }
-      : { $unset: { assigneeId: '', assigneeDisplayName: '' } };
+    const update = assigneeId ? { $set: { assigneeId, assigneeDisplayName: assigneeDisplayName ?? undefined } } : { $unset: { assigneeId: '', assigneeDisplayName: '' } };
     return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, update, { new: true });
   }
 
@@ -189,8 +187,6 @@ export class WorkflowNodeService {
         .findOneAndUpdate({ _id: nodeId }, { $set: { isArchived: true, archivedAt: new Date(), archivedBy: actor ?? 'unknown', archivedFromState: node.state } }, { new: true })
         .exec();
     }
-    return this.workflowNodeModel
-      .findOneAndUpdate({ _id: nodeId }, { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } }, { new: true })
-      .exec();
+    return this.workflowNodeModel.findOneAndUpdate({ _id: nodeId }, { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } }, { new: true }).exec();
   }
 }

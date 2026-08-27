@@ -59,7 +59,7 @@ export class ProtocolMapResolver {
    * per-entry: one unreachable protocol lists as `unavailable` rather than blanking
    * the whole library.
    */
-  @Query(() => [ProtocolLibraryCategory], { description: 'Every protocol referenced by the service catalog, grouped by the referencing service\'s category.' })
+  @Query(() => [ProtocolLibraryCategory], { description: "Every protocol referenced by the service catalog, grouped by the referencing service's category." })
   @RequirePermission(Permission.ProtocolLibraryRead)
   async protocolLibrary(): Promise<ProtocolLibraryCategory[]> {
     const services = await this.damplabServices.findAll();
@@ -99,10 +99,12 @@ export class ProtocolMapResolver {
       grouped.get(category)!.push(entry);
     }
 
-    return [...grouped.entries()]
-      .map(([category, protocols]) => ({ category, protocols: protocols.sort((a, b) => a.title.localeCompare(b.title)) }))
-      // Uncategorised last: it is the residue, not a heading anyone navigates to.
-      .sort((a, b) => (a.category === 'Uncategorised' ? 1 : b.category === 'Uncategorised' ? -1 : a.category.localeCompare(b.category)));
+    return (
+      [...grouped.entries()]
+        .map(([category, protocols]) => ({ category, protocols: protocols.sort((a, b) => a.title.localeCompare(b.title)) }))
+        // Uncategorised last: it is the residue, not a heading anyone navigates to.
+        .sort((a, b) => (a.category === 'Uncategorised' ? 1 : b.category === 'Uncategorised' ? -1 : a.category.localeCompare(b.category)))
+    );
   }
 
   @Query(() => [ProtocolStepMapping], { description: 'All author-defined step mappings for a protocol.' })
