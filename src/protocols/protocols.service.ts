@@ -70,6 +70,24 @@ export class ProtocolsService {
   private readonly apiKey?: string;
   private readonly baseUrl: string;
 
+  /**
+   * In-process TTL cache, keyed by the id or slug as asked for.
+   *
+   * **Not optional.** The Protocol Library page fans out one protocols.io call per
+   * protocol (two, counting the steps fetch) on every load, and the library is
+   * assembled from every `protocolId` in the service catalog. Without this a single
+   * page view is dozens of upstream calls against a rate-limited API on one shared
+   * server-side key.
+   *
+   * In-process rather than Redis deliberately: protocol content changes rarely, a
+   * few minutes of staleness is fine, and a cold cache after a deploy costs one
+   * slow page load. Adding infrastructure for that would be the wrong trade.
+   */
+  private readonly protocolCache = new Map<string, { value: ProtocolView; expiresAt: number }>();
+  private static readonly CACHE_TTL_MS = 10 * 60 * 1000;
+  /** Bounded so a long-running process cannot grow the cache without limit. */
+  private static readonly CACHE_MAX_ENTRIES = 500;
+
   constructor(private readonly configService: ConfigService) {
     this.apiKey = this.configService.get<string>('protocolsio.apiKey');
     this.baseUrl = (this.configService.get<string>('protocolsio.apiBaseUrl') || 'https://www.protocols.io/api/v4').replace(/\/$/, '');
@@ -111,6 +129,33 @@ export class ProtocolsService {
    * or numeric id). Resolves the slug to the numeric id, then pulls the steps.
    */
   async getProtocol(idOrSlug: string): Promise<ProtocolView> {
+    const cacheKey = String(idOrSlug || '').trim();
+    const cached = this.protocolCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+    const fetched = await this.fetchProtocol(idOrSlug);
+    this.rememberProtocol(cacheKey, fetched);
+    return fetched;
+  }
+
+  /** Drop a protocol from the cache — e.g. after its mapping is edited. */
+  invalidateProtocol(idOrSlug: string): void {
+    this.protocolCache.delete(String(idOrSlug || '').trim());
+  }
+
+  private rememberProtocol(key: string, value: ProtocolView): void {
+    // Evict the oldest insertion when full. Map preserves insertion order, so the
+    // first key is the oldest — good enough for a bounded content cache, and much
+    // cheaper than tracking real LRU access.
+    if (this.protocolCache.size >= ProtocolsService.CACHE_MAX_ENTRIES) {
+      const oldest = this.protocolCache.keys().next().value;
+      if (oldest !== undefined) this.protocolCache.delete(oldest);
+    }
+    this.protocolCache.set(key, { value, expiresAt: Date.now() + ProtocolsService.CACHE_TTL_MS });
+  }
+
+  private async fetchProtocol(idOrSlug: string): Promise<ProtocolView> {
     if (!this.isConfigured()) {
       throw new ServiceUnavailableException('protocols.io is not configured (missing API key).');
     }

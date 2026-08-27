@@ -55,6 +55,7 @@ const GATES: Row[] = [
   // /protocol-map — same class-level problem.
   [ProtocolMapResolver, 'protocolStepMappings', Permission.ProtocolLibraryRead],
   [ProtocolMapResolver, 'resolveProtocol', Permission.ProtocolLibraryRead],
+  [ProtocolMapResolver, 'protocolLibrary', Permission.ProtocolLibraryRead],
   [ProtocolMapResolver, 'upsertProtocolStepMapping', Permission.ProtocolLibraryWrite],
   [ProtocolMapResolver, 'deleteProtocolStepMapping', Permission.ProtocolLibraryWrite],
 
