@@ -253,8 +253,8 @@ export class JobService {
     return { items, totalCount };
   }
 
-  async findOwnJobsPaginated(sub: string, input: OwnJobsInput): Promise<OwnJobsResult> {
-    const baseMatch = { sub };
+  async findOwnJobsPaginated(sub: string, email: string, input: OwnJobsInput): Promise<OwnJobsResult> {
+    const baseMatch = { $or: [{ sub }, { clientEmail: email }] };
     const { items, totalCount } = await this.runJobsPipeline(baseMatch, input);
     return { items, totalCount };
   }
