@@ -42,24 +42,8 @@ export const StationPlacementSchema = new mongoose.Schema(
   { _id: false }
 );
 
-/**
- * Coarse category for filtering and grouping on the availability board.
- */
-export enum InventoryItemType {
-  /** @deprecated Use EQUIPMENT. Kept for backward-compatible reads until migration runs. */
-  ROBOT = 'ROBOT',
-  /** @deprecated Use EQUIPMENT. Kept for backward-compatible reads until migration runs. */
-  MACHINE = 'MACHINE',
-  /** @deprecated Use EQUIPMENT. Kept for backward-compatible reads until migration runs. */
-  INSTRUMENT = 'INSTRUMENT',
-  /** @deprecated Use EQUIPMENT or HOOD/STORAGE. Kept for backward-compatible reads until migration runs. */
-  OTHER = 'OTHER',
-  EQUIPMENT = 'EQUIPMENT',
-  HOOD = 'HOOD',
-  STORAGE = 'STORAGE',
-  CONSUMABLE = 'CONSUMABLE'
-}
-registerEnumType(InventoryItemType, { name: 'InventoryItemType' });
+/** Suggested values for the type field — not enforced, users can add new ones. */
+export const SUGGESTED_INVENTORY_TYPES = ['EQUIPMENT', 'HOOD', 'STORAGE', 'CONSUMABLE'];
 
 /** A single dimension measurement (e.g. 12 cm, 5 kg). */
 @ObjectType()
@@ -115,13 +99,13 @@ export class InventoryItem {
   @Field({ description: 'Human readable name (e.g. "OT-2 #1", "Bioanalyzer").' })
   name: string;
 
-  @Prop({ required: false, default: InventoryItemType.EQUIPMENT, type: String, enum: Object.values(InventoryItemType) })
-  @Field(() => InventoryItemType, {
+  @Prop({ required: false, default: 'EQUIPMENT', type: String })
+  @Field(() => String, {
     nullable: true,
-    defaultValue: InventoryItemType.EQUIPMENT,
-    description: 'Coarse category for grouping on the availability board.'
+    defaultValue: 'EQUIPMENT',
+    description: 'Coarse category for grouping on the availability board. Free string — suggested values: EQUIPMENT, HOOD, STORAGE, CONSUMABLE.'
   })
-  type?: InventoryItemType;
+  type?: string;
 
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Free-text description (model, capabilities, notes).' })
@@ -203,9 +187,17 @@ export class InventoryItem {
   @Field({ nullable: true, description: 'Expiration date of the service contract, if any.' })
   serviceContractExpiration?: Date;
 
-  @Prop({ type: [DimensionSchema], default: [] })
-  @Field(() => [Dimension], { description: 'Physical dimensions of the equipment (up to 3 measurements).' })
-  dimensions: Dimension[];
+  @Prop({ type: DimensionSchema, required: false })
+  @Field(() => Dimension, { nullable: true, description: 'Length dimension.' })
+  dimensionL?: Dimension;
+
+  @Prop({ type: DimensionSchema, required: false })
+  @Field(() => Dimension, { nullable: true, description: 'Width dimension.' })
+  dimensionW?: Dimension;
+
+  @Prop({ type: DimensionSchema, required: false })
+  @Field(() => Dimension, { nullable: true, description: 'Height dimension.' })
+  dimensionH?: Dimension;
 
   @Prop({ required: false, default: false })
   @Field(() => Boolean, {
@@ -214,6 +206,10 @@ export class InventoryItem {
     description: 'Soft-deleted: hidden from pickers but still resolvable for historical nodes.'
   })
   isDeleted?: boolean;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Username or sub of whoever last created or modified this item.' })
+  lastModifiedBy?: string;
 }
 
 export type InventoryItemDocument = InventoryItem & mongoose.Document;

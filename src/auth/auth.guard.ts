@@ -4,7 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Request } from 'express';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
-import { ROLES_KEY } from './roles/roles.decorator';
+import { IS_PUBLIC_KEY, ROLES_KEY } from './roles/roles.decorator';
 import { Role } from './roles/roles.enum';
 import { User } from './user.interface';
 import { ApiKeyService } from '../api-key/api-key.service';
@@ -17,6 +17,9 @@ export class AuthRolesGuard implements CanActivate {
   constructor(private configService: ConfigService, private jwtService: JwtService, private reflector: Reflector, private apiKeyService: ApiKeyService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [context.getHandler(), context.getClass()]);
+    if (isPublic) return true;
+
     let request;
     if (context.getType() === 'http') {
       request = context.switchToHttp().getRequest();

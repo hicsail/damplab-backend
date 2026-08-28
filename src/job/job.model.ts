@@ -88,6 +88,13 @@ export class Job {
   })
   clientDisplayName?: string;
 
+  @Prop({ required: false })
+  @Field({
+    description: 'Email of the actual client when a staff member submits on their behalf.',
+    nullable: true
+  })
+  clientEmail?: string;
+
   @Prop()
   @Field({ description: 'Subject id of the user - from access token' })
   sub: string;

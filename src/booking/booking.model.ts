@@ -1,7 +1,7 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import mongoose, { Document } from 'mongoose';
 import { Field, ID, ObjectType, Float, Int, registerEnumType } from '@nestjs/graphql';
-import { InventoryItem, InventoryItemType } from '../inventory/inventory.model';
+import { InventoryItem } from '../inventory/inventory.model';
 
 /** Timed (machine, by the hour) vs quantity (consumable, by the unit). */
 export enum BookingKind {
@@ -45,9 +45,9 @@ export class Booking {
   @Field({ nullable: true, description: 'Snapshot of the item name at booking time.' })
   inventoryName?: string;
 
-  @Prop({ required: false, type: String, enum: Object.values(InventoryItemType) })
-  @Field(() => InventoryItemType, { nullable: true, description: 'Snapshot of the item type.' })
-  inventoryType?: InventoryItemType;
+  @Prop({ required: false, type: String })
+  @Field(() => String, { nullable: true, description: 'Snapshot of the item type.' })
+  inventoryType?: string;
 
   // --- Owner: who the booking is for and who gets billed ---
   @Prop({ required: true })

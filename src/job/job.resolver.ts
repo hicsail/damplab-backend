@@ -140,7 +140,7 @@ export class JobResolver {
     description: 'Paginated, filterable list of jobs for the current user (My Jobs).'
   })
   async ownJobs(@Args('input', { type: () => OwnJobsInput, nullable: true }) input: OwnJobsInput | null, @CurrentUser() user: User): Promise<OwnJobsResult> {
-    return this.jobService.findOwnJobsPaginated(user.sub, input ?? {});
+    return this.jobService.findOwnJobsPaginated(user.sub, user.email, input ?? {});
   }
 
   @Query(() => JobsResult, {
@@ -202,11 +202,9 @@ export class JobResolver {
   @Query(() => Job, { nullable: true })
   async ownJobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
     const job = await this.jobService.findById(id);
-    if (job?.sub === user.sub) {
-      return job;
-    } else {
-      return null;
-    }
+    if (job?.sub === user.sub) return job;
+    if (job?.clientEmail && user.email && job.clientEmail === user.email) return job;
+    return null;
   }
 
   @Query(() => Job)

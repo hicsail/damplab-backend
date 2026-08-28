@@ -121,6 +121,11 @@ const GATES: Row[] = [
   [InventoryResolver, 'createInventoryItem', Permission.InventoryWrite],
   [InventoryResolver, 'updateInventoryItem', Permission.InventoryWrite],
   [InventoryResolver, 'deleteInventoryItem', Permission.InventoryWrite],
+  // Came in from main gated `@Roles(Role.DamplabStaff)` and was carried over to the
+  // permission vocabulary during the merge. Pinned here rather than exercised live:
+  // it hard-deletes every inventory item, so a test that proved the gate by calling
+  // it would have to succeed once to be meaningful.
+  [InventoryResolver, 'deleteAllInventoryItems', Permission.InventoryWrite],
 
   // Billing acts that live on pages lower tiers can now reach.
   [BookingResolver, 'confirmBookingUsage', Permission.BillingView],
