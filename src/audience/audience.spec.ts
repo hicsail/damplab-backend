@@ -1,6 +1,6 @@
 import { Role } from '../auth/roles/roles.enum';
 import { User } from '../auth/user.interface';
-import { AnnouncementAudience, audiencesFor } from './announcement-audience';
+import { AnnouncementAudience, audiencesFor } from './audience';
 
 const userWith = (roles: string[]): User => ({ preferred_username: 'u', sub: 's', email: 'e', realm_access: { roles } } as User);
 

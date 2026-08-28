@@ -8,6 +8,7 @@ import {
   isCustomerPricingGroupName,
   isDefaultExternalCustomerClaims
 } from '../pricing/pricing-groups';
+import { AccessTier, TIER_GROUP, TIER_ROLE, deriveAccessTierFromGroups, isAccessGroupName } from '../auth/roles/access-tiers';
 
 export interface LabStaffMember {
   id: string;
@@ -22,6 +23,8 @@ export interface KeycloakUserCustomerManagementRow {
   lastName?: string;
   customerCategory?: CustomerCategory;
   isDefaultExternalCustomer?: boolean;
+  /** The access column this user resolves to. Independent of `customerCategory`. */
+  accessTier?: AccessTier;
 }
 
 interface KeycloakGroup {
@@ -47,6 +50,11 @@ export class KeycloakService {
   private readonly clientId: string | undefined;
   private readonly clientSecret: string | undefined;
   private readonly labStaffGroupNames: readonly string[];
+  /**
+   * True when `DISABLE_AUTH` is on. Group writes are refused in that state — see
+   * `assertGroupWritesAllowed`.
+   */
+  private readonly authDisabled: boolean;
 
   constructor(private readonly configService: ConfigService) {
     const kc = this.configService.get<{ serverUrl?: string; realm?: string; clientId?: string; clientSecret?: string; labStaffGroupNames?: string[] }>('keycloak');
@@ -55,6 +63,27 @@ export class KeycloakService {
     this.clientId = kc?.clientId;
     this.clientSecret = kc?.clientSecret;
     this.labStaffGroupNames = kc?.labStaffGroupNames?.length ? kc.labStaffGroupNames : ['damplab-staff'];
+    this.authDisabled = Boolean(this.configService.get('auth.disable'));
+  }
+
+  /**
+   * Refuse to write group membership while the auth bypass is on.
+   *
+   * The realm is shared by staging and production (see `damplab-ui/CLAUDE.md`), and a
+   * developer's `.env` points at it with a live service-account secret. With
+   * `DISABLE_AUTH=true` the guard synthesises an administrator for **unauthenticated**
+   * requests, so without this check a stray localhost call would silently move a real
+   * person between groups in the realm production reads.
+   *
+   * Reads are left alone deliberately: browsing the user list locally is useful and
+   * harmless. Only mutation is blocked, and only in a state production never enters.
+   */
+  private assertGroupWritesAllowed(): void {
+    if (this.authDisabled) {
+      throw new Error(
+        'Refusing to write Keycloak group membership while DISABLE_AUTH=true. The dev bypass treats unauthenticated callers as administrators, and this realm is shared with production. Unset DISABLE_AUTH and sign in as a real administrator to change a user\u2019s groups.'
+      );
+    }
   }
 
   /** True if Keycloak Admin is configured (server URL and client credentials). */
@@ -143,7 +172,8 @@ export class KeycloakService {
       firstName: user.firstName,
       lastName: user.lastName,
       customerCategory: this.deriveCustomerCategoryFromGroups(groups),
-      isDefaultExternalCustomer: this.isDefaultExternalCustomer(groups)
+      isDefaultExternalCustomer: this.isDefaultExternalCustomer(groups),
+      accessTier: deriveAccessTierFromGroups(groups)
     };
   }
 
@@ -208,6 +238,7 @@ export class KeycloakService {
    * Set exactly one pricing category group (or clear all such groups when category is null).
    */
   async setUserCustomerCategory(userId: string, category: CustomerCategory | null): Promise<void> {
+    this.assertGroupWritesAllowed();
     await this.removeUserFromAllCustomerPricingGroups(userId);
     if (category == null) return;
     const groupName = CATEGORY_PRIMARY_GROUP[category];
@@ -216,6 +247,77 @@ export class KeycloakService {
       throw new Error(`Keycloak group "${groupName}" not found in realm ${this.realm}`);
     }
     await this.addUserToGroup(userId, group.id);
+  }
+
+  /**
+   * Remove membership from every **access** group, leaving pricing groups alone.
+   *
+   * The mirror of `removeUserFromAllCustomerPricingGroups`, and the two must never
+   * overlap: pricing and access are independent axes, so a tier change that cleared a
+   * pricing group would silently reprice the customer. `isAccessGroupName` is an
+   * allow-list of exactly three names for that reason.
+   */
+  async removeUserFromAllAccessGroups(userId: string): Promise<void> {
+    const groups = await this.getUserGroups(userId);
+    for (const g of groups) {
+      if (isAccessGroupName(g.name)) {
+        await this.removeUserFromGroup(userId, g.id);
+      }
+    }
+  }
+
+  /**
+   * Set exactly one access group, or none at all for `CLIENT`.
+   *
+   * CLIENT is not a group and never has been — it is `BASELINE_PERMISSIONS`, which
+   * every authenticated user resolves to regardless of what they carry. So "make this
+   * person a Client" is literally "remove their access groups", and the early return
+   * below is the whole implementation of it.
+   */
+  async setUserAccessTier(userId: string, tier: AccessTier): Promise<void> {
+    this.assertGroupWritesAllowed();
+    await this.removeUserFromAllAccessGroups(userId);
+    const groupName = TIER_GROUP[tier];
+    if (groupName == null) return;
+    const group = await this.findGroupByName(groupName);
+    if (!group) {
+      throw new Error(`Keycloak group "${groupName}" not found in realm ${this.realm}`);
+    }
+    await this.addUserToGroup(userId, group.id);
+  }
+
+  /**
+   * The user's effective realm roles, composites included.
+   *
+   * Used **only** on the single-user read-back after a tier write, never in a list
+   * loop: every admin call re-fetches a service-account token (`adminFetch`), so a
+   * 25-row page already costs ~52 requests and adding one per row would make it ~78.
+   *
+   * The read-back exists because writing a group grants nothing on its own. The guard
+   * reads `realm_access.roles`, so if the realm lacks the group's role mapping the PUT
+   * succeeds and the user gains no access at all. Reporting that back is the
+   * difference between a visible warning and a silent no-op.
+   */
+  async getUserRealmRoles(userId: string): Promise<string[]> {
+    const res = await this.fetchWithToken(`/admin/realms/${this.realm}/users/${userId}/role-mappings/realm/composite`);
+    if (!res.ok) {
+      this.logger.warn(`Keycloak realm role-mappings request failed: ${res.status} ${await res.text()}`);
+      return [];
+    }
+    const roles = (await res.json()) as { name?: string }[];
+    return roles.map((r) => r.name).filter((name): name is string => Boolean(name));
+  }
+
+  /**
+   * True when the tier's realm role is actually present on the user.
+   *
+   * CLIENT is vacuously true: it maps to no role, so there is nothing to verify.
+   */
+  async isAccessRoleMapped(userId: string, tier: AccessTier): Promise<boolean> {
+    const expected = TIER_ROLE[tier];
+    if (expected == null) return true;
+    const roles = await this.getUserRealmRoles(userId);
+    return roles.includes(expected);
   }
 
   async getUserCustomerManagementRow(userId: string): Promise<KeycloakUserCustomerManagementRow | null> {

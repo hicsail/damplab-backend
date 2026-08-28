@@ -1,8 +1,11 @@
-import { BadRequestException, NotFoundException, UseGuards } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, UseGuards } from '@nestjs/common';
 import { Args, ID, Int, Mutation, Query, Resolver, registerEnumType } from '@nestjs/graphql';
 import { AuthRolesGuard } from '../../auth/auth.guard';
+import { CurrentUser } from '../../auth/user.decorator';
+import { User } from '../../auth/user.interface';
 import { RequirePermission } from '../../auth/permissions/permissions.decorator';
 import { Permission } from '../../auth/permissions/permission.enum';
+import { AccessTier } from '../../auth/roles/access-tiers';
 import { KeycloakService } from '../../keycloak/keycloak.service';
 import { CustomerCategory } from '../../job/job.model';
 import { KeycloakUserCustomerManagement } from '../dtos/keycloak-customer-user.dto';
@@ -120,5 +123,52 @@ export class CustomerManagementResolver {
       throw new NotFoundException(`Keycloak user ${userId} not found`);
     }
     return row;
+  }
+
+  /**
+   * Move a user between access columns of the matrix.
+   *
+   * Deliberately a **separate** mutation from `setUserKeycloakCustomerCategory` rather
+   * than one combined "update user" call. Pricing and access are independent axes, and
+   * keeping them as two mutations means neither can accidentally carry the other's
+   * value: there is no shape of this request that touches a pricing group.
+   *
+   * Takes effect at the user's next sign-in. Keycloak does not invalidate issued
+   * tokens on a group change, so someone holding a live JWT keeps their old access
+   * until it expires. The UI says so; there is nothing to do about it here short of
+   * a session logout, which is a bigger hammer than this warrants.
+   */
+  @Mutation(() => KeycloakUserCustomerManagement, {
+    description: 'Administrator: set a user’s access tier by rewriting their Keycloak access-group membership. Pricing groups are never touched. Takes effect at the user’s next sign-in.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @RequirePermission(Permission.CustomersManage)
+  async setUserKeycloakAccessTier(
+    @Args('userId', { type: () => ID }) userId: string,
+    @Args('tier', { type: () => AccessTier }) tier: AccessTier,
+    @CurrentUser() user: User
+  ): Promise<KeycloakUserCustomerManagement> {
+    if (!this.keycloakService.isConfigured()) {
+      throw new BadRequestException('Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).');
+    }
+    // An administrator who demotes themselves loses customers:manage in the same
+    // stroke, so nothing they can still reach would let them undo it. Refusing is
+    // kinder than a support ticket to edit the realm by hand.
+    if (user?.sub && user.sub === userId && tier !== AccessTier.ADMINISTRATOR) {
+      throw new ForbiddenException('You cannot lower your own access tier — you would lose the permission needed to restore it. Ask another administrator.');
+    }
+    try {
+      await this.keycloakService.setUserAccessTier(userId, tier);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new BadRequestException(msg);
+    }
+    const row = await this.keycloakService.getUserCustomerManagementRow(userId);
+    if (!row) {
+      throw new NotFoundException(`Keycloak user ${userId} not found`);
+    }
+    // Read the realm roles back rather than trusting the PUT: the group write can
+    // succeed while granting nothing, if the realm has no group -> role mapping.
+    return { ...row, accessRoleMapped: await this.keycloakService.isAccessRoleMapped(userId, tier) } as KeycloakUserCustomerManagement;
   }
 }

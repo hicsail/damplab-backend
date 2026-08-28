@@ -1,7 +1,7 @@
 import { ObjectType, Field, ID } from '@nestjs/graphql';
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
-import { AnnouncementAudience } from './announcement-audience';
+import { AnnouncementAudience } from '../audience/audience';
 
 @Schema()
 @ObjectType()

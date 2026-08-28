@@ -22,6 +22,8 @@ import { AgentController } from '../../agent/agent.controller';
 import { ProtocolsController } from '../../protocols/protocols.controller';
 import { TrainingResolver } from '../../training/training.resolver';
 import { AnnouncementResolver } from '../../announcements/announcement.resolver';
+import { CustomerManagementResolver } from '../../workflow/resolvers/customer-management.resolver';
+import { PermissionsResolver } from './permissions.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -138,11 +140,17 @@ const GATES: Row[] = [
   // Learning Hub. `training:read` is baseline; whether *drafts* come back is
   // decided from the caller's training:write inside the resolver, not from an
   // argument, so an unpublished guide cannot be read by asking for it.
-  [TrainingResolver, 'guides', Permission.TrainingRead],
-  [TrainingResolver, 'guideBySlug', Permission.TrainingRead],
-  [TrainingResolver, 'createGuide', Permission.TrainingWrite],
-  [TrainingResolver, 'updateGuide', Permission.TrainingWrite],
-  [TrainingResolver, 'deleteGuide', Permission.TrainingWrite],
+  // The Learning Hub is a PDF library now, not a markdown editor. Read is baseline —
+  // everyone reaches the page — and the *audience* on each document narrows the rows,
+  // which is why the download entry point is training:read rather than something
+  // narrower: it checks the audience itself.
+  [TrainingResolver, 'trainingResources', Permission.TrainingRead],
+  [TrainingResolver, 'trainingResourceDownloadUrl', Permission.TrainingRead],
+  [TrainingResolver, 'createTrainingResource', Permission.TrainingWrite],
+  [TrainingResolver, 'updateTrainingResource', Permission.TrainingWrite],
+  [TrainingResolver, 'createTrainingFileUploadUrl', Permission.TrainingWrite],
+  [TrainingResolver, 'attachTrainingFile', Permission.TrainingWrite],
+  [TrainingResolver, 'deleteTrainingResource', Permission.TrainingWrite],
 
   // Announcements. `announcements:read` is baseline and stays open to everyone —
   // what narrows is the rows, by audience, inside the resolver.
@@ -155,7 +163,16 @@ const GATES: Row[] = [
   // Administrator-only surfaces, re-pointed off the role so there is one vocabulary.
   [ActivityResolver, 'activityEvents', Permission.LabStatusTvView],
   [ApiKeyResolver, 'createApiKey', Permission.ApiKeysManage],
-  [AgentController, 'labStatusChat', Permission.LabAssistantUse]
+  [AgentController, 'labStatusChat', Permission.LabAssistantUse],
+
+  // /customer-management — both axes, and the view-as dropdown that reads the same
+  // tier vocabulary. All administrator-only: these write realm group membership in a
+  // realm shared by staging and production.
+  [CustomerManagementResolver, 'listKeycloakUsersForCustomerManagement', Permission.CustomersManage],
+  [CustomerManagementResolver, 'searchKeycloakUsersForCustomerManagement', Permission.CustomersManage],
+  [CustomerManagementResolver, 'setUserKeycloakCustomerCategory', Permission.CustomersManage],
+  [CustomerManagementResolver, 'setUserKeycloakAccessTier', Permission.CustomersManage],
+  [PermissionsResolver, 'rolePreviews', Permission.CustomersManage]
 ];
 
 describe('Phase 2b widening — the gate on each operation', () => {

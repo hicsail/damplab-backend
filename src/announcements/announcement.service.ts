@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Announcement } from './announcement.model';
-import { AnnouncementAudience } from './announcement-audience';
+import { AnnouncementAudience } from '../audience/audience';
 import { CreateAnnouncementInput } from './dto/create-announcement.input';
 import { UpdateAnnouncementInput } from './dto/update-announcement.input';
 
@@ -55,10 +55,17 @@ export class AnnouncementService {
    *
    * `$exists: false` and `$size: 0` are both "visible to everyone" — the
    * no-migration path for rows written before this field.
+   *
+   * Hidden rows are excluded here too. `is_displayed` was filtered only in the
+   * browser, so every hidden announcement was still shipped over the wire to every
+   * reader — the same leak the audience filter exists to prevent, one field over.
+   * `allAnnouncements` is where an admin sees hidden rows, and it is gated on
+   * `announcements:write`.
    */
   async findForAudiences(audiences: AnnouncementAudience[]): Promise<Announcement[]> {
     return this.announcementModel
       .find({
+        is_displayed: true,
         $or: [{ audienceRoles: { $exists: false } }, { audienceRoles: { $size: 0 } }, { audienceRoles: { $in: audiences } }]
       })
       .sort({ timestamp: -1 })

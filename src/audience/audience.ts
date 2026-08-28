@@ -3,14 +3,26 @@ import { Role } from '../auth/roles/roles.enum';
 import { User } from '../auth/user.interface';
 
 /**
- * The four columns of `docs/access-matrix.md`, as an audience an announcement can
- * be addressed to.
+ * The four columns of `docs/access-matrix.md`, as an audience a piece of content can
+ * be addressed to. Shared by announcements and Learning Hub resources.
  *
  * Deliberately its own vocabulary rather than reusing `Role` or `Permission`.
- * "Who should read this notice" is an editorial question, not an authorization
- * one — a tech-only lab-inspection notice is not about what technicians may *do* —
- * and tying the picker to the permission enum would mean every new permission
- * turned up as an audience checkbox.
+ * "Who should see this" is a targeting question, not an authorization one — a
+ * tech-only lab-inspection notice is not about what technicians may *do* — and tying
+ * the picker to the permission enum would mean every new permission turned up as an
+ * audience checkbox.
+ *
+ * **The enum keeps the GraphQL name `AnnouncementAudience`** even though it now
+ * serves both features. Renaming it would churn the schema and the frontend's
+ * generated types for no behavioural gain; the historical name is a smaller cost
+ * than a breaking rename.
+ *
+ * One distinction worth holding onto, because the mechanism is identical and the
+ * stakes are not: for an announcement this is **editorial** targeting — the worst
+ * case is someone reads a notice meant for another group. For a training resource it
+ * is **authorization** — the audience decides who may download a file. Both filter
+ * server-side, and the training path re-checks on download rather than trusting that
+ * the list query already filtered.
  */
 export enum AnnouncementAudience {
   ADMINISTRATOR = 'ADMINISTRATOR',

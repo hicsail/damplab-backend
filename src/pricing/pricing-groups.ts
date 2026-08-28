@@ -50,8 +50,13 @@ export const CATEGORY_PRIMARY_GROUP: Record<CustomerCategory, PricingGroup> = {
 /**
  * Matches a claim entry against a group name, tolerating both the bare name and a
  * group path (`/external-customers`, `/parent/external-customers`).
+ *
+ * Exported because the access axis needs exactly the same matching
+ * (`auth/roles/access-tiers.ts`). It lives here rather than in a shared utility
+ * module only because this is where it was first needed; it is about Keycloak
+ * claims, not about pricing.
  */
-function claimMatches(entry: string, name: string): boolean {
+export function claimMatches(entry: string, name: string): boolean {
   return entry === name || entry.endsWith(`/${name}`);
 }
 

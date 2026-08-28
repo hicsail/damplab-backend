@@ -2,7 +2,7 @@ import { Resolver, Query, Mutation, Args, ID } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
 import { AnnouncementService } from './announcement.service';
 import { Announcement } from './announcement.model';
-import { audiencesFor } from './announcement-audience';
+import { audiencesFor } from '../audience/audience';
 import { CreateAnnouncementInput } from './dto/create-announcement.input';
 import { UpdateAnnouncementInput } from './dto/update-announcement.input';
 

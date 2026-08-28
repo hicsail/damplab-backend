@@ -1,132 +1,114 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Guide, GuideDocument } from './guide.model';
-import { CreateGuideInput, UpdateGuideInput } from './dto/guide.input';
-
-/**
- * Derive a URL segment from a title.
- *
- * Exported so the resolver's "omit slug and I'll make one" path and the seed
- * script agree on the answer.
- */
-export function slugify(value: string): string {
-  return value
-    .toLowerCase()
-    .normalize('NFKD')
-    .replace(/[^\w\s-]/g, '')
-    .trim()
-    .replace(/[\s_]+/g, '-')
-    .replace(/-+/g, '-')
-    .slice(0, 80);
-}
+import { TrainingResource, TrainingResourceDocument } from './training-resource.model';
+import { CreateTrainingResourceInput, TrainingFileInput, UpdateTrainingResourceInput } from './dto/training-resource.input';
+import { AnnouncementAudience } from '../audience/audience';
 
 @Injectable()
 export class TrainingService {
   constructor(
-    @InjectModel(Guide.name)
-    private readonly guideModel: Model<GuideDocument>
+    @InjectModel(TrainingResource.name)
+    private readonly resourceModel: Model<TrainingResourceDocument>
   ) {}
 
   /**
-   * Guides, ordered for display: category, then `order`, then title.
+   * An empty audience is an error, not "everyone".
    *
-   * `includeDrafts` is the caller's *permission*, resolved by the resolver — not a
-   * request parameter — so an unpublished guide cannot be read by asking nicely.
+   * Enforced in the service rather than by `class-validator`, because the app
+   * registers no global `ValidationPipe` — the same reason the announcement service
+   * checks it here. The input type only documents the rule; GraphQL itself would
+   * accept `[]`.
    */
-  async findAll(includeDrafts: boolean): Promise<Guide[]> {
-    const filter = includeDrafts ? {} : { isPublished: true };
-    return this.guideModel.find(filter).sort({ category: 1, order: 1, title: 1 }).exec();
-  }
-
-  async findBySlug(slug: string, includeDrafts: boolean): Promise<Guide | null> {
-    const filter = includeDrafts ? { slug } : { slug, isPublished: true };
-    return this.guideModel.findOne(filter).exec();
-  }
-
-  private async assertSlugFree(slug: string, exceptId?: string): Promise<void> {
-    const existing = await this.guideModel.findOne({ slug }).exec();
-    if (existing && String(existing._id) !== exceptId) {
-      throw new BadRequestException(`Another guide already uses the slug "${slug}".`);
+  private assertAudienceNotEmpty(audienceRoles: AnnouncementAudience[] | undefined): void {
+    if (audienceRoles !== undefined && audienceRoles.length === 0) {
+      throw new BadRequestException('audienceRoles cannot be empty. Pick at least one group that may see this document.');
     }
-  }
-
-  async create(input: CreateGuideInput, actor?: string): Promise<Guide> {
-    const slug = slugify(input.slug?.trim() || input.title);
-    if (!slug) {
-      throw new BadRequestException('A guide needs a title that produces a usable URL slug.');
-    }
-    await this.assertSlugFree(slug);
-    const created = new this.guideModel({
-      ...input,
-      slug,
-      body: input.body ?? '',
-      category: input.category?.trim() || 'General',
-      // A new guide is a draft unless explicitly published. Publishing by default
-      // would put half-written content on a customer-facing page.
-      isPublished: input.isPublished ?? false,
-      updatedBy: actor
-    });
-    return created.save();
-  }
-
-  async update(input: UpdateGuideInput, actor?: string): Promise<Guide> {
-    const guide = await this.guideModel.findById(input.id).exec();
-    if (!guide) {
-      throw new NotFoundException('Guide not found');
-    }
-    if (input.slug !== undefined) {
-      const slug = slugify(input.slug.trim() || guide.title);
-      await this.assertSlugFree(slug, String(guide._id));
-      guide.slug = slug;
-    }
-    if (input.title !== undefined) guide.title = input.title;
-    if (input.category !== undefined) guide.category = input.category.trim() || 'General';
-    if (input.body !== undefined) guide.body = input.body;
-    if (input.order !== undefined) guide.order = input.order;
-    if (input.isPublished !== undefined) guide.isPublished = input.isPublished;
-    guide.updatedBy = actor;
-    return guide.save();
-  }
-
-  async delete(id: string): Promise<boolean> {
-    const result = await this.guideModel.findByIdAndDelete(id).exec();
-    if (!result) {
-      throw new NotFoundException('Guide not found');
-    }
-    return true;
   }
 
   /**
-   * Insert a guide only if its slug is free.
+   * The documents a caller may see, newest first.
    *
-   * For seeding the two guides that were hardcoded JSX: running it twice must not
-   * duplicate them, and it must never overwrite an edit someone has since made.
+   * Filtered in the query rather than after it. Post-filtering would still have
+   * loaded another audience's document into memory on this caller's behalf, and this
+   * field is authorization here, not presentation — the audience decides who may
+   * download a file.
    *
-   * **Atomic**, via `$setOnInsert` + `upsert`, rather than find-then-insert. The
-   * naive version raced: two instances booting together both saw no document and
-   * both inserted, and the unique index on `slug` killed the loser at startup.
-   * Found exactly that way, running three backends at once.
+   * There is deliberately **no** absent-or-empty escape hatch, unlike announcements:
+   * this field is required, so a document with no audience cannot exist and a bug
+   * that produced one would hide it rather than show it to everybody.
    */
-  async seedIfAbsent(input: CreateGuideInput): Promise<void> {
-    const slug = slugify(input.slug?.trim() || input.title);
-    if (!slug) return;
-    await this.guideModel
-      .updateOne(
-        { slug },
-        {
-          $setOnInsert: {
-            slug,
-            title: input.title,
-            category: input.category?.trim() || 'General',
-            body: input.body ?? '',
-            order: input.order ?? 0,
-            isPublished: input.isPublished ?? false,
-            updatedBy: 'seed'
-          }
-        },
-        { upsert: true }
-      )
+  async findForAudiences(audiences: AnnouncementAudience[]): Promise<TrainingResource[]> {
+    return this.resourceModel
+      .find({ audienceRoles: { $in: audiences } })
+      .sort({ createdAt: -1 })
       .exec();
+  }
+
+  /** Every document, for the administrator's list. Requires `training:write`. */
+  async findAll(): Promise<TrainingResource[]> {
+    return this.resourceModel.find().sort({ createdAt: -1 }).exec();
+  }
+
+  /**
+   * One document, only if the caller is in its audience.
+   *
+   * The audience check lives here rather than in the resolver so that no caller of
+   * this method can forget it — this is the method the download path goes through,
+   * and a presigned URL handed out by mistake cannot be recalled.
+   */
+  async findOneForAudiences(id: string, audiences: AnnouncementAudience[]): Promise<TrainingResource | null> {
+    return this.resourceModel.findOne({ _id: id, audienceRoles: { $in: audiences } }).exec();
+  }
+
+  async findById(id: string): Promise<TrainingResource | null> {
+    return this.resourceModel.findById(id).exec();
+  }
+
+  async create(input: CreateTrainingResourceInput, updatedBy?: string): Promise<TrainingResource> {
+    this.assertAudienceNotEmpty(input.audienceRoles);
+    if (!input.audienceRoles?.length) {
+      throw new BadRequestException('Pick at least one group that may see this document.');
+    }
+    return this.resourceModel.create({
+      title: input.title,
+      description: input.description ?? '',
+      audienceRoles: input.audienceRoles,
+      updatedBy
+    });
+  }
+
+  async update(input: UpdateTrainingResourceInput, updatedBy?: string): Promise<TrainingResource> {
+    this.assertAudienceNotEmpty(input.audienceRoles);
+    const resource = await this.resourceModel.findById(input.id);
+    if (!resource) throw new NotFoundException('Document not found');
+
+    if (input.title !== undefined) resource.title = input.title;
+    if (input.description !== undefined) resource.description = input.description;
+    if (input.audienceRoles !== undefined) resource.audienceRoles = input.audienceRoles;
+    resource.updatedBy = updatedBy;
+    return resource.save();
+  }
+
+  /** Attach the uploaded file to the record, once the browser's PUT to S3 succeeded. */
+  async attachFile(id: string, file: TrainingFileInput, updatedBy?: string): Promise<TrainingResource> {
+    const resource = await this.resourceModel.findById(id);
+    if (!resource) throw new NotFoundException('Document not found');
+    resource.file = file;
+    resource.updatedBy = updatedBy;
+    return resource.save();
+  }
+
+  /**
+   * Delete the record.
+   *
+   * The S3 object is left behind. Deliberate: the bucket has no lifecycle policy
+   * wired up here, and an orphaned object under a uuid key is unreachable without
+   * the record that names it — cheaper than a delete that can half-fail.
+   */
+  async delete(id: string): Promise<boolean> {
+    const result = await this.resourceModel.findByIdAndDelete(id).exec();
+    if (!result) throw new NotFoundException('Document not found');
+    return true;
   }
 }

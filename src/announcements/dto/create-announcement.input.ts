@@ -1,5 +1,5 @@
 import { InputType, Field } from '@nestjs/graphql';
-import { AnnouncementAudience } from '../announcement-audience';
+import { AnnouncementAudience } from '../../audience/audience';
 
 @InputType()
 export class CreateAnnouncementInput {
