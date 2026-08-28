@@ -1,4 +1,4 @@
-import { Logger, UseGuards } from '@nestjs/common';
+import { Logger, NotFoundException, UseGuards } from '@nestjs/common';
 import { WorkflowNode, WorkflowNodeState } from '../models/node.model';
 import { Parent, Resolver, ResolveField, Mutation, Query, ID, Args, Float } from '@nestjs/graphql';
 import { DampLabServices } from '../../services/damplab-services.services';
@@ -11,8 +11,8 @@ import { Workflow } from '../models/workflow.model';
 import { getMultiValueParamIds, normalizeFormDataToArray, FormDataEntry } from '../utils/form-data.util';
 import JSON from 'graphql-type-json';
 import { AuthRolesGuard } from '../../auth/auth.guard';
-import { Roles } from '../../auth/roles/roles.decorator';
-import { Role } from '../../auth/roles/roles.enum';
+import { RequirePermission } from '../../auth/permissions/permissions.decorator';
+import { Permission } from '../../auth/permissions/permission.enum';
 import { LabMonitorStaffMember } from '../dtos/lab-monitor-staff.dto';
 import { KeycloakService } from '../../keycloak/keycloak.service';
 import { CurrentUser } from '../../auth/user.decorator';
@@ -22,6 +22,7 @@ import { WorkflowParameterFilesService } from '../services/workflow-parameter-fi
 import { ActivityService } from '../../activity/activity.service';
 import { WorkflowNodeJob } from '../dtos/workflow-node-job.dto';
 import { AvailabilityService, InventoryConflict } from '../../availability/availability.service';
+import { NodeArchiveFilter } from '../dtos/node-archive-filter.dto';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
@@ -48,7 +49,7 @@ export class WorkflowNodeResolver {
 
   @Mutation(() => WorkflowNode)
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async changeWorkflowNodeState(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState
@@ -67,7 +68,7 @@ export class WorkflowNodeResolver {
 
   @Mutation(() => WorkflowNode)
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async updateWorkflowNodeAssignee(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('assigneeId', { type: () => String, nullable: true }) assigneeId: string | null,
@@ -87,7 +88,7 @@ export class WorkflowNodeResolver {
 
   @Mutation(() => WorkflowNode, { description: 'Set which inventory items a node is holding while IN_PROGRESS. Rejects items already held by another in-progress node.' })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async setWorkflowNodeUsedInventory(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('inventoryIds', { type: () => [ID] }) inventoryIds: string[],
@@ -110,7 +111,7 @@ export class WorkflowNodeResolver {
     description: 'In-progress nodes currently holding any inventory (powers the availability board).'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.InventoryRead)
   async getInProgressNodesHoldingInventory(): Promise<WorkflowNode[]> {
     return this.nodeService.getInProgressNodesHoldingInventory();
   }
@@ -119,7 +120,7 @@ export class WorkflowNodeResolver {
     description: 'Inventory items unavailable in a time window — shared pool across operations + calendar bookings. Pass excludeNodeId to ignore the operation being edited.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.InventoryRead)
   async inventoryAvailability(
     @Args('from', { nullable: true }) from?: Date,
     @Args('to', { nullable: true }) to?: Date,
@@ -130,7 +131,7 @@ export class WorkflowNodeResolver {
 
   @Mutation(() => WorkflowNode)
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async updateWorkflowNodeEstimatedTime(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('estimatedMinutes', { type: () => Float, nullable: true }) estimatedMinutes: number | null
@@ -148,19 +149,78 @@ export class WorkflowNodeResolver {
   }
 
   @Query(() => [WorkflowNode], {
-    description: 'Nodes in this state that belong to approved-job workflows (lab monitor columns by node state).'
+    description: 'Nodes in this state that belong to approved-job workflows (lab monitor columns by node state). Archived cards are excluded unless asked for.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
-  async getLabMonitorNodes(@Args('nodeState', { type: () => WorkflowNodeState }) nodeState: WorkflowNodeState): Promise<WorkflowNode[]> {
-    return this.nodeService.getNodesByStateForApprovedJobs(nodeState);
+  @RequirePermission(Permission.LabMonitorView)
+  async getLabMonitorNodes(
+    @Args('nodeState', { type: () => WorkflowNodeState }) nodeState: WorkflowNodeState,
+    @Args('archiveFilter', { type: () => NodeArchiveFilter, nullable: true, defaultValue: NodeArchiveFilter.ACTIVE }) archiveFilter?: NodeArchiveFilter
+  ): Promise<WorkflowNode[]> {
+    return this.nodeService.getNodesByStateForApprovedJobs(nodeState, archiveFilter ?? NodeArchiveFilter.ACTIVE);
+  }
+
+  /**
+   * Archive a lab monitor card.
+   *
+   * `labmonitor:archive` is Administrator-only, and that is the whole distinction
+   * the permission was defined to draw: everyone with `labmonitor:view` can move a
+   * card to COMPLETE, but only an administrator can take it off the board.
+   *
+   * Nothing is deleted and the card's own state is untouched, so restoring puts it
+   * back exactly where it was. The state at archive time is recorded, because an
+   * admin may archive work that was still in progress.
+   */
+  @Mutation(() => WorkflowNode, { description: 'Archive a lab monitor card: hides it from the board while retaining everything. Administrator-only.' })
+  @UseGuards(AuthRolesGuard)
+  @RequirePermission(Permission.LabMonitorArchive)
+  async archiveWorkflowNode(@Args('workflowNode', { type: () => ID }) workflowNodeId: string, @CurrentUser() user: User): Promise<WorkflowNode> {
+    const actor = user?.email || user?.preferred_username || 'unknown';
+    const updated = await this.nodeService.setArchived(workflowNodeId, true, actor);
+    if (!updated) {
+      throw new NotFoundException(`Workflow node with ID ${workflowNodeId} not found`);
+    }
+    const serviceName = this.nodeDisplayName(updated);
+    await this.activityService.createEvent({
+      type: 'LAB_NODE_ARCHIVED',
+      message: `Archived "${serviceName}" (state at archive: ${updated.archivedFromState ?? updated.state})`,
+      actorDisplayName: actor,
+      workflowNodeId: String(updated._id),
+      serviceName
+    });
+    return updated;
+  }
+
+  @Mutation(() => WorkflowNode, { description: 'Restore an archived lab monitor card to the board. Its state was never changed, so it returns where it left off. Administrator-only.' })
+  @UseGuards(AuthRolesGuard)
+  @RequirePermission(Permission.LabMonitorArchive)
+  async unarchiveWorkflowNode(@Args('workflowNode', { type: () => ID }) workflowNodeId: string, @CurrentUser() user: User): Promise<WorkflowNode> {
+    const actor = user?.email || user?.preferred_username || 'unknown';
+    const updated = await this.nodeService.setArchived(workflowNodeId, false, actor);
+    if (!updated) {
+      throw new NotFoundException(`Workflow node with ID ${workflowNodeId} not found`);
+    }
+    const serviceName = this.nodeDisplayName(updated);
+    await this.activityService.createEvent({
+      type: 'LAB_NODE_UNARCHIVED',
+      message: `Restored "${serviceName}" to the board`,
+      actorDisplayName: actor,
+      workflowNodeId: String(updated._id),
+      serviceName
+    });
+    return updated;
+  }
+
+  /** The label every activity event in this resolver uses for a node. */
+  private nodeDisplayName(node: WorkflowNode): string {
+    return (typeof (node as any)?.label === 'string' && String((node as any).label).trim()) || (node as any)?.service?.name || 'Service';
   }
 
   @Query(() => [WorkflowNode], {
     description: 'Operations (workflow nodes) assigned to the current staff member — powers the technician bench view.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.BenchUse)
   async assignedOperations(@CurrentUser() user: User): Promise<WorkflowNode[]> {
     if (!user?.sub) return [];
     return this.nodeService.getNodesByAssignee(user.sub);
@@ -170,7 +230,7 @@ export class WorkflowNodeResolver {
     description: 'Set the protocols.io step ids a technician has checked off for an operation (bench view). Replaces the full set.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.BenchUse)
   async setWorkflowNodeCompletedSteps(
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('completedSteps', { type: () => [String] }) completedSteps: string[]
@@ -182,7 +242,7 @@ export class WorkflowNodeResolver {
     description: 'Staff members available for assignment on lab monitor cards. Sourced from Keycloak group (damplab-staff) when configured, else LAB_MONITOR_STAFF env.'
   })
   @UseGuards(AuthRolesGuard)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.LabMonitorView)
   async getLabMonitorStaffList(): Promise<LabMonitorStaffMember[]> {
     if (this.keycloakService.isConfigured()) {
       return this.keycloakService.getLabStaffGroupMembers();

@@ -3,6 +3,7 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, Int, registerEnumType } from '@nestjs/graphql';
 import { Workflow } from '../workflow/models/workflow.model';
+import { CustomerCategory } from '../pricing/customer-category';
 
 export enum JobState {
   CREATING,
@@ -23,12 +24,9 @@ export enum JobState {
 }
 registerEnumType(JobState, { name: 'JobState' });
 
-export enum CustomerCategory {
-  INTERNAL_CUSTOMERS = 'INTERNAL_CUSTOMERS',
-  EXTERNAL_CUSTOMER_ACADEMIC = 'EXTERNAL_CUSTOMER_ACADEMIC',
-  EXTERNAL_CUSTOMER_MARKET = 'EXTERNAL_CUSTOMER_MARKET',
-  EXTERNAL_CUSTOMER_NO_SALARY = 'EXTERNAL_CUSTOMER_NO_SALARY'
-}
+// Defined in src/pricing/customer-category.ts so the framework-free pricing
+// utilities can share the one definition; registered for GraphQL here.
+export { CustomerCategory };
 registerEnumType(CustomerCategory, { name: 'CustomerCategory' });
 
 export enum CustomerActionRequired {

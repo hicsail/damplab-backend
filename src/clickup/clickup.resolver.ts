@@ -5,7 +5,8 @@ import { BacklogCard, BacklogCardDetail, BacklogComment } from './clickup.dto';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
-import { Role } from '../auth/roles/roles.enum';
+import { Permission } from '../auth/permissions/permission.enum';
+import { hasPermission } from '../auth/permissions/permissions';
 
 /**
  * The bug backlog, readable by ANY authenticated user — testathon participants
@@ -23,8 +24,19 @@ import { Role } from '../auth/roles/roles.enum';
 export class ClickUpResolver {
   constructor(private readonly clickup: ClickUpService) {}
 
-  private isStaff(user: User): boolean {
-    return (user?.realm_access?.roles ?? []).includes(Role.DamplabStaff);
+  /**
+   * Whether to show the ClickUp deep link. Re-pointed off the raw `damplab-staff`
+   * role so there is one definition of staffness in the tree.
+   *
+   * `bugbacklog:view` rather than something narrower because that is the cell the
+   * matrix gives the backlog, and it is held by exactly the people plausibly
+   * carrying a ClickUp account (Administrator and Technician). The *queries* stay
+   * open — see the class comment; gating them on this permission would remove a
+   * feature customers use today, which the 2b checklist flags as the one place
+   * "nothing is revoked" would not hold.
+   */
+  private canSeeClickUpLink(user: User): boolean {
+    return hasPermission(user, Permission.BugBacklogView);
   }
 
   /**
@@ -39,14 +51,14 @@ export class ClickUpResolver {
 
   @Query(() => [BacklogCard], { description: 'The bug backlog. Any authenticated user. Reporter identity is visible to all; only the ClickUp link is staff-only.' })
   async backlogCards(@CurrentUser() user: User): Promise<BacklogCard[]> {
-    const staff = this.isStaff(user);
+    const staff = this.canSeeClickUpLink(user);
     const cards = await this.clickup.listBacklog();
     return cards.map((c) => this.redact(c, staff));
   }
 
   @Query(() => BacklogCardDetail, { description: 'One backlog card with its comment thread.' })
   async backlogCard(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<BacklogCardDetail> {
-    const staff = this.isStaff(user);
+    const staff = this.canSeeClickUpLink(user);
     const [card, comments] = await Promise.all([this.clickup.getCard(id), this.clickup.getComments(id)]);
     return { card: this.redact(card, staff), comments };
   }

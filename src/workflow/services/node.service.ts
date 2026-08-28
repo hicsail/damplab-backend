@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Inject, forwardRef } from '@nestjs/common';
+import { BadRequestException, Injectable, Inject, NotFoundException, forwardRef } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
@@ -6,6 +6,7 @@ import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../models
 import { AddNodeInputFull } from '../dtos/add-node.input';
 import { Workflow, WorkflowDocument } from '../models/workflow.model';
 import { JobService } from '../../job/job.service';
+import { archiveQuery, NodeArchiveFilter } from '../dtos/node-archive-filter.dto';
 import { Job } from '../../job/job.model';
 import { AvailabilityService } from '../../availability/availability.service';
 
@@ -111,12 +112,27 @@ export class WorkflowNodeService {
     return this.workflowNodeModel.find({ state: WorkflowNodeState.IN_PROGRESS, usedInventory: { $exists: true, $ne: [] } }).exec();
   }
 
+  /**
+   * Assign or **unassign** an operation.
+   *
+   * `$unset` on the clear path, not `$set` to undefined: Mongoose strips undefined
+   * values out of `$set`, so the previous version made unassigning a silent no-op —
+   * the mutation returned success and the old assignee stayed. Same trap the Job
+   * archive code documents (`job.service.ts`).
+   *
+   * It matters more now: the merged jobs page's "Worked by me" scope and its
+   * technician filter both join on `assigneeId`, so a stale one keeps a technician
+   * attached to work they were taken off.
+   */
   async updateAssignee(node: WorkflowNode, assigneeId: string | null, assigneeDisplayName: string | null): Promise<WorkflowNode | null> {
-    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { assigneeId: assigneeId ?? undefined, assigneeDisplayName: assigneeDisplayName ?? undefined } }, { new: true });
+    const update = assigneeId ? { $set: { assigneeId, assigneeDisplayName: assigneeDisplayName ?? undefined } } : { $unset: { assigneeId: '', assigneeDisplayName: '' } };
+    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, update, { new: true });
   }
 
+  /** Same `$unset` reasoning as `updateAssignee`: clearing an estimate was a no-op. */
   async updateEstimatedMinutes(node: WorkflowNode, estimatedMinutes: number | null): Promise<WorkflowNode | null> {
-    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { estimatedMinutes: estimatedMinutes ?? undefined } }, { new: true });
+    const update = estimatedMinutes == null ? { $unset: { estimatedMinutes: '' } } : { $set: { estimatedMinutes } };
+    return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, update, { new: true });
   }
 
   /** All operations (nodes) assigned to a given user, for the technician bench view. */
@@ -139,7 +155,7 @@ export class WorkflowNodeService {
   }
 
   /** Nodes in this state that belong to workflows on approved jobs (for lab monitor by node state). */
-  async getNodesByStateForApprovedJobs(nodeState: WorkflowNodeState): Promise<WorkflowNode[]> {
+  async getNodesByStateForApprovedJobs(nodeState: WorkflowNodeState, archiveFilter: NodeArchiveFilter = NodeArchiveFilter.ACTIVE): Promise<WorkflowNode[]> {
     const approvedWorkflowIds = await this.jobService.getWorkflowIdsForApprovedJobs();
     if (approvedWorkflowIds.length === 0) return [];
     const workflows = await this.workflowModel
@@ -149,6 +165,28 @@ export class WorkflowNodeService {
       .exec();
     const nodeIds = workflows.flatMap((w) => (w.nodes ?? []).map((id) => id.toString()));
     if (nodeIds.length === 0) return [];
-    return this.workflowNodeModel.find({ _id: { $in: nodeIds }, state: nodeState }).exec();
+    return this.workflowNodeModel.find({ _id: { $in: nodeIds }, state: nodeState, ...archiveQuery(archiveFilter) }).exec();
+  }
+
+  /**
+   * Archive or restore a lab monitor card.
+   *
+   * Mirrors `JobService.setArchived`, including the `$unset`: Mongoose strips
+   * undefined values from `$set`, so setting the audit fields to undefined would
+   * leave them behind and make a restored card still look archived-by-someone.
+   * The node's own `state` is left untouched, so restoring puts it back exactly
+   * where it was on the board.
+   */
+  async setArchived(nodeId: string, archived: boolean, actor?: string): Promise<WorkflowNode | null> {
+    const node = await this.workflowNodeModel.findById(nodeId).exec();
+    if (!node) {
+      throw new NotFoundException(`Workflow node with ID ${nodeId} not found`);
+    }
+    if (archived) {
+      return this.workflowNodeModel
+        .findOneAndUpdate({ _id: nodeId }, { $set: { isArchived: true, archivedAt: new Date(), archivedBy: actor ?? 'unknown', archivedFromState: node.state } }, { new: true })
+        .exec();
+    }
+    return this.workflowNodeModel.findOneAndUpdate({ _id: nodeId }, { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } }, { new: true }).exec();
   }
 }

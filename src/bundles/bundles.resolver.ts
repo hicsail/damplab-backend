@@ -11,8 +11,8 @@ import { CreateBundle } from './dtos/create.dto';
 import { CreateBundlePipe } from './create.pipe';
 
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 
 @Resolver(() => Bundle)
 @UseGuards(AuthRolesGuard)
@@ -25,20 +25,20 @@ export class BundlesResolver {
   }
 
   @Mutation(() => Bundle)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async updateBundle(@Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle, @Args('changes', { type: () => BundleChange }, BundleUpdatePipe) changes: BundleChange): Promise<Bundle> {
     return this.bundlesService.update(bundle, changes);
   }
 
   @Mutation(() => Boolean)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async deleteBundle(@Args('bundle', { type: () => ID }, BundlesPipe) bundle: Bundle): Promise<boolean> {
     await this.bundlesService.delete(bundle);
     return true;
   }
 
   @Mutation(() => Bundle)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async createBundle(@Args('bundle', CreateBundlePipe) bundle: CreateBundle): Promise<Bundle> {
     return this.bundlesService.create(bundle);
   }

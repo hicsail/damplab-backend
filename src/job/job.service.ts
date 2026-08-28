@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
-import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder, JobArchiveFilter } from './dto/jobs-query.dto';
+import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder, JobArchiveFilter, JobScope, JobsForViewerInput } from './dto/jobs-query.dto';
 import { JobFeedStatus, JobFeedStatusEntity, JobFeedStatusEntityDocument } from './job-feed-status.model';
 import { AddWorkflowInputFull } from '../workflow/dtos/add-workflow.input';
 
@@ -197,7 +197,15 @@ export class JobService {
   /**
    * Run paginated jobs query with filters, sort, and hasSow via $lookup.
    */
-  private async runJobsPipeline(baseMatch: mongoose.FilterQuery<JobDocument>, input: OwnJobsInput | AllJobsInput): Promise<{ items: Job[]; totalCount: number }> {
+  private async runJobsPipeline(
+    baseMatch: mongoose.FilterQuery<JobDocument>,
+    input: OwnJobsInput | AllJobsInput,
+    /**
+     * When set, keep only jobs with at least one workflow node assigned to this
+     * person. Powers `WORKED_BY_ME`.
+     */
+    workedBySub?: string
+  ): Promise<{ items: Job[]; totalCount: number }> {
     const page = Math.max(1, input.page ?? DEFAULT_PAGE);
     const limit = Math.min(MAX_LIMIT, Math.max(1, input.limit ?? DEFAULT_LIMIT));
     const skip = (page - 1) * limit;
@@ -234,7 +242,42 @@ export class JobService {
     const addIdStr = { $addFields: { _idStr: { $toString: '$_id' } } };
     const addHasSow = { $addFields: { _hasSow: { $gt: [{ $size: '$_sowDocs' }, 0] } } };
     const hasSowMatch = input.hasSow === true ? [{ $match: { _hasSow: true } }] : input.hasSow === false ? [{ $match: { _hasSow: false } }] : [];
-    const project = { $project: { _sowDocs: 0, _hasSow: 0, _idStr: 0 } };
+    const project = { $project: { _sowDocs: 0, _hasSow: 0, _idStr: 0, _workedWorkflows: 0 } };
+
+    /**
+     * `WORKED_BY_ME`, as a join rather than a stored field.
+     *
+     * jobs → workflows → workflownodes, keeping jobs where any node's `assigneeId`
+     * matches. Deliberately read-only: nothing is written and `Job` gains no
+     * `assignees` array to drift out of date. `Job.workflows` and `Workflow.nodes`
+     * both hold ObjectId refs, so the lookups are plain `$in` joins.
+     */
+    const workedByStages: mongoose.PipelineStage[] = workedBySub
+      ? [
+          {
+            $lookup: {
+              from: 'workflows',
+              let: { workflowIds: { $ifNull: ['$workflows', []] } },
+              pipeline: [
+                { $match: { $expr: { $in: ['$_id', '$$workflowIds'] } } },
+                {
+                  $lookup: {
+                    from: 'workflownodes',
+                    let: { nodeIds: { $ifNull: ['$nodes', []] } },
+                    pipeline: [{ $match: { $expr: { $and: [{ $in: ['$_id', '$$nodeIds'] }, { $eq: ['$assigneeId', workedBySub] }] } } }, { $limit: 1 }, { $project: { _id: 1 } }],
+                    as: '_assignedNodes'
+                  }
+                },
+                { $match: { '_assignedNodes.0': { $exists: true } } },
+                { $limit: 1 },
+                { $project: { _id: 1 } }
+              ],
+              as: '_workedWorkflows'
+            }
+          },
+          { $match: { '_workedWorkflows.0': { $exists: true } } }
+        ]
+      : [];
 
     const sortStage = { $sort: { [sortField]: sortDir } as Record<string, 1 | -1> };
     const facet = {
@@ -244,7 +287,7 @@ export class JobService {
       }
     };
 
-    const pipeline: mongoose.PipelineStage[] = [{ $match: match.length === 1 ? match[0] : { $and: match } }, addIdStr, lookup, addHasSow, ...hasSowMatch, facet];
+    const pipeline: mongoose.PipelineStage[] = [{ $match: match.length === 1 ? match[0] : { $and: match } }, ...workedByStages, addIdStr, lookup, addHasSow, ...hasSowMatch, facet];
 
     const raw = await this.jobModel.aggregate(pipeline).exec();
     const totalCount = raw[0]?.totalCount[0]?.n ?? 0;
@@ -262,6 +305,45 @@ export class JobService {
   async findAllJobsPaginated(input: AllJobsInput): Promise<JobsResult> {
     const { items, totalCount } = await this.runJobsPipeline({}, input);
     return { items, totalCount };
+  }
+
+  /**
+   * The merged jobs page's query.
+   *
+   * **The scope arrives already resolved.** The resolver decides what a caller is
+   * allowed to ask for and hands the answer down; this method does not re-derive
+   * it, so there is exactly one place the "forced to your own jobs" rule lives.
+   */
+  async findJobsForViewer(input: JobsForViewerInput, resolved: { scope: JobScope; viewerSub: string; createdBySub?: string; assigneeId?: string }): Promise<JobsResult> {
+    const baseMatch: mongoose.FilterQuery<JobDocument> = {};
+    if (resolved.scope === JobScope.CREATED_BY_ME) {
+      baseMatch.sub = resolved.viewerSub;
+    } else if (resolved.createdBySub) {
+      baseMatch.sub = resolved.createdBySub;
+    }
+
+    const workedBySub = resolved.scope === JobScope.WORKED_BY_ME ? resolved.viewerSub : resolved.assigneeId;
+    const { items, totalCount } = await this.runJobsPipeline(baseMatch, input, workedBySub);
+    return { items, totalCount };
+  }
+
+  /**
+   * The distinct people who have submitted a job, for the merged page's client
+   * filter. Aggregated over the jobs collection rather than fetched from Keycloak:
+   * the filter should offer exactly the clients who actually have jobs.
+   */
+  async findDistinctJobClients(): Promise<{ sub: string; displayName: string }[]> {
+    const rows = await this.jobModel
+      .aggregate([
+        { $match: { sub: { $nin: [null, ''] } } },
+        { $group: { _id: '$sub', username: { $first: '$username' }, email: { $first: '$email' }, clientDisplayName: { $first: '$clientDisplayName' } } },
+        { $sort: { username: 1 } }
+      ])
+      .exec();
+    return rows.map((row) => ({
+      sub: String(row._id),
+      displayName: row.clientDisplayName || row.username || row.email || String(row._id)
+    }));
   }
 
   private async latestSubmittedAt(): Promise<Date | null> {

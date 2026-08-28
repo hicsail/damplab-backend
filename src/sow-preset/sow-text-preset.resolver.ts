@@ -6,8 +6,8 @@ import { CreateSowTextPresetInput, ReorderSowTextPresetsInput, UpdateSowTextPres
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 
 /**
  * The text-block library. Reads are open to any authenticated caller because the
@@ -38,25 +38,25 @@ export class SowTextPresetResolver {
   }
 
   @Mutation(() => SowTextPreset)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async createSowTextPreset(@Args('preset') preset: CreateSowTextPresetInput, @CurrentUser() user: User): Promise<SowTextPreset> {
     return this.presetService.create(preset.sectionKey, preset.name, preset.text, SowTextPresetResolver.author(user));
   }
 
   @Mutation(() => SowTextPreset)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async updateSowTextPreset(@Args('id', { type: () => ID }) id: string, @Args('changes') changes: UpdateSowTextPresetInput, @CurrentUser() user: User): Promise<SowTextPreset> {
     return this.presetService.update(id, changes, SowTextPresetResolver.author(user));
   }
 
   @Mutation(() => Boolean)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async deleteSowTextPreset(@Args('id', { type: () => ID }) id: string): Promise<boolean> {
     return this.presetService.delete(id);
   }
 
   @Mutation(() => [SowTextPreset], { description: 'Renumbers a section. The block left at the top becomes its default.' })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.CatalogEditorWrite)
   async reorderSowTextPresets(@Args('order') order: ReorderSowTextPresetsInput): Promise<SowTextPreset[]> {
     return this.presetService.reorder(order.sectionKey, order.orderedIds);
   }

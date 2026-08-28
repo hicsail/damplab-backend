@@ -18,6 +18,7 @@ import { SowPresetModule } from './sow-preset/sow-preset.module';
 import { ResetModule } from './reset/reset.module';
 import { CommentModule } from './comment/comment.module';
 import { AnnouncementModule } from './announcements/announcement.module';
+import { TrainingModule } from './training/training.module';
 import { TemplateModule } from './template/template.module';
 import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
@@ -60,12 +61,16 @@ import { ClickUpModule } from './clickup/clickup.module';
     SOWModule,
     SowPresetModule,
 
-    // NOTE: The Reset module is for development purposes only and will
-    // be removed in future version
-    ResetModule,
+    // The Reset module drops the database. It used to be registered
+    // unconditionally with the comment below as its only protection; nothing in
+    // the tree grants it auth by default, so it is now opt-in per environment as
+    // well as staff-guarded at the resolver. Nothing in this repo calls its
+    // mutations — the seed scripts talk to Mongo directly.
+    ...(process.env.ENABLE_RESET_MODULE === 'true' ? [ResetModule] : []),
 
     CommentModule,
     AnnouncementModule,
+    TrainingModule,
     TemplateModule,
     BugReportModule,
     CustomerManagementModule,

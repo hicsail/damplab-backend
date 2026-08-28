@@ -1,5 +1,6 @@
 import { DampLabService, ServicePricingMode } from '../services/models/damplab-service.model';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
+import { CustomerCategory } from './customer-category';
 
 interface ServiceParameterOption {
   id?: unknown;
@@ -40,7 +41,7 @@ interface ServiceParameterDefinition {
   isPriceMultiplier?: boolean;
 }
 
-export type CustomerCategory = 'INTERNAL_CUSTOMERS' | 'EXTERNAL_CUSTOMER_ACADEMIC' | 'EXTERNAL_CUSTOMER_MARKET' | 'EXTERNAL_CUSTOMER_NO_SALARY';
+export { CustomerCategory };
 
 /**
  * Id of the universal run count. The UI injects it into formData for every service
@@ -59,7 +60,12 @@ function normalizePrice(value: unknown): number | undefined {
   return undefined;
 }
 
-function resolveCategoryPrice(
+/**
+ * THE category → price resolution, exported so the catalog view can quote a
+ * caller their own price rather than shipping the whole tier table and letting the
+ * browser pick. Do not write a second copy of this chain.
+ */
+export function resolveCategoryPrice(
   input:
     | {
         internalPrice?: unknown;
@@ -85,16 +91,16 @@ function resolveCategoryPrice(
 ): number | undefined {
   if (!input) return undefined;
   const pricing = input.pricing && typeof input.pricing === 'object' ? (input.pricing as any) : undefined;
-  if (category === 'INTERNAL_CUSTOMERS') {
+  if (category === CustomerCategory.INTERNAL_CUSTOMERS) {
     const p = normalizePrice(pricing?.internal ?? input.internalPrice);
     if (p !== undefined) return p;
-  } else if (category === 'EXTERNAL_CUSTOMER_ACADEMIC') {
+  } else if (category === CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC) {
     const p = normalizePrice(pricing?.externalAcademic ?? pricing?.external ?? input.externalAcademicPrice ?? input.externalPrice);
     if (p !== undefined) return p;
-  } else if (category === 'EXTERNAL_CUSTOMER_MARKET') {
+  } else if (category === CustomerCategory.EXTERNAL_CUSTOMER_MARKET) {
     const p = normalizePrice(pricing?.externalMarket ?? pricing?.external ?? input.externalMarketPrice ?? input.externalPrice);
     if (p !== undefined) return p;
-  } else if (category === 'EXTERNAL_CUSTOMER_NO_SALARY') {
+  } else if (category === CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY) {
     const p = normalizePrice(pricing?.externalNoSalary ?? pricing?.external ?? input.externalNoSalaryPrice ?? input.externalPrice);
     if (p !== undefined) return p;
   }

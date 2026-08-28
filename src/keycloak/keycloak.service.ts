@@ -1,7 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CustomerCategory } from '../job/job.model';
-import { Role } from '../auth/roles/roles.enum';
+import {
+  CATEGORY_PRIMARY_GROUP,
+  claimsFromGroupList,
+  deriveCustomerCategoryFromGroups as deriveCategoryFromGroups,
+  isCustomerPricingGroupName,
+  isDefaultExternalCustomerClaims
+} from '../pricing/pricing-groups';
+import { AccessTier, TIER_GROUP, TIER_ROLE, deriveAccessTierFromGroups, isAccessGroupName } from '../auth/roles/access-tiers';
 
 export interface LabStaffMember {
   id: string;
@@ -16,6 +23,8 @@ export interface KeycloakUserCustomerManagementRow {
   lastName?: string;
   customerCategory?: CustomerCategory;
   isDefaultExternalCustomer?: boolean;
+  /** The access column this user resolves to. Independent of `customerCategory`. */
+  accessTier?: AccessTier;
 }
 
 interface KeycloakGroup {
@@ -33,23 +42,6 @@ interface KeycloakUser {
   email?: string;
 }
 
-/** Keycloak group names that affect pricing; must stay in sync with job submission logic. */
-const CUSTOMER_PRICING_GROUP_NAMES: readonly string[] = [
-  Role.InternalCustomer,
-  Role.InternalCustomers,
-  Role.ExternalCustomer,
-  Role.ExternalCustomerAcademic,
-  Role.ExternalCustomerMarket,
-  Role.ExternalCustomerNoSalary
-];
-
-const CATEGORY_PRIMARY_GROUP: Record<CustomerCategory, string> = {
-  [CustomerCategory.INTERNAL_CUSTOMERS]: Role.InternalCustomers,
-  [CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC]: Role.ExternalCustomerAcademic,
-  [CustomerCategory.EXTERNAL_CUSTOMER_MARKET]: Role.ExternalCustomerMarket,
-  [CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY]: Role.ExternalCustomerNoSalary
-};
-
 @Injectable()
 export class KeycloakService {
   private readonly logger = new Logger(KeycloakService.name);
@@ -57,15 +49,41 @@ export class KeycloakService {
   private readonly realm: string;
   private readonly clientId: string | undefined;
   private readonly clientSecret: string | undefined;
-  private readonly labStaffGroupName: string;
+  private readonly labStaffGroupNames: readonly string[];
+  /**
+   * True when `DISABLE_AUTH` is on. Group writes are refused in that state — see
+   * `assertGroupWritesAllowed`.
+   */
+  private readonly authDisabled: boolean;
 
   constructor(private readonly configService: ConfigService) {
-    const kc = this.configService.get<{ serverUrl?: string; realm?: string; clientId?: string; clientSecret?: string; labStaffGroupName?: string }>('keycloak');
+    const kc = this.configService.get<{ serverUrl?: string; realm?: string; clientId?: string; clientSecret?: string; labStaffGroupNames?: string[] }>('keycloak');
     this.serverUrl = kc?.serverUrl;
     this.realm = kc?.realm ?? 'damplab';
     this.clientId = kc?.clientId;
     this.clientSecret = kc?.clientSecret;
-    this.labStaffGroupName = kc?.labStaffGroupName ?? 'damplab-staff';
+    this.labStaffGroupNames = kc?.labStaffGroupNames?.length ? kc.labStaffGroupNames : ['damplab-staff'];
+    this.authDisabled = Boolean(this.configService.get('auth.disable'));
+  }
+
+  /**
+   * Refuse to write group membership while the auth bypass is on.
+   *
+   * The realm is shared by staging and production (see `damplab-ui/CLAUDE.md`), and a
+   * developer's `.env` points at it with a live service-account secret. With
+   * `DISABLE_AUTH=true` the guard synthesises an administrator for **unauthenticated**
+   * requests, so without this check a stray localhost call would silently move a real
+   * person between groups in the realm production reads.
+   *
+   * Reads are left alone deliberately: browsing the user list locally is useful and
+   * harmless. Only mutation is blocked, and only in a state production never enters.
+   */
+  private assertGroupWritesAllowed(): void {
+    if (this.authDisabled) {
+      throw new Error(
+        'Refusing to write Keycloak group membership while DISABLE_AUTH=true. The dev bypass treats unauthenticated callers as administrators, and this realm is shared with production. Unset DISABLE_AUTH and sign in as a real administrator to change a user\u2019s groups.'
+      );
+    }
   }
 
   /** True if Keycloak Admin is configured (server URL and client credentials). */
@@ -124,41 +142,26 @@ export class KeycloakService {
     return (await res.json()) as KeycloakUser[];
   }
 
-  private claimsFromGroupList(groups: { name?: string; path?: string }[]): string[] {
-    const claims: string[] = [];
-    for (const g of groups) {
-      if (g.path) claims.push(g.path);
-      if (g.name) claims.push(g.name);
-    }
-    return claims;
-  }
-
-  /** Same precedence as `JobResolver.createJob` / `AddNodeInputPipe`. */
+  /**
+   * Delegates to the one shared derivation in `pricing/pricing-groups` — the same
+   * function `JobResolver.createJob` and `AddNodeInputPipe` use, so precedence
+   * cannot drift between the admin view and what a customer is billed.
+   */
   deriveCustomerCategoryFromGroups(groups: { name?: string; path?: string }[]): CustomerCategory | undefined {
-    const claims = this.claimsFromGroupList(groups);
-    const hasGroup = (groupName: string): boolean => claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
-    if (hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)) return CustomerCategory.INTERNAL_CUSTOMERS;
-    if (hasGroup(Role.ExternalCustomerAcademic)) return CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC;
-    if (hasGroup(Role.ExternalCustomerMarket)) return CustomerCategory.EXTERNAL_CUSTOMER_MARKET;
-    if (hasGroup(Role.ExternalCustomerNoSalary)) return CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY;
-    if (hasGroup(Role.ExternalCustomer)) return CustomerCategory.EXTERNAL_CUSTOMER_MARKET;
-    return undefined;
+    return deriveCategoryFromGroups(groups);
   }
 
   private isCustomerPricingGroupMember(g: { name?: string }): boolean {
-    return Boolean(g.name && CUSTOMER_PRICING_GROUP_NAMES.includes(g.name));
+    return isCustomerPricingGroupName(g.name);
   }
 
   /**
-   * True when the user's pricing-group membership consists solely of the legacy
-   * `external-customer` group (the default new sign-ups land in) and no more
-   * specific pricing group like external-customer-market or internal-customers.
+   * True when the user's pricing-group membership consists solely of the default
+   * external group (`external-customers`, or the legacy singular spelling) and no
+   * more specific pricing group like external-customer-market or internal-customers.
    */
-  private isDefaultExternalCustomer(groups: { name?: string }[]): boolean {
-    const claims = this.claimsFromGroupList(groups);
-    const has = (n: string): boolean => claims.some((e) => e === n || e.endsWith(`/${n}`));
-    if (!has(Role.ExternalCustomer)) return false;
-    return !(has(Role.InternalCustomer) || has(Role.InternalCustomers) || has(Role.ExternalCustomerAcademic) || has(Role.ExternalCustomerMarket) || has(Role.ExternalCustomerNoSalary));
+  private isDefaultExternalCustomer(groups: { name?: string; path?: string }[]): boolean {
+    return isDefaultExternalCustomerClaims(claimsFromGroupList(groups));
   }
 
   private rowFromUserAndGroups(user: KeycloakUser, groups: KeycloakGroup[]): KeycloakUserCustomerManagementRow {
@@ -169,7 +172,8 @@ export class KeycloakService {
       firstName: user.firstName,
       lastName: user.lastName,
       customerCategory: this.deriveCustomerCategoryFromGroups(groups),
-      isDefaultExternalCustomer: this.isDefaultExternalCustomer(groups)
+      isDefaultExternalCustomer: this.isDefaultExternalCustomer(groups),
+      accessTier: deriveAccessTierFromGroups(groups)
     };
   }
 
@@ -234,6 +238,7 @@ export class KeycloakService {
    * Set exactly one pricing category group (or clear all such groups when category is null).
    */
   async setUserCustomerCategory(userId: string, category: CustomerCategory | null): Promise<void> {
+    this.assertGroupWritesAllowed();
     await this.removeUserFromAllCustomerPricingGroups(userId);
     if (category == null) return;
     const groupName = CATEGORY_PRIMARY_GROUP[category];
@@ -242,6 +247,77 @@ export class KeycloakService {
       throw new Error(`Keycloak group "${groupName}" not found in realm ${this.realm}`);
     }
     await this.addUserToGroup(userId, group.id);
+  }
+
+  /**
+   * Remove membership from every **access** group, leaving pricing groups alone.
+   *
+   * The mirror of `removeUserFromAllCustomerPricingGroups`, and the two must never
+   * overlap: pricing and access are independent axes, so a tier change that cleared a
+   * pricing group would silently reprice the customer. `isAccessGroupName` is an
+   * allow-list of exactly three names for that reason.
+   */
+  async removeUserFromAllAccessGroups(userId: string): Promise<void> {
+    const groups = await this.getUserGroups(userId);
+    for (const g of groups) {
+      if (isAccessGroupName(g.name)) {
+        await this.removeUserFromGroup(userId, g.id);
+      }
+    }
+  }
+
+  /**
+   * Set exactly one access group, or none at all for `CLIENT`.
+   *
+   * CLIENT is not a group and never has been — it is `BASELINE_PERMISSIONS`, which
+   * every authenticated user resolves to regardless of what they carry. So "make this
+   * person a Client" is literally "remove their access groups", and the early return
+   * below is the whole implementation of it.
+   */
+  async setUserAccessTier(userId: string, tier: AccessTier): Promise<void> {
+    this.assertGroupWritesAllowed();
+    await this.removeUserFromAllAccessGroups(userId);
+    const groupName = TIER_GROUP[tier];
+    if (groupName == null) return;
+    const group = await this.findGroupByName(groupName);
+    if (!group) {
+      throw new Error(`Keycloak group "${groupName}" not found in realm ${this.realm}`);
+    }
+    await this.addUserToGroup(userId, group.id);
+  }
+
+  /**
+   * The user's effective realm roles, composites included.
+   *
+   * Used **only** on the single-user read-back after a tier write, never in a list
+   * loop: every admin call re-fetches a service-account token (`adminFetch`), so a
+   * 25-row page already costs ~52 requests and adding one per row would make it ~78.
+   *
+   * The read-back exists because writing a group grants nothing on its own. The guard
+   * reads `realm_access.roles`, so if the realm lacks the group's role mapping the PUT
+   * succeeds and the user gains no access at all. Reporting that back is the
+   * difference between a visible warning and a silent no-op.
+   */
+  async getUserRealmRoles(userId: string): Promise<string[]> {
+    const res = await this.fetchWithToken(`/admin/realms/${this.realm}/users/${userId}/role-mappings/realm/composite`);
+    if (!res.ok) {
+      this.logger.warn(`Keycloak realm role-mappings request failed: ${res.status} ${await res.text()}`);
+      return [];
+    }
+    const roles = (await res.json()) as { name?: string }[];
+    return roles.map((r) => r.name).filter((name): name is string => Boolean(name));
+  }
+
+  /**
+   * True when the tier's realm role is actually present on the user.
+   *
+   * CLIENT is vacuously true: it maps to no role, so there is nothing to verify.
+   */
+  async isAccessRoleMapped(userId: string, tier: AccessTier): Promise<boolean> {
+    const expected = TIER_ROLE[tier];
+    if (expected == null) return true;
+    const roles = await this.getUserRealmRoles(userId);
+    return roles.includes(expected);
   }
 
   async getUserCustomerManagementRow(userId: string): Promise<KeycloakUserCustomerManagementRow | null> {
@@ -301,8 +377,23 @@ export class KeycloakService {
     return rows;
   }
 
+  /**
+   * Customer Management's STAFF filter. Unions across every configured lab-staff
+   * group and de-duplicates by user id, so someone in both `damplab-staff` and
+   * `technician` appears once.
+   *
+   * Pagination is applied to the merged list rather than per group: asking each
+   * group for the same window and concatenating would skip rows once the groups
+   * overlap.
+   */
   async listLabStaffWithCustomerCategory(first: number, max: number): Promise<KeycloakUserCustomerManagementRow[]> {
-    return this.listUsersInGroupWithCustomerCategory(this.labStaffGroupName, first, max);
+    const byId = new Map<string, KeycloakUserCustomerManagementRow>();
+    for (const groupName of this.labStaffGroupNames) {
+      for (const row of await this.listUsersInGroupWithCustomerCategory(groupName, 0, first + max)) {
+        if (!byId.has(row.id)) byId.set(row.id, row);
+      }
+    }
+    return [...byId.values()].slice(first, first + max);
   }
 
   /**
@@ -338,25 +429,36 @@ export class KeycloakService {
     }
 
     try {
-      const group = await this.findGroupByName(this.labStaffGroupName);
-      if (!group) {
-        this.logger.warn(`Keycloak group "${this.labStaffGroupName}" not found in realm ${this.realm}. Check group name and service account roles (e.g. realm-management: query-groups, view-users).`);
-        return [];
-      }
+      // De-duplicated union across every configured group. A technician moved out of
+      // damplab-staff must stay assignable, and someone in both groups must not
+      // appear twice.
+      const byId = new Map<string, LabStaffMember>();
+      for (const groupName of this.labStaffGroupNames) {
+        const group = await this.findGroupByName(groupName);
+        if (!group) {
+          // Not an error: `technician` legitimately does not exist until the realm
+          // is updated, and this code must deploy first.
+          this.logger.warn(`Keycloak group "${groupName}" not found in realm ${this.realm}. Check group name and service account roles (e.g. realm-management: query-groups, view-users).`);
+          continue;
+        }
 
-      const path = `/admin/realms/${this.realm}/groups/${group.id}/members?max=-1`;
-      const res = await this.fetchWithToken(path);
-      if (!res.ok) {
-        this.logger.warn(`Keycloak group members request failed: ${res.status} ${await res.text()}. Ensure service account has realm-management role view-users (or query-users).`);
-        return [];
-      }
+        const path = `/admin/realms/${this.realm}/groups/${group.id}/members?max=-1`;
+        const res = await this.fetchWithToken(path);
+        if (!res.ok) {
+          this.logger.warn(
+            `Keycloak group members request failed for "${groupName}": ${res.status} ${await res.text()}. Ensure service account has realm-management role view-users (or query-users).`
+          );
+          continue;
+        }
 
-      const users = (await res.json()) as KeycloakUser[];
-      const members = users.map((u) => {
-        const displayName = [u.firstName, u.lastName].filter(Boolean).join(' ')?.trim() || u.username || u.id;
-        return { id: u.id, displayName };
-      });
-      this.logger.log(`Keycloak lab staff group "${this.labStaffGroupName}": ${members.length} member(s)`);
+        for (const u of (await res.json()) as KeycloakUser[]) {
+          if (byId.has(u.id)) continue;
+          const displayName = [u.firstName, u.lastName].filter(Boolean).join(' ')?.trim() || u.username || u.id;
+          byId.set(u.id, { id: u.id, displayName });
+        }
+      }
+      const members = [...byId.values()];
+      this.logger.log(`Keycloak lab staff groups "${this.labStaffGroupNames.join(', ')}": ${members.length} member(s)`);
       return members;
     } catch (err) {
       this.logger.warn(`Keycloak getLabStaffGroupMembers failed: ${err instanceof Error ? err.message : String(err)}`);

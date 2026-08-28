@@ -100,6 +100,36 @@ export class WorkflowNode {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Planned end of this operation’s inventory hold. Optional; defaults to start + estimatedMinutes (or a few hours).' })
   inventoryReservationEnd?: Date;
+
+  /**
+   * Archived cards are hidden from the lab monitor board but never deleted and
+   * stay fully resolvable.
+   *
+   * Copied from the Job precedent (`job.model.ts`) deliberately, including its
+   * rationale: a flag rather than a `WorkflowNodeState` value, because archiving is
+   * orthogonal to lifecycle position — an admin may archive a card that is still
+   * IN_PROGRESS — and the original state must survive so it stays clear what was
+   * shelved. Adding an enum member would also have meant auditing every branch of
+   * the node state machine.
+   */
+  @Prop({ required: false, default: false, index: true })
+  @Field(() => Boolean, { nullable: true, defaultValue: false, description: 'Archived: hidden from the lab monitor board, but retained.' })
+  isArchived?: boolean;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When the card was archived.' })
+  archivedAt?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Who archived it (username/email).' })
+  archivedBy?: string;
+
+  @Prop({ required: false })
+  @Field(() => WorkflowNodeState, {
+    nullable: true,
+    description: 'The state the card was in when archived — an audit trail, since an admin may archive work that was still in progress.'
+  })
+  archivedFromState?: WorkflowNodeState;
 }
 
 export type WorkflowNodeDocument = WorkflowNode & Document;

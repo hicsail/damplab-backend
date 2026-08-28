@@ -1,8 +1,9 @@
 import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
-import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult } from './dto/jobs-query.dto';
+import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
+import { deriveCustomerCategory } from '../pricing/pricing-groups';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { Comment } from '../comment/comment.model';
@@ -12,6 +13,9 @@ import { WorkflowPipe } from '../workflow/workflow.pipe';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { hasPermission } from '../auth/permissions/permissions';
+import { Permission } from '../auth/permissions/permission.enum';
 import { User } from '../auth/user.interface';
 import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
@@ -117,8 +121,17 @@ export class JobResolver {
     [JobState.CLOSED]: 'Closed'
   };
 
+  /**
+   * The six mutations still carrying `@Roles(Role.DamplabStaff)` below —
+   * `addWorkflowToJob`, `changeJobCustomerCategory`, `createSowForJob`,
+   * `reviewJob`, `withdrawJobFromCustomer`, `withdrawJobAcceptance` — are contract
+   * and pricing acts, not view acts, and stay Administrator-only. Reading a job is
+   * `jobs:view-all`, which technicians hold; changing what a job costs or what it
+   * commits the lab to is not covered by that, and the 2b widening table does not
+   * list them. Widening them is a separate decision.
+   */
   @Query(() => [Job])
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobs(): Promise<Job[]> {
     return this.jobService.findAll();
   }
@@ -131,21 +144,57 @@ export class JobResolver {
   }
 
   @Query(() => JobsResult, {
-    description: 'Staff-only. Paginated, filterable list of all jobs (Dashboard).'
+    deprecationReason: 'Use jobsForViewer, which serves both tiers and enforces scope server-side. Kept because API_KEY_PERMISSIONS includes jobs:view-all and external integrations may call it.',
+    description: 'Every job, paginated and filterable. Requires jobs:view-all; the baseline reaches ownJobs instead.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async allJobs(@Args('input', { type: () => AllJobsInput, nullable: true }) input: AllJobsInput | null): Promise<JobsResult> {
     return this.jobService.findAllJobsPaginated(input ?? {});
   }
 
+  /**
+   * The merged jobs page: one query for what `/my_jobs` and `/dashboard` used to
+   * split between them.
+   *
+   * Open to the **baseline** (`jobs:view`), because scope is enforced here rather
+   * than by the route. A caller without `jobs:view-all` is silently forced to
+   * their own jobs and their `createdBySub` / `assigneeId` filters are dropped —
+   * silently, and not with an error, because sending `scope: ALL` is what the page
+   * does by default and a client should get their jobs rather than a failure.
+   *
+   * That is the security-relevant half of the merge. Everything else is deletion.
+   */
+  @Query(() => JobsResult, { description: "Jobs the caller may see. Scope is enforced server-side: without jobs:view-all it is forced to the caller's own jobs whatever is asked for." })
+  @RequirePermission(Permission.JobsView)
+  async jobsForViewer(@Args('input', { type: () => JobsForViewerInput, nullable: true }) input: JobsForViewerInput | null, @CurrentUser() user: User): Promise<JobsResult> {
+    const requested = input ?? {};
+    const seesEveryJob = hasPermission(user, Permission.JobsViewAll);
+
+    const scope = seesEveryJob ? requested.scope ?? JobScope.ALL : JobScope.CREATED_BY_ME;
+
+    return this.jobService.findJobsForViewer(requested, {
+      scope,
+      viewerSub: user.sub,
+      createdBySub: seesEveryJob ? requested.createdBySub : undefined,
+      assigneeId: seesEveryJob ? requested.assigneeId : undefined
+    });
+  }
+
+  /** The distinct clients who have submitted a job — the merged page's client filter. */
+  @Query(() => [JobClient], { description: 'Distinct submitters, for the jobs page client filter. Requires jobs:view-all.' })
+  @RequirePermission(Permission.JobsViewAll)
+  async jobClients(): Promise<JobClient[]> {
+    return this.jobService.findDistinctJobClients();
+  }
+
   @Query(() => Job, { nullable: true })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobByName(@Args('name') name: string): Promise<Job | null> {
     return this.jobService.findByName(name);
   }
 
   @Query(() => Job, { nullable: true })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
     return this.jobService.findById(id);
   }
@@ -159,23 +208,23 @@ export class JobResolver {
   }
 
   @Query(() => Job)
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobByWorkflowId(@Args('workflow', { type: () => ID }, WorkflowPipe) workflow: Workflow): Promise<Job | null> {
     return this.jobService.findByWorkflow(workflow);
   }
 
   @Query(() => JobFeedStatus, {
-    description: 'Staff-only. Global unseen/submitted jobs feed status for the Home Jobs button badge.'
+    description: 'Global unseen/submitted jobs feed status for the Home Jobs button badge. Requires jobs:view-all.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async jobsFeedStatus(): Promise<JobFeedStatus> {
     return this.jobService.getJobsFeedStatus();
   }
 
   @Mutation(() => JobFeedStatus, {
-    description: 'Staff-only. Marks the shared jobs feed as viewed by setting the global viewed timestamp.'
+    description: 'Marks the shared jobs feed as viewed by setting the global viewed timestamp. Requires jobs:view-all.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async markJobsFeedViewed(): Promise<JobFeedStatus> {
     return this.jobService.markJobsFeedViewed();
   }
@@ -184,21 +233,7 @@ export class JobResolver {
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
     const roles = user.realm_access?.roles ?? [];
     const groups = user.groups ?? [];
-    const claims = [...roles, ...groups];
-    const hasGroup = (groupName: string): boolean => claims.some((entry) => entry === groupName || entry.endsWith(`/${groupName}`));
-
-    const customerCategory: CustomerCategory | undefined =
-      hasGroup(Role.InternalCustomers) || hasGroup(Role.InternalCustomer)
-        ? CustomerCategory.INTERNAL_CUSTOMERS
-        : hasGroup(Role.ExternalCustomerAcademic)
-        ? CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC
-        : hasGroup(Role.ExternalCustomerMarket)
-        ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
-        : hasGroup(Role.ExternalCustomerNoSalary)
-        ? CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY
-        : hasGroup(Role.ExternalCustomer)
-        ? CustomerCategory.EXTERNAL_CUSTOMER_MARKET
-        : undefined;
+    const customerCategory: CustomerCategory | undefined = deriveCustomerCategory([...roles, ...groups]);
     const created = await this.jobService.create({
       ...createJobInput,
       username: user.preferred_username,
@@ -231,7 +266,7 @@ export class JobResolver {
     description:
       'Staff-only. Archive a job: hides it from the default jobs dashboard and the live lab boards while retaining everything. Permitted even when the job is IN_PROGRESS — the caller is expected to have confirmed — and the state at archive time is recorded.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async archiveJob(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const actor = user?.email || user?.preferred_username || 'unknown';
     const updated = await this.jobService.setArchived(jobId, true, actor);
@@ -250,7 +285,7 @@ export class JobResolver {
   @Mutation(() => Job, {
     description: 'Staff-only. Restore an archived job, putting it back in the dashboard and on the live boards. Its lifecycle state was never changed, so it returns exactly where it left off.'
   })
-  @Roles(Role.DamplabStaff)
+  @RequirePermission(Permission.JobsViewAll)
   async unarchiveJob(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const actor = user?.email || user?.preferred_username || 'unknown';
     const updated = await this.jobService.setArchived(jobId, false, actor);

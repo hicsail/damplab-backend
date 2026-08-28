@@ -1,14 +1,16 @@
 import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
-import { UseGuards } from '@nestjs/common';
+import { Logger, UseGuards } from '@nestjs/common';
 import { ProtocolStepMapping } from './protocol-step-mapping.model';
 import { ProtocolMapService } from './protocol-map.service';
 import { ResolvedEquipment, ResolvedPlacement, ResolvedProtocol, ResolvedStep, StepMappingStatus, UpsertProtocolStepMappingInput } from './protocol-map.dto';
 import { ProtocolsService } from '../protocols/protocols.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { StationService } from '../station/station.service';
+import { DampLabServices } from '../services/damplab-services.services';
+import { ProtocolLibraryCategory, ProtocolLibraryEntry } from './protocol-library.dto';
 import { AuthRolesGuard } from '../auth/auth.guard';
-import { Roles } from '../auth/roles/roles.decorator';
-import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 
@@ -22,28 +24,103 @@ function toLabel(html: string, max = 120): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
 
+/**
+ * The class-level `@Roles(Role.DamplabStaff)` this replaces covered the read
+ * queries too, so `/protocol-map` 403'd on load for a `protocol-library:read`
+ * holder. Read and write are split per the matrix — which gives technicians
+ * write here, unlike the catalog and the lab layout.
+ */
 @Resolver(() => ProtocolStepMapping)
 @UseGuards(AuthRolesGuard)
-@Roles(Role.DamplabStaff)
 export class ProtocolMapResolver {
+  private readonly logger = new Logger(ProtocolMapResolver.name);
+
   constructor(
     private readonly mapService: ProtocolMapService,
     private readonly protocolsService: ProtocolsService,
     private readonly inventoryService: InventoryService,
-    private readonly stationService: StationService
+    private readonly stationService: StationService,
+    private readonly damplabServices: DampLabServices
   ) {}
 
+  /**
+   * The protocol library, grouped by category.
+   *
+   * `/protocol-map` had **no browse and no list at all** — you typed a protocols.io
+   * id or slug into a TextField and pressed "Load protocol". That, not the styling,
+   * was the real problem: you had to already know the id of the thing you wanted.
+   *
+   * protocols.io returns no categories, so the grouping comes from the catalog: a
+   * protocol inherits the category of the service that references it. Protocols
+   * referenced by no service group under "Uncategorised".
+   *
+   * Every entry is one protocols.io round trip, which is why
+   * `ProtocolsService.getProtocol` caches — see the note there. Failures are
+   * per-entry: one unreachable protocol lists as `unavailable` rather than blanking
+   * the whole library.
+   */
+  @Query(() => [ProtocolLibraryCategory], { description: "Every protocol referenced by the service catalog, grouped by the referencing service's category." })
+  @RequirePermission(Permission.ProtocolLibraryRead)
+  async protocolLibrary(): Promise<ProtocolLibraryCategory[]> {
+    const services = await this.damplabServices.findAll();
+
+    // protocolId -> { category, service names }. First category wins when two
+    // services in different categories share a protocol; the service list on the
+    // row shows both, so nothing is hidden by the choice.
+    const byProtocol = new Map<string, { category: string; serviceNames: string[] }>();
+    for (const service of services) {
+      for (const rawId of service.protocolIds ?? []) {
+        const protocolId = String(rawId ?? '').trim();
+        if (!protocolId) continue;
+        const existing = byProtocol.get(protocolId);
+        if (existing) {
+          existing.serviceNames.push(service.name);
+        } else {
+          byProtocol.set(protocolId, { category: service.serviceCategoryName?.trim() || 'Uncategorised', serviceNames: [service.name] });
+        }
+      }
+    }
+
+    const entries = await Promise.all(
+      [...byProtocol.entries()].map(async ([protocolId, meta]): Promise<ProtocolLibraryEntry & { category: string }> => {
+        try {
+          const protocol = await this.protocolsService.getProtocol(protocolId);
+          return { protocolId, title: protocol.title, stepCount: protocol.steps.length, serviceNames: meta.serviceNames, unavailable: false, category: meta.category };
+        } catch (error) {
+          this.logger.warn(`protocol library: could not load ${protocolId}: ${error instanceof Error ? error.message : String(error)}`);
+          return { protocolId, title: protocolId, stepCount: undefined, serviceNames: meta.serviceNames, unavailable: true, category: meta.category };
+        }
+      })
+    );
+
+    const grouped = new Map<string, ProtocolLibraryEntry[]>();
+    for (const { category, ...entry } of entries) {
+      if (!grouped.has(category)) grouped.set(category, []);
+      grouped.get(category)!.push(entry);
+    }
+
+    return (
+      [...grouped.entries()]
+        .map(([category, protocols]) => ({ category, protocols: protocols.sort((a, b) => a.title.localeCompare(b.title)) }))
+        // Uncategorised last: it is the residue, not a heading anyone navigates to.
+        .sort((a, b) => (a.category === 'Uncategorised' ? 1 : b.category === 'Uncategorised' ? -1 : a.category.localeCompare(b.category)))
+    );
+  }
+
   @Query(() => [ProtocolStepMapping], { description: 'All author-defined step mappings for a protocol.' })
+  @RequirePermission(Permission.ProtocolLibraryRead)
   async protocolStepMappings(@Args('protocolId') protocolId: string): Promise<ProtocolStepMapping[]> {
     return this.mapService.findByProtocol(protocolId);
   }
 
   @Mutation(() => ProtocolStepMapping, { description: 'Create or update the mapping for one protocol step.' })
+  @RequirePermission(Permission.ProtocolLibraryWrite)
   async upsertProtocolStepMapping(@Args('input') input: UpsertProtocolStepMappingInput, @CurrentUser() user: User): Promise<ProtocolStepMapping> {
     return this.mapService.upsert(input, user?.preferred_username || user?.email);
   }
 
   @Mutation(() => Boolean, { description: 'Remove the mapping for one protocol step.' })
+  @RequirePermission(Permission.ProtocolLibraryWrite)
   async deleteProtocolStepMapping(@Args('protocolId') protocolId: string, @Args('stepId') stepId: string): Promise<boolean> {
     return this.mapService.remove(protocolId, stepId);
   }
@@ -59,6 +136,7 @@ export class ProtocolMapResolver {
    * DampLabService.protocolIds, so a step is "mapped" purely on equipment.
    */
   @Query(() => ResolvedProtocol, { description: 'Resolve a protocol into its full step → equipment → station chain with validation. Steps come back in execution order.' })
+  @RequirePermission(Permission.ProtocolLibraryRead)
   async resolveProtocol(@Args('protocolId') protocolId: string): Promise<ResolvedProtocol> {
     const [protocol, mappings, inventory, stations] = await Promise.all([
       this.protocolsService.getProtocol(protocolId),

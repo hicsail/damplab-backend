@@ -6,9 +6,10 @@ import { ProtocolMapResolver } from './protocol-map.resolver';
 import { ProtocolsModule } from '../protocols/protocols.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { StationModule } from '../station/station.module';
+import { DampLabServicesModule } from '../services/damplab-services.module';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: ProtocolStepMapping.name, schema: ProtocolStepMappingSchema }]), ProtocolsModule, InventoryModule, StationModule],
+  imports: [MongooseModule.forFeature([{ name: ProtocolStepMapping.name, schema: ProtocolStepMappingSchema }]), ProtocolsModule, InventoryModule, StationModule, DampLabServicesModule],
   providers: [ProtocolMapService, ProtocolMapResolver],
   exports: [ProtocolMapService]
 })
