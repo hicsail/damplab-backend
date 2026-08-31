@@ -124,12 +124,22 @@ describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
     expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'CREATED_BY_ME', viewerSub: 'viewer-1' }));
   });
 
+  it("passes the viewer's email, so staff-submitted jobs reach the client named on them", async () => {
+    // The regression this pins: `jobsForViewer` was added alongside the existing
+    // `ownJobs` and inherited only half of it. `ownJobs` had already learned to
+    // match `clientEmail`; the new path forwarded `sub` alone, so a client's
+    // dashboard silently dropped every job staff had submitted for them.
+    const { resolver, findJobsForViewer } = harness();
+    await resolver.jobsForViewer({ scope: 'ALL' } as any, viewer([]));
+    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ viewerEmail: 'v@example.org' }));
+  });
+
   it("drops a client's attempt to name someone else as the creator", async () => {
     // The interesting attack: not asking for ALL, but asking for one specific
     // other person's jobs.
     const { resolver, findJobsForViewer } = harness();
-    await resolver.jobsForViewer({ scope: 'ALL', createdBySub: 'someone-else' } as any, viewer([]));
-    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'CREATED_BY_ME', createdBySub: undefined, assigneeId: undefined }));
+    await resolver.jobsForViewer({ scope: 'ALL', createdBySub: 'someone-else', createdByClient: 'someone@else.org' } as any, viewer([]));
+    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'CREATED_BY_ME', createdBySub: undefined, createdByClient: undefined, assigneeId: undefined }));
   });
 
   it('does not error on an over-broad request — it narrows it', async () => {
@@ -141,8 +151,8 @@ describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
 
   it('honours ALL and both filters for a caller holding jobs:view-all', async () => {
     const { resolver, findJobsForViewer } = harness();
-    await resolver.jobsForViewer({ scope: 'ALL', createdBySub: 'client-9', assigneeId: 'tech-3' } as any, viewer([Role.Technician]));
-    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'ALL', createdBySub: 'client-9', assigneeId: 'tech-3' }));
+    await resolver.jobsForViewer({ scope: 'ALL', createdBySub: 'client-9', createdByClient: 'jane@bu.edu', assigneeId: 'tech-3' } as any, viewer([Role.Technician]));
+    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'ALL', createdBySub: 'client-9', createdByClient: 'jane@bu.edu', assigneeId: 'tech-3' }));
   });
 
   it('defaults a staff caller to ALL and a client to their own, with no scope sent', async () => {

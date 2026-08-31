@@ -104,6 +104,19 @@ describe('createForJob', () => {
     expect(created[0].clientInstitution).toBe('Boston University');
   });
 
+  it('bills the client staff named, not the staff member who submitted for them', async () => {
+    // A staff-submitted job's `email` is the submitter's, read from their token.
+    // Copying it here put the technician's address in the SOW parties block and
+    // on the invoice as billedToEmail.
+    const { service, created } = harness({
+      job: { _id: 'job1', name: 'Project X', clientDisplayName: 'Dr. Jane Rivera', username: 'tess', email: 'tech@damplab.org', clientEmail: 'jane@bu.edu', institute: 'Boston University' }
+    });
+
+    await service.createForJob('job1', [serviceInput()], 'tech@damplab.org');
+
+    expect(created[0].clientEmail).toBe('jane@bu.edu');
+  });
+
   it('falls back to the username when no display name was captured', async () => {
     const { service, created } = harness({ job: { _id: 'job1', name: 'Project X', username: 'jrivera', email: 'jane@bu.edu', institute: 'BU' } });
 

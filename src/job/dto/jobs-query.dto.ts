@@ -107,8 +107,18 @@ export class JobsForViewerInput extends AllJobsInput {
   @Field(() => JobScope, { description: 'Whose jobs. Forced to CREATED_BY_ME without jobs:view-all, whatever is sent.', nullable: true })
   scope?: JobScope;
 
-  @Field({ description: 'Filter to one client, by their Keycloak sub. Ignored without jobs:view-all.', nullable: true })
+  @Field({
+    description: 'Filter to one client, by their Keycloak sub. Ignored without jobs:view-all.',
+    nullable: true,
+    deprecationReason: 'Use createdByClient. A job staff submitted for a client carries the staff sub, so a sub filter cannot find it.'
+  })
   createdBySub?: string;
+
+  @Field({
+    description: 'Filter to one client by their clientKey, as returned by jobClients. Matches jobs they submitted and jobs staff submitted for them. Ignored without jobs:view-all.',
+    nullable: true
+  })
+  createdByClient?: string;
 
   @Field({ description: 'Filter to jobs with an operation assigned to this person. Ignored without jobs:view-all.', nullable: true })
   assigneeId?: string;
@@ -126,7 +136,15 @@ export class OwnJobsResult {
 /** One distinct submitter, for the merged jobs page's client filter. */
 @ObjectType()
 export class JobClient {
-  @Field({ description: "The client's Keycloak sub — what `createdBySub` takes." })
+  @Field({
+    description: 'Identifies the client — what `createdByClient` takes. Their normalised email, which is the one identifier present on both their own jobs and the ones staff submitted for them.'
+  })
+  clientKey: string;
+
+  @Field({
+    description: "The client's Keycloak sub, empty when they have only ever had jobs submitted on their behalf.",
+    deprecationReason: 'Use clientKey. Empty for a client who has never submitted a job themselves.'
+  })
   sub: string;
 
   @Field({ description: 'Best available label: display name, else username, else email.' })

@@ -3,6 +3,7 @@ import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
+import { matchesClientEmail } from './client-email';
 import { deriveCustomerCategory } from '../pricing/pricing-groups';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -175,7 +176,12 @@ export class JobResolver {
     return this.jobService.findJobsForViewer(requested, {
       scope,
       viewerSub: user.sub,
+      // Their own sub finds what they submitted; their email finds what staff
+      // submitted for them. Without the second the merged page shows a client
+      // nothing of the jobs a staff member entered on their behalf.
+      viewerEmail: user.email,
       createdBySub: seesEveryJob ? requested.createdBySub : undefined,
+      createdByClient: seesEveryJob ? requested.createdByClient : undefined,
       assigneeId: seesEveryJob ? requested.assigneeId : undefined
     });
   }
@@ -203,7 +209,7 @@ export class JobResolver {
   async ownJobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
     const job = await this.jobService.findById(id);
     if (job?.sub === user.sub) return job;
-    if (job?.clientEmail && user.email && job.clientEmail === user.email) return job;
+    if (matchesClientEmail(job?.clientEmail, user.email)) return job;
     return null;
   }
 

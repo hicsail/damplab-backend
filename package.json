@@ -26,7 +26,8 @@
     "migrate:sows": "node --env-file=.env dist/sow/migrate-sows.js",
     "migrate:job-editing": "node --env-file=.env dist/job/migrate-job-editing.js",
     "migrate:job-contract-flow": "node --env-file=.env dist/job/migrate-job-contract-flow.js",
-    "migrate:inventory-types": "node --env-file=.env dist/src/inventory/migrate-inventory-types.js"
+    "migrate:inventory-types": "node --env-file=.env dist/src/inventory/migrate-inventory-types.js",
+    "backfill:sow-client-email": "node --env-file=.env dist/src/sow/backfill-sow-client-email.js"
   },
   "dependencies": {
     "@apollo/server": "^5.2.0",
