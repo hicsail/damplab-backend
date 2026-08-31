@@ -56,5 +56,5 @@ export function notificationLink(eventType: string, jobId?: string): string | un
   if (!jobId) return undefined;
   // Staff-facing events link to the technician view; client-facing link to client view.
   // The frontend router handles redirects based on the user's role.
-  return `/job/${jobId}`;
+  return `/client_view/${jobId}`;
 }
