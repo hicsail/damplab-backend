@@ -97,6 +97,14 @@ export default (): any => ({
      */
     listCacheSeconds: Number(process.env.CLICKUP_LIST_CACHE_SECONDS ?? 45)
   },
+  /** Notifications: in-app + email via Mailgun. */
+  notifications: {
+    mailgunApiKey: process.env.MAILGUN_API_KEY,
+    mailgunDomain: process.env.MAILGUN_DOMAIN || 'mail.sail.codes',
+    mailgunFromAddress: process.env.MAILGUN_FROM_ADDRESS || 'DampLab <noreply@mail.sail.codes>',
+    emailEnabled: process.env.NOTIFICATION_EMAIL_ENABLED || 'false',
+    appBaseUrl: process.env.APP_BASE_URL || 'https://damplab-canvas.sail.codes',
+  },
   /** Agents: backend proxies chat to n8n webhooks. One entry per agent. */
   agent: {
     /** Canvas workflow-builder agent (catalog injected). */

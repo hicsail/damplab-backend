@@ -33,6 +33,7 @@ import { ApiKeyModule } from './api-key/api-key.module';
 import { StationModule } from './station/station.module';
 import { ProtocolMapModule } from './protocol-map/protocol-map.module';
 import { ClickUpModule } from './clickup/clickup.module';
+import { NotificationModule } from './notification/notification.module';
 
 @Module({
   imports: [
@@ -84,7 +85,8 @@ import { ClickUpModule } from './clickup/clickup.module';
     ApiKeyModule,
     StationModule,
     ProtocolMapModule,
-    ClickUpModule
+    ClickUpModule,
+    NotificationModule
   ],
   controllers: [AppController],
   providers: [AppService]

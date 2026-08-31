@@ -16,6 +16,7 @@ import { JobVersionModule } from '../job-version/job-version.module';
 import { KeycloakModule } from '../keycloak/keycloak.module';
 import { JobReviewService } from './job-review.service';
 import { JobReviewOperation, JobReviewOperationSchema } from './job-review-operation.model';
+import { NotificationModule } from '../notification/notification.module';
 
 @Module({
   imports: [
@@ -30,7 +31,8 @@ import { JobReviewOperation, JobReviewOperationSchema } from './job-review-opera
     forwardRef(() => SOWModule),
     ActivityModule,
     JobVersionModule,
-    KeycloakModule
+    KeycloakModule,
+    forwardRef(() => NotificationModule)
   ],
   providers: [JobService, JobResolver, JobReviewService, CreateJobPipe, CommentService, JobAttachmentsService],
   exports: [JobService, JobAttachmentsService]
