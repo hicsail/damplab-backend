@@ -4,6 +4,7 @@ import { CustomerActionRequired, Job, JobAttachment, JobDocument, JobState, Cust
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
+import { ownedJobsFilter } from './client-email';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder, JobArchiveFilter, JobScope, JobsForViewerInput } from './dto/jobs-query.dto';
@@ -297,7 +298,7 @@ export class JobService {
   }
 
   async findOwnJobsPaginated(sub: string, email: string, input: OwnJobsInput): Promise<OwnJobsResult> {
-    const baseMatch = { $or: [{ sub }, { clientEmail: email }] };
+    const baseMatch = ownedJobsFilter(sub, email);
     const { items, totalCount } = await this.runJobsPipeline(baseMatch, input);
     return { items, totalCount };
   }
@@ -314,12 +315,14 @@ export class JobService {
    * allowed to ask for and hands the answer down; this method does not re-derive
    * it, so there is exactly one place the "forced to your own jobs" rule lives.
    */
-  async findJobsForViewer(input: JobsForViewerInput, resolved: { scope: JobScope; viewerSub: string; createdBySub?: string; assigneeId?: string }): Promise<JobsResult> {
-    const baseMatch: mongoose.FilterQuery<JobDocument> = {};
+  async findJobsForViewer(input: JobsForViewerInput, resolved: { scope: JobScope; viewerSub: string; viewerEmail?: string; createdBySub?: string; assigneeId?: string }): Promise<JobsResult> {
+    let baseMatch: mongoose.FilterQuery<JobDocument> = {};
     if (resolved.scope === JobScope.CREATED_BY_ME) {
-      baseMatch.sub = resolved.viewerSub;
+      // Not `{ sub }`: a job staff submitted for this person carries the staff
+      // member's sub, and `clientEmail` is the only thing tying it to them.
+      baseMatch = ownedJobsFilter(resolved.viewerSub, resolved.viewerEmail);
     } else if (resolved.createdBySub) {
-      baseMatch.sub = resolved.createdBySub;
+      baseMatch = { sub: resolved.createdBySub };
     }
 
     const workedBySub = resolved.scope === JobScope.WORKED_BY_ME ? resolved.viewerSub : resolved.assigneeId;

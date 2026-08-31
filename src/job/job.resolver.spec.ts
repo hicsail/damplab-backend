@@ -124,6 +124,16 @@ describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
     expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'CREATED_BY_ME', viewerSub: 'viewer-1' }));
   });
 
+  it("passes the viewer's email, so staff-submitted jobs reach the client named on them", async () => {
+    // The regression this pins: `jobsForViewer` was added alongside the existing
+    // `ownJobs` and inherited only half of it. `ownJobs` had already learned to
+    // match `clientEmail`; the new path forwarded `sub` alone, so a client's
+    // dashboard silently dropped every job staff had submitted for them.
+    const { resolver, findJobsForViewer } = harness();
+    await resolver.jobsForViewer({ scope: 'ALL' } as any, viewer([]));
+    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ viewerEmail: 'v@example.org' }));
+  });
+
   it("drops a client's attempt to name someone else as the creator", async () => {
     // The interesting attack: not asking for ALL, but asking for one specific
     // other person's jobs.

@@ -3,6 +3,7 @@ import { Job, JobState } from './job.model';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { BadRequestException, Injectable, PipeTransform, Scope } from '@nestjs/common';
 import { JobService } from './job.service';
+import { normalizeClientEmail } from './client-email';
 
 @InputType()
 // CreateJobInput is what the user supplies, and what the CreateJobPipe receives.
@@ -72,7 +73,10 @@ export class CreateJobPipe implements PipeTransform<CreateJobInput, Promise<Crea
 
   async transform(value: CreateJobInput): Promise<CreateJobPreProcessed> {
     const workflows = await Promise.all(value.workflows.map((workflow) => this.workflowPipe.transform(workflow)));
-    return { ...value, workflows, state: JobState.SUBMITTED };
+    // Normalised here rather than in the resolver: the pipe is the one seam every
+    // createJob call passes through, and the resolver rebuilds its payload field
+    // by field, so a value normalised there is one edit away from being dropped.
+    return { ...value, clientEmail: normalizeClientEmail(value.clientEmail), workflows, state: JobState.SUBMITTED };
   }
 }
 

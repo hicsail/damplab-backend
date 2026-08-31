@@ -483,7 +483,10 @@ export class SOWService {
       // title, and a second copy of that string here is exactly the divergence the
       // document rewrite exists to prevent.
       clientName: (job as any).clientDisplayName || job.username || job.name || 'Client',
-      clientEmail: job.email,
+      // clientEmail before email, for the same reason clientDisplayName comes
+      // before username above: on a staff-submitted job both `email` and
+      // `username` describe the technician, not the customer the SOW is for.
+      clientEmail: (job as any).clientEmail || job.email,
       clientInstitution: job.institute,
       // Deliberately not job.institute: a job has no address field, and copying
       // the institute here printed it twice in the parties block.
