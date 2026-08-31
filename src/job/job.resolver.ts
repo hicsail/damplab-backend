@@ -268,7 +268,7 @@ export class JobResolver {
       message: `Job "${created.name}" was submitted`,
       jobId: String(created._id),
       actorSub: user.sub,
-      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined
     });
 
     return created;

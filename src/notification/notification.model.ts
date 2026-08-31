@@ -52,10 +52,7 @@ export const NotificationEntitySchema = SchemaFactory.createForClass(Notificatio
 
 NotificationEntitySchema.index({ recipientSub: 1, createdAt: -1 });
 NotificationEntitySchema.index({ recipientSub: 1, readAt: 1 });
-NotificationEntitySchema.index(
-  { operationId: 1 },
-  { unique: true, partialFilterExpression: { operationId: { $type: 'string' } } }
-);
+NotificationEntitySchema.index({ operationId: 1 }, { unique: true, partialFilterExpression: { operationId: { $type: 'string' } } });
 
 @ObjectType()
 export class Notification {

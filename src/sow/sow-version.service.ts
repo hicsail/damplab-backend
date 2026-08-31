@@ -564,7 +564,7 @@ export class SowVersionService {
         sowId: version.sowId,
         actorSub: version.createdBy,
         actorDisplayName: version.createdByName,
-        operationId: version.activityOperationId,
+        operationId: version.activityOperationId
       });
 
       const deliveredAt = new Date();

@@ -28,7 +28,7 @@ export class NotificationService {
     @InjectModel(NotificationEntity.name)
     private readonly notificationModel: Model<NotificationEntityDocument>,
     @InjectModel(NotificationPreferencesEntity.name)
-    private readonly preferencesModel: Model<NotificationPreferencesDocument>,
+    private readonly preferencesModel: Model<NotificationPreferencesDocument>
   ) {}
 
   async create(input: CreateNotificationInput): Promise<NotificationEntity> {
@@ -42,7 +42,7 @@ export class NotificationService {
       jobId: input.jobId ?? undefined,
       sowId: input.sowId ?? undefined,
       actorDisplayName: input.actorDisplayName ?? undefined,
-      operationId: input.operationId ?? undefined,
+      operationId: input.operationId ?? undefined
     });
   }
 
@@ -61,12 +61,7 @@ export class NotificationService {
   async listForUser(recipientSub: string, limit?: number, offset?: number): Promise<NotificationEntity[]> {
     const l = Math.min(MAX_LIMIT, Math.max(1, limit ?? DEFAULT_LIMIT));
     const s = Math.max(0, offset ?? 0);
-    return this.notificationModel
-      .find({ recipientSub })
-      .sort({ createdAt: -1 })
-      .skip(s)
-      .limit(l)
-      .exec();
+    return this.notificationModel.find({ recipientSub }).sort({ createdAt: -1 }).skip(s).limit(l).exec();
   }
 
   async unreadCount(recipientSub: string): Promise<number> {
@@ -74,48 +69,29 @@ export class NotificationService {
   }
 
   async markRead(notificationId: string, recipientSub: string): Promise<NotificationEntity | null> {
-    return this.notificationModel
-      .findOneAndUpdate(
-        { _id: notificationId, recipientSub },
-        { $set: { readAt: new Date() } },
-        { new: true },
-      )
-      .exec();
+    return this.notificationModel.findOneAndUpdate({ _id: notificationId, recipientSub }, { $set: { readAt: new Date() } }, { new: true }).exec();
   }
 
   async markAllRead(recipientSub: string): Promise<number> {
-    const result = await this.notificationModel
-      .updateMany(
-        { recipientSub, readAt: null },
-        { $set: { readAt: new Date() } },
-      )
-      .exec();
+    const result = await this.notificationModel.updateMany({ recipientSub, readAt: null }, { $set: { readAt: new Date() } }).exec();
     return result.modifiedCount;
   }
 
   async markEmailSent(notificationId: string): Promise<void> {
-    await this.notificationModel
-      .updateOne({ _id: notificationId }, { $set: { emailSent: true, emailSentAt: new Date() } })
-      .exec();
+    await this.notificationModel.updateOne({ _id: notificationId }, { $set: { emailSent: true, emailSentAt: new Date() } }).exec();
   }
 
   async getPreferences(userSub: string): Promise<NotificationPreferencesEntity> {
     const doc = await this.preferencesModel.findOne({ userSub }).exec();
-    return doc ?? { userSub, emailDisabledEventTypes: [], inAppDisabledEventTypes: [] } as NotificationPreferencesEntity;
+    return doc ?? ({ userSub, emailDisabledEventTypes: [], inAppDisabledEventTypes: [] } as NotificationPreferencesEntity);
   }
 
-  async updatePreferences(
-    userSub: string,
-    emailDisabledEventTypes?: string[],
-    inAppDisabledEventTypes?: string[],
-  ): Promise<NotificationPreferencesEntity> {
+  async updatePreferences(userSub: string, emailDisabledEventTypes?: string[], inAppDisabledEventTypes?: string[]): Promise<NotificationPreferencesEntity> {
     const update: Record<string, unknown> = {};
     if (emailDisabledEventTypes !== undefined) update.emailDisabledEventTypes = emailDisabledEventTypes;
     if (inAppDisabledEventTypes !== undefined) update.inAppDisabledEventTypes = inAppDisabledEventTypes;
 
-    const doc = await this.preferencesModel
-      .findOneAndUpdate({ userSub }, { $set: update }, { upsert: true, new: true })
-      .exec();
+    const doc = await this.preferencesModel.findOneAndUpdate({ userSub }, { $set: update }, { upsert: true, new: true }).exec();
     return doc!;
   }
 }

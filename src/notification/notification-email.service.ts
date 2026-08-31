@@ -53,10 +53,10 @@ export class NotificationEmailService {
         method: 'POST',
         headers: {
           Authorization: `Basic ${Buffer.from(`api:${this.apiKey}`).toString('base64')}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/x-www-form-urlencoded'
         },
         body: body.toString(),
-        signal: controller.signal,
+        signal: controller.signal
       });
 
       if (!res.ok) {
@@ -83,7 +83,9 @@ export class NotificationEmailService {
   </div>
   <h3 style="margin: 0 0 8px;">${this.escapeHtml(input.title)}</h3>
   <p style="margin: 0 0 24px; line-height: 1.6;">${this.escapeHtml(input.message)}</p>
-  <a href="${this.escapeHtml(linkUrl)}" style="display: inline-block; padding: 12px 24px; background: #1565c0; color: #fff; text-decoration: none; border-radius: 4px; font-weight: 500;">View in DampLab</a>
+  <a href="${this.escapeHtml(
+    linkUrl
+  )}" style="display: inline-block; padding: 12px 24px; background: #1565c0; color: #fff; text-decoration: none; border-radius: 4px; font-weight: 500;">View in DampLab</a>
   <hr style="margin: 32px 0 16px; border: none; border-top: 1px solid #e0e0e0;">
   <p style="font-size: 12px; color: #999;">You received this email because of activity on DampLab Canvas. You can manage your notification preferences in the app.</p>
 </body>
@@ -91,10 +93,6 @@ export class NotificationEmailService {
   }
 
   private escapeHtml(str: string): string {
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
 }

@@ -35,7 +35,7 @@ export class NotificationDispatchService {
     private readonly emailService: NotificationEmailService,
     @Inject(forwardRef(() => JobService))
     private readonly jobService: JobService,
-    private readonly keycloakService: KeycloakService,
+    private readonly keycloakService: KeycloakService
   ) {}
 
   /**
@@ -58,9 +58,7 @@ export class NotificationDispatchService {
       const recipients = await this.resolveRecipients(config.recipients, input.jobId);
 
       // Exclude the actor if configured.
-      const filtered = config.excludeActor && input.actorSub
-        ? recipients.filter((r) => r.sub !== input.actorSub)
-        : recipients;
+      const filtered = config.excludeActor && input.actorSub ? recipients.filter((r) => r.sub !== input.actorSub) : recipients;
 
       // Deduplicate by sub.
       const seen = new Set<string>();
@@ -96,7 +94,7 @@ export class NotificationDispatchService {
                     jobId: input.jobId,
                     sowId: input.sowId,
                     actorDisplayName: input.actorDisplayName,
-                    operationId: opId,
+                    operationId: opId
                   })
                 : await this.notificationService.create({
                     recipientSub: recipient.sub,
@@ -107,7 +105,7 @@ export class NotificationDispatchService {
                     link,
                     jobId: input.jobId,
                     sowId: input.sowId,
-                    actorDisplayName: input.actorDisplayName,
+                    actorDisplayName: input.actorDisplayName
                   });
             }
 
@@ -120,7 +118,7 @@ export class NotificationDispatchService {
                   subject: `[DampLab] ${input.title}`,
                   title: input.title,
                   message: input.message,
-                  link,
+                  link
                 });
                 // Mark the notification doc as email-sent.
                 if (notificationDoc?._id) {
@@ -131,7 +129,7 @@ export class NotificationDispatchService {
           } catch (err: any) {
             this.logger.warn(`Failed to notify ${recipient.sub}: ${err?.message}`);
           }
-        }),
+        })
       );
 
       this.logger.log(`Dispatched "${input.eventType}" to ${unique.length} recipient(s)`);
@@ -153,7 +151,7 @@ export class NotificationDispatchService {
           if (job.sub) {
             recipients.push({
               sub: job.sub,
-              email: job.email ?? undefined,
+              email: job.email ?? undefined
             });
           }
           if (job.clientEmail) {
@@ -162,7 +160,7 @@ export class NotificationDispatchService {
             // to ensure they receive at least an email notification.
             recipients.push({
               sub: `email:${job.clientEmail}`,
-              email: job.clientEmail,
+              email: job.clientEmail
             });
           }
           break;
@@ -189,7 +187,7 @@ export class NotificationDispatchService {
       const recipients = members.map((m) => ({ sub: m.id, email: undefined }));
       this.staffCache = {
         members: recipients,
-        expiresAt: now + NotificationDispatchService.STAFF_CACHE_TTL_MS,
+        expiresAt: now + NotificationDispatchService.STAFF_CACHE_TTL_MS
       };
       return recipients;
     } catch (err: any) {

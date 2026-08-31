@@ -13,17 +13,12 @@ import { KeycloakModule } from '../keycloak/keycloak.module';
   imports: [
     MongooseModule.forFeature([
       { name: NotificationEntity.name, schema: NotificationEntitySchema },
-      { name: NotificationPreferencesEntity.name, schema: NotificationPreferencesSchema },
+      { name: NotificationPreferencesEntity.name, schema: NotificationPreferencesSchema }
     ]),
     forwardRef(() => JobModule),
-    KeycloakModule,
+    KeycloakModule
   ],
-  providers: [
-    NotificationService,
-    NotificationResolver,
-    NotificationDispatchService,
-    NotificationEmailService,
-  ],
-  exports: [NotificationDispatchService],
+  providers: [NotificationService, NotificationResolver, NotificationDispatchService, NotificationEmailService],
+  exports: [NotificationDispatchService]
 })
 export class NotificationModule {}

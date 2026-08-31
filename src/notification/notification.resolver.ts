@@ -16,12 +16,9 @@ export class NotificationResolver {
   async myNotifications(
     @CurrentUser() user: User,
     @Args('limit', { type: () => Int, nullable: true }) limit?: number,
-    @Args('offset', { type: () => Int, nullable: true }) offset?: number,
+    @Args('offset', { type: () => Int, nullable: true }) offset?: number
   ): Promise<NotificationPage> {
-    const [items, unreadCount] = await Promise.all([
-      this.notificationService.listForUser(user.sub, limit, offset),
-      this.notificationService.unreadCount(user.sub),
-    ]);
+    const [items, unreadCount] = await Promise.all([this.notificationService.listForUser(user.sub, limit, offset), this.notificationService.unreadCount(user.sub)]);
     return { items: items as any[], unreadCount };
   }
 
@@ -36,10 +33,7 @@ export class NotificationResolver {
   }
 
   @Mutation(() => Notification, { nullable: true, description: 'Mark a single notification as read.' })
-  async markNotificationRead(
-    @CurrentUser() user: User,
-    @Args('id') id: string,
-  ): Promise<Notification | null> {
+  async markNotificationRead(@CurrentUser() user: User, @Args('id') id: string): Promise<Notification | null> {
     return this.notificationService.markRead(id, user.sub) as any;
   }
 
@@ -49,14 +43,7 @@ export class NotificationResolver {
   }
 
   @Mutation(() => NotificationPreferences, { description: 'Update notification preferences.' })
-  async updateNotificationPreferences(
-    @CurrentUser() user: User,
-    @Args('input') input: UpdateNotificationPreferencesInput,
-  ): Promise<NotificationPreferences> {
-    return this.notificationService.updatePreferences(
-      user.sub,
-      input.emailDisabledEventTypes,
-      input.inAppDisabledEventTypes,
-    );
+  async updateNotificationPreferences(@CurrentUser() user: User, @Args('input') input: UpdateNotificationPreferencesInput): Promise<NotificationPreferences> {
+    return this.notificationService.updatePreferences(user.sub, input.emailDisabledEventTypes, input.inAppDisabledEventTypes);
   }
 }
