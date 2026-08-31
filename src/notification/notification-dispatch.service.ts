@@ -184,7 +184,7 @@ export class NotificationDispatchService {
 
     try {
       const members = await this.keycloakService.getLabStaffGroupMembers();
-      const recipients = members.map((m) => ({ sub: m.id, email: undefined }));
+      const recipients = members.map((m) => ({ sub: m.id, email: m.email }));
       this.staffCache = {
         members: recipients,
         expiresAt: now + NotificationDispatchService.STAFF_CACHE_TTL_MS

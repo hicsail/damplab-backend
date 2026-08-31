@@ -13,6 +13,7 @@ import { AccessTier, TIER_GROUP, TIER_ROLE, deriveAccessTierFromGroups, isAccess
 export interface LabStaffMember {
   id: string;
   displayName: string;
+  email?: string;
 }
 
 export interface KeycloakUserCustomerManagementRow {
@@ -454,7 +455,7 @@ export class KeycloakService {
         for (const u of (await res.json()) as KeycloakUser[]) {
           if (byId.has(u.id)) continue;
           const displayName = [u.firstName, u.lastName].filter(Boolean).join(' ')?.trim() || u.username || u.id;
-          byId.set(u.id, { id: u.id, displayName });
+          byId.set(u.id, { id: u.id, displayName, email: u.email });
         }
       }
       const members = [...byId.values()];
