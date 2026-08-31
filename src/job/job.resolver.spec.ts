@@ -138,8 +138,8 @@ describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
     // The interesting attack: not asking for ALL, but asking for one specific
     // other person's jobs.
     const { resolver, findJobsForViewer } = harness();
-    await resolver.jobsForViewer({ scope: 'ALL', createdBySub: 'someone-else' } as any, viewer([]));
-    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'CREATED_BY_ME', createdBySub: undefined, assigneeId: undefined }));
+    await resolver.jobsForViewer({ scope: 'ALL', createdBySub: 'someone-else', createdByClient: 'someone@else.org' } as any, viewer([]));
+    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'CREATED_BY_ME', createdBySub: undefined, createdByClient: undefined, assigneeId: undefined }));
   });
 
   it('does not error on an over-broad request — it narrows it', async () => {
@@ -151,8 +151,8 @@ describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
 
   it('honours ALL and both filters for a caller holding jobs:view-all', async () => {
     const { resolver, findJobsForViewer } = harness();
-    await resolver.jobsForViewer({ scope: 'ALL', createdBySub: 'client-9', assigneeId: 'tech-3' } as any, viewer([Role.Technician]));
-    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'ALL', createdBySub: 'client-9', assigneeId: 'tech-3' }));
+    await resolver.jobsForViewer({ scope: 'ALL', createdBySub: 'client-9', createdByClient: 'jane@bu.edu', assigneeId: 'tech-3' } as any, viewer([Role.Technician]));
+    expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'ALL', createdBySub: 'client-9', createdByClient: 'jane@bu.edu', assigneeId: 'tech-3' }));
   });
 
   it('defaults a staff caller to ALL and a client to their own, with no scope sent', async () => {

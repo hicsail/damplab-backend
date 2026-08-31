@@ -4,7 +4,7 @@ import { CustomerActionRequired, Job, JobAttachment, JobDocument, JobState, Cust
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
-import { ownedJobsFilter } from './client-email';
+import { effectiveClientEmailExpr, normalizeClientEmail, ownedJobsFilter } from './client-email';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder, JobArchiveFilter, JobScope, JobsForViewerInput } from './dto/jobs-query.dto';
@@ -184,7 +184,10 @@ export class JobService {
   private buildSearchMatch(search: string): mongoose.FilterQuery<JobDocument> {
     const esc = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const re = new RegExp(esc, 'i');
-    const or: mongoose.FilterQuery<JobDocument>[] = [{ name: re }, { username: re }, { email: re }, { institute: re }];
+    // clientDisplayName and clientEmail as well as username and email: on a job
+    // staff submitted for someone, the latter pair is the technician's, so a
+    // search over those alone matches the job by everyone except its client.
+    const or: mongoose.FilterQuery<JobDocument>[] = [{ name: re }, { username: re }, { email: re }, { institute: re }, { clientDisplayName: re }, { clientEmail: re }];
     if (/^[a-fA-F0-9]{24}$/.test(search)) {
       try {
         or.push({ _id: new mongoose.Types.ObjectId(search) });
@@ -315,12 +318,17 @@ export class JobService {
    * allowed to ask for and hands the answer down; this method does not re-derive
    * it, so there is exactly one place the "forced to your own jobs" rule lives.
    */
-  async findJobsForViewer(input: JobsForViewerInput, resolved: { scope: JobScope; viewerSub: string; viewerEmail?: string; createdBySub?: string; assigneeId?: string }): Promise<JobsResult> {
+  async findJobsForViewer(
+    input: JobsForViewerInput,
+    resolved: { scope: JobScope; viewerSub: string; viewerEmail?: string; createdBySub?: string; createdByClient?: string; assigneeId?: string }
+  ): Promise<JobsResult> {
     let baseMatch: mongoose.FilterQuery<JobDocument> = {};
     if (resolved.scope === JobScope.CREATED_BY_ME) {
       // Not `{ sub }`: a job staff submitted for this person carries the staff
       // member's sub, and `clientEmail` is the only thing tying it to them.
       baseMatch = ownedJobsFilter(resolved.viewerSub, resolved.viewerEmail);
+    } else if (resolved.createdByClient) {
+      baseMatch = { $expr: { $eq: [effectiveClientEmailExpr(), normalizeClientEmail(resolved.createdByClient) ?? ''] } };
     } else if (resolved.createdBySub) {
       baseMatch = { sub: resolved.createdBySub };
     }
@@ -335,17 +343,32 @@ export class JobService {
    * filter. Aggregated over the jobs collection rather than fetched from Keycloak:
    * the filter should offer exactly the clients who actually have jobs.
    */
-  async findDistinctJobClients(): Promise<{ sub: string; displayName: string }[]> {
+  async findDistinctJobClients(): Promise<{ clientKey: string; sub: string; displayName: string }[]> {
     const rows = await this.jobModel
       .aggregate([
-        { $match: { sub: { $nin: [null, ''] } } },
-        { $group: { _id: '$sub', username: { $first: '$username' }, email: { $first: '$email' }, clientDisplayName: { $first: '$clientDisplayName' } } },
-        { $sort: { username: 1 } }
+        { $addFields: { _clientKey: effectiveClientEmailExpr() } },
+        { $match: { _clientKey: { $nin: [null, ''] } } },
+        {
+          $group: {
+            _id: '$_clientKey',
+            // $max rather than $first: it ignores nulls, so one job carrying a
+            // display name is enough for the whole client to be labelled by it,
+            // whatever order the jobs come back in.
+            clientDisplayName: { $max: '$clientDisplayName' },
+            username: { $max: '$username' },
+            // Only from a job they submitted themselves — on a staff-submitted
+            // one `sub` is the technician's, and handing that back as the
+            // client's sub is the bug this grouping exists to avoid.
+            ownSub: { $max: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$clientEmail', ''] } }, 0] }, null, '$sub'] } }
+          }
+        },
+        { $sort: { _id: 1 } }
       ])
       .exec();
     return rows.map((row) => ({
-      sub: String(row._id),
-      displayName: row.clientDisplayName || row.username || row.email || String(row._id)
+      clientKey: String(row._id),
+      sub: row.ownSub ? String(row.ownSub) : '',
+      displayName: row.clientDisplayName || row.username || String(row._id)
     }));
   }
 

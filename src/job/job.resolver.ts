@@ -181,6 +181,7 @@ export class JobResolver {
       // nothing of the jobs a staff member entered on their behalf.
       viewerEmail: user.email,
       createdBySub: seesEveryJob ? requested.createdBySub : undefined,
+      createdByClient: seesEveryJob ? requested.createdByClient : undefined,
       assigneeId: seesEveryJob ? requested.assigneeId : undefined
     });
   }

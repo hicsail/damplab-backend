@@ -47,3 +47,20 @@ export function ownedJobsFilter(sub: string, email: string | null | undefined): 
   // ruled out as a needle.)
   return { $or: [{ sub }, { $expr: { $eq: [{ $toLower: { $trim: { input: '$clientEmail' } } }, normalized] } }] };
 }
+
+/**
+ * The address that identifies a job's *client*, as a Mongo expression.
+ *
+ * `clientEmail` when staff submitted on someone's behalf, otherwise the
+ * submitter's own `email`. Every job has one, which is what makes it usable as
+ * the identity the staff jobs page groups and filters by — `sub` cannot be, since
+ * a staff-submitted job carries the technician's sub and the client's appears
+ * nowhere on the document.
+ *
+ * Normalised the same way `normalizeClientEmail` normalises in JS, so grouping,
+ * filtering and the ownership checks all agree on who is who.
+ */
+export function effectiveClientEmailExpr(): Record<string, unknown> {
+  const raw = { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$clientEmail', ''] } }, 0] }, '$clientEmail', { $ifNull: ['$email', ''] }] };
+  return { $toLower: { $trim: { input: raw } } };
+}

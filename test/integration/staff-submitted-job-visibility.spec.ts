@@ -1,6 +1,7 @@
 import { ACTORS, gql, gqlError, resetDb, seedService, startTestApp, stopTestApp, TestApp, workflowInput } from './harness';
 import * as F from './sow-flow';
 import mongoose from 'mongoose';
+import { backfillSowClientEmail } from '../../src/sow/backfill-sow-client-email';
 
 /**
  * A job staff submit *on behalf of* a client must reach that client.
@@ -112,6 +113,135 @@ describe('jobs staff submitted for a client', () => {
   });
 
   /**
+   * Finding the job from the staff side.
+   *
+   * The client's name and email live in `clientDisplayName`/`clientEmail` on a
+   * staff-submitted job; `username` and `email` are the technician's. So a search
+   * that covers only the latter pair finds these jobs by everything except the
+   * one thing staff would actually type.
+   */
+  /**
+   * The staff-side client filter.
+   *
+   * Keyed on the client's *effective email* — the clientEmail staff recorded, or
+   * the submitter's own address when nobody submitted on their behalf. Keying on
+   * `sub` cannot work: a staff-submitted job carries the technician's sub and the
+   * client's sub appears nowhere on it. Email is the one identifier present on
+   * every job, and it merges a client's own submissions with the ones made for
+   * them instead of splitting them across two filter entries.
+   */
+  describe('the jobs page client filter', () => {
+    async function clients(): Promise<Array<{ clientKey: string; displayName: string }>> {
+      const data = await gql(ctx, 'staff', `query { jobClients { clientKey displayName } }`);
+      return data.jobClients;
+    }
+
+    async function idsFilteredToClient(clientKey: string): Promise<string[]> {
+      const data = await gql(ctx, 'staff', `query ($input: JobsForViewerInput) { jobsForViewer(input: $input) { items { id } } }`, { input: { scope: 'ALL', createdByClient: clientKey } });
+      return data.jobsForViewer.items.map((item: { id: string }) => item.id);
+    }
+
+    it('files a staff-submitted job under its client, not its submitter', async () => {
+      await staffSubmitsFor('client@bu.test');
+
+      expect(await clients()).toEqual([{ clientKey: 'client@bu.test', displayName: 'Cara Client' }]);
+    });
+
+    it('lists a client once when they have both their own job and one submitted for them', async () => {
+      await staffSubmitsFor('client@bu.test');
+      await F.createJob(ctx, 'customer', [workflowInput(serviceId)], 'Self-submitted');
+
+      const keys = (await clients()).map((client) => client.clientKey);
+      expect(keys).toEqual(['client@bu.test']);
+    });
+
+    it("filters to both of that client's jobs at once", async () => {
+      const staffJobId = await staffSubmitsFor('client@bu.test');
+      const ownJob = await F.createJob(ctx, 'customer', [workflowInput(serviceId)], 'Self-submitted');
+      const strangerJob = await F.createJob(ctx, 'otherCustomer', [workflowInput(serviceId)], 'Someone else');
+
+      const filtered = await idsFilteredToClient('client@bu.test');
+      // Length as well as membership: arrayContaining alone would pass a filter
+      // that had quietly stopped narrowing at all.
+      expect(filtered).toHaveLength(2);
+      expect(filtered).toEqual(expect.arrayContaining([staffJobId, ownJob.id]));
+      expect(filtered).not.toContain(strangerJob.id);
+    });
+
+    it('still honours the deprecated createdBySub filter', async () => {
+      const ownJob = await F.createJob(ctx, 'customer', [workflowInput(serviceId)], 'Self-submitted');
+      await F.createJob(ctx, 'otherCustomer', [workflowInput(serviceId)], 'Someone else');
+
+      const data = await gql(ctx, 'staff', `query ($input: JobsForViewerInput) { jobsForViewer(input: $input) { items { id } } }`, { input: { scope: 'ALL', createdBySub: ACTORS.customer.sub } });
+      expect(data.jobsForViewer.items.map((item: { id: string }) => item.id)).toEqual([ownJob.id]);
+    });
+
+    it('ignores a client filter from a caller who may not see every job', async () => {
+      const staffJobId = await staffSubmitsFor('client@bu.test');
+      await F.createJob(ctx, 'otherCustomer', [workflowInput(serviceId)], 'Someone else');
+
+      // A client naming another client must still get only their own jobs.
+      const data = await gql(ctx, 'customer', `query ($input: JobsForViewerInput) { jobsForViewer(input: $input) { items { id } } }`, { input: { scope: 'ALL', createdByClient: 'stranger@bu.test' } });
+      expect(data.jobsForViewer.items.map((item: { id: string }) => item.id)).toEqual([staffJobId]);
+    });
+  });
+
+  /**
+   * The correction script, against a real collection.
+   *
+   * The colocated unit spec drives it through an in-memory stand-in keyed by
+   * string, which cannot exercise the one piece of real-database behaviour the
+   * script depends on: SOW.jobId is a string, and jobs are keyed by ObjectId.
+   */
+  describe('backfilling SOWs written before the fix', () => {
+    it('repoints a SOW at the client and leaves an ordinary one alone', async () => {
+      const staffJobId = await staffSubmitsFor('client@bu.test');
+      await F.reviewJob(ctx, 'staff', staffJobId, 'ACCEPT', `op-accept-${staffJobId}`);
+      const staffSow = await F.createSowForJob(ctx, 'staff', staffJobId);
+
+      const ownJob = await F.createJob(ctx, 'customer', [workflowInput(serviceId)], 'Self-submitted');
+      await F.reviewJob(ctx, 'staff', ownJob.id, 'ACCEPT', `op-accept-${ownJob.id}`);
+      const ownSow = await F.createSowForJob(ctx, 'staff', ownJob.id);
+
+      // Put the staff SOW back the way createForJob used to leave it.
+      const sows = ctx.connection.collection('sows');
+      await sows.updateOne({ _id: new mongoose.Types.ObjectId(staffSow.id) }, { $set: { clientEmail: ACTORS.staff.email } });
+
+      const report = await backfillSowClientEmail(ctx.connection.db as any, { log: () => undefined });
+
+      expect(report.corrected).toBe(1);
+      expect(report.orphaned).toEqual([]);
+      expect((await sows.findOne({ _id: new mongoose.Types.ObjectId(staffSow.id) }))?.clientEmail).toBe('client@bu.test');
+      expect((await sows.findOne({ _id: new mongoose.Types.ObjectId(ownSow.id) }))?.clientEmail).toBe(ACTORS.customer.email);
+    });
+  });
+
+  describe('the staff jobs search', () => {
+    async function staffSearchIds(search: string): Promise<string[]> {
+      const data = await gql(ctx, 'staff', `query ($input: JobsForViewerInput) { jobsForViewer(input: $input) { items { id } } }`, { input: { scope: 'ALL', search } });
+      return data.jobsForViewer.items.map((item: { id: string }) => item.id);
+    }
+
+    it('finds a staff-submitted job by the client name on it', async () => {
+      const jobId = await staffSubmitsFor('client@bu.test');
+
+      expect(await staffSearchIds('Cara')).toContain(jobId);
+    });
+
+    it('finds it by the client email on it', async () => {
+      const jobId = await staffSubmitsFor('client@bu.test');
+
+      expect(await staffSearchIds('client@bu.test')).toContain(jobId);
+    });
+
+    it('still does not match jobs it should not', async () => {
+      const jobId = await staffSubmitsFor('client@bu.test');
+
+      expect(await staffSearchIds('Somebody Else')).not.toContain(jobId);
+    });
+  });
+
+  /**
    * Rows written before emails were normalised on the way in.
    *
    * Staging already holds jobs whose `clientEmail` is exactly what a staff member
@@ -156,5 +286,23 @@ describe('jobs staff submitted for a client', () => {
 
     const data = await gql(ctx, 'customer', `query ($id: ID!) { ownJobById(id: $id) { id } }`, { id: jobId });
     expect(data.ownJobById?.id).toBe(jobId);
+  });
+
+  it('serves clientEmail on both job reads, which the job header renders from', async () => {
+    // ClientView and TechnicianView decide whether to print "submitted on their
+    // behalf" from this field, so it has to be selectable on the customer's read
+    // and the staff one alike.
+    const jobId = await staffSubmitsFor('Client@BU.Test');
+
+    const asClient = await gql(ctx, 'customer', `query ($id: ID!) { ownJobById(id: $id) { clientEmail clientDisplayName username email institute } }`, { id: jobId });
+    const asStaff = await gql(ctx, 'staff', `query ($id: ID!) { jobById(id: $id) { clientEmail clientDisplayName username email institute } }`, { id: jobId });
+
+    expect(asClient.ownJobById.clientEmail).toBe('client@bu.test');
+    expect(asStaff.jobById.clientEmail).toBe('client@bu.test');
+    // The header names the client from these two and credits the submitter from
+    // the other two, so all four have to survive the round trip.
+    expect(asStaff.jobById.clientDisplayName).toBe('Cara Client');
+    expect(asStaff.jobById.username).toBe(ACTORS.staff.preferred_username);
+    expect(asStaff.jobById.email).toBe(ACTORS.staff.email);
   });
 });
