@@ -33,6 +33,7 @@ import { assertJobContractWritable } from './job-editing';
 import { KeycloakService } from '../keycloak/keycloak.service';
 import { RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
+import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -96,7 +97,8 @@ export class JobResolver {
     private readonly jobAttachmentsService: JobAttachmentsService,
     private readonly jobVersionService: JobVersionService,
     private readonly jobReviewService: JobReviewService,
-    private readonly keycloakService: KeycloakService
+    private readonly keycloakService: KeycloakService,
+    private readonly notificationDispatch: NotificationDispatchService
   ) {}
 
   /**
@@ -265,6 +267,16 @@ export class JobResolver {
       actorDisplayName: user.preferred_username ?? user.email ?? undefined,
       jobId: String(created._id)
     });
+
+    this.notificationDispatch.dispatch({
+      eventType: 'JOB_SUBMITTED',
+      title: 'New job submitted',
+      message: `Job "${created.name}" was submitted`,
+      jobId: String(created._id),
+      actorSub: user.sub,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined
+    });
+
     return created;
   }
 

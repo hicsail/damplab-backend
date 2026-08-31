@@ -214,7 +214,9 @@ describe('previewCalculatedValues — prose blocks', () => {
 
     const commentService: any = { createIdempotent: async () => undefined };
 
-    return new SowVersionService(versionModel, sowModel, sowService, presetService, activityService, jobVersionService, commentService);
+    const notificationDispatch: any = { dispatch: () => undefined };
+
+    return new SowVersionService(versionModel, sowModel, sowService, presetService, activityService, jobVersionService, commentService, notificationDispatch);
   }
 
   const valueFor = (rows: Array<{ key: string; calculatedValue: string }>, key: string): string | undefined => rows.find((r) => r.key === key)?.calculatedValue;

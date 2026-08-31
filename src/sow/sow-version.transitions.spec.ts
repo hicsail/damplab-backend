@@ -269,7 +269,9 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; l
     }
   };
 
-  const service = new (SowVersionService as any)(versionModel, sowModel, sowService, presetService, activityService, jobVersionService, commentService);
+  const notificationDispatch: any = { dispatch: jest.fn() };
+
+  const service = new (SowVersionService as any)(versionModel, sowModel, sowService, presetService, activityService, jobVersionService, commentService, notificationDispatch);
 
   return { service, sow, versions, job, jobVersions, activityEvents, comments, race };
 }

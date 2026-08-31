@@ -25,7 +25,7 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
     const jobVersionService: any = { saveWorkflows };
     const activityService: any = { createEvent: jest.fn(async () => undefined) };
     const sowService: any = { findByJobId: jest.fn(async () => null), syncServicesFromJobWorkflows: jest.fn(async () => undefined) };
-    const resolver = new JobResolver(jobService, {} as any, {} as any, activityService, {} as any, sowService, {} as any, jobVersionService, {} as any, {} as any);
+    const resolver = new JobResolver(jobService, {} as any, {} as any, activityService, {} as any, sowService, {} as any, jobVersionService, {} as any, {} as any, {} as any);
     return { resolver, saveWorkflows };
   }
 
@@ -67,6 +67,7 @@ describe('JobResolver.restoreJobVersion', () => {
       {} as any,
       { restoreVersion } as any,
       {} as any,
+      {} as any,
       {} as any
     );
 
@@ -89,6 +90,7 @@ describe('JobResolver.restoreJobVersion', () => {
       { syncServicesFromJobWorkflows } as any,
       {} as any,
       { restoreVersion } as any,
+      {} as any,
       {} as any,
       {} as any
     );
@@ -114,7 +116,7 @@ describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
   // these tests are actually about — is reachable.
   const harness = (): { resolver: JobResolver; findJobsForViewer: jest.Mock } => {
     const findJobsForViewer: jest.Mock = jest.fn().mockResolvedValue({ items: [], totalCount: 0 });
-    const resolver = new JobResolver({ findJobsForViewer } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    const resolver = new JobResolver({ findJobsForViewer } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     return { resolver, findJobsForViewer };
   };
 
