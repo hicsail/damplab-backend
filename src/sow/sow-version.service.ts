@@ -15,6 +15,7 @@ import { JobState } from '../job/job.model';
 import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
 import { JobVersionService } from '../job-version/job-version.service';
 import { ActivityService } from '../activity/activity.service';
+import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { CommentService } from '../comment/comment.service';
 import { CommentAuthorType } from '../comment/comment.model';
 
@@ -50,7 +51,8 @@ export class SowVersionService {
     private readonly presetService: SowTextPresetService,
     private readonly activityService: ActivityService,
     private readonly jobVersionService: JobVersionService,
-    @Inject(forwardRef(() => CommentService)) private readonly commentService: CommentService
+    @Inject(forwardRef(() => CommentService)) private readonly commentService: CommentService,
+    private readonly notificationDispatch: NotificationDispatchService
   ) {}
 
   /**
@@ -552,11 +554,37 @@ export class SowVersionService {
         sowId: version.sowId,
         sowVersionNumber: version.versionNumber
       });
+
+      const label = sow.sowNumber || String((sow as any)._id);
+      this.notificationDispatch.dispatch({
+        eventType: version.activityEventType,
+        title: this.notificationTitle(version.activityEventType, label),
+        message: this.activityMessage(version, sow),
+        jobId: sow.jobId,
+        sowId: version.sowId,
+        actorSub: version.createdBy,
+        actorDisplayName: version.createdByName,
+        operationId: version.activityOperationId
+      });
+
       const deliveredAt = new Date();
       await this.versionModel.updateOne({ _id: version._id }, { $set: { activityDeliveredAt: deliveredAt } }).exec();
       version.activityDeliveredAt = deliveredAt;
     } catch (error: any) {
       this.logger.warn(`Activity delivery remains pending for ${version.activityOperationId}: ${error?.message ?? error}`);
+    }
+  }
+
+  private notificationTitle(eventType: string, sowLabel: string): string {
+    switch (eventType) {
+      case 'SOW_SENT':
+        return `SOW "${sowLabel}" ready for signature`;
+      case 'SOW_SIGNED':
+        return `SOW "${sowLabel}" signed by customer`;
+      case 'SOW_FINALIZED':
+        return `SOW "${sowLabel}" finalized`;
+      default:
+        return `SOW "${sowLabel}" updated`;
     }
   }
 
