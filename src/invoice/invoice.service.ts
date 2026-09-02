@@ -32,6 +32,11 @@ export class InvoiceService {
     return this.invoiceModel.find({ jobId }).sort({ createdAt: -1 }).exec();
   }
 
+  /** How many invoices a job has. The jobs list asks this per row, so it never loads the documents. */
+  async countByJobId(jobId: string): Promise<number> {
+    return this.invoiceModel.countDocuments({ jobId }).exec();
+  }
+
   async createForJob(input: CreateInvoiceInput, user: User): Promise<Invoice> {
     const roles = user.realm_access?.roles ?? [];
     const isStaff = roles.includes(Role.DamplabStaff);
