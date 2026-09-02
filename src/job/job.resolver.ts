@@ -31,7 +31,7 @@ import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 import { assertJobContractWritable } from './job-editing';
 import { KeycloakService } from '../keycloak/keycloak.service';
-import { RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
+import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 
@@ -543,6 +543,36 @@ export class JobResolver {
   })
   async respondToJobReview(@Args('input', { type: () => RespondToJobReviewInput }) input: RespondToJobReviewInput, @CurrentUser() user: User): Promise<Job> {
     return this.jobReviewService.respondToJobReview(input, {
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? user.sub
+    });
+  }
+
+  @Mutation(() => Job, {
+    description: 'Job-owner-only. Decline the workflow the lab asked you to approve, with a required reason posted to the comment thread. Returns the job to the lab; it is not terminal.'
+  })
+  async rejectJobReview(@Args('input', { type: () => RejectJobReviewInput }) input: RejectJobReviewInput, @CurrentUser() user: User): Promise<Job> {
+    return this.jobReviewService.rejectJobReview(input, {
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? user.sub
+    });
+  }
+
+  @Mutation(() => Job, {
+    description: 'Job-owner-only. Cancel the job outright, with a required reason. Allowed until the Statement of Work is countersigned; any SOW still standing is cancelled with it.'
+  })
+  async cancelJob(@Args('input', { type: () => CancelJobInput }) input: CancelJobInput, @CurrentUser() user: User): Promise<Job> {
+    return this.jobReviewService.cancelJob(input, {
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? user.sub
+    });
+  }
+
+  @Mutation(() => Job, {
+    description: "Job-owner-only. Ask the lab for access to edit this job's workflow. Grants nothing on its own — staff open the editor with reviewJob(REQUEST_EDITS). Allowed until the SOW is signed."
+  })
+  async requestJobEditAccess(@Args('input', { type: () => RequestJobEditAccessInput }) input: RequestJobEditAccessInput, @CurrentUser() user: User): Promise<Job> {
+    return this.jobReviewService.requestJobEditAccess(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub
     });

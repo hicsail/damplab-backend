@@ -171,3 +171,53 @@ describe('calculateServiceCost — customer category pricing', () => {
     expect(calculateServiceCost(svc, [], undefined, CustomerCategory.INTERNAL_CUSTOMERS)).toBe(100);
   });
 });
+
+/**
+ * The $0 line.
+ *
+ * A parameter-priced service has no flat price to quote, so its cost is computed
+ * from the values the customer picked. When those values do not reach the
+ * pricing call — the SOW's workflow sync rebuilds its service lines from the
+ * job's nodes, and a node whose formData is missing arrives with none — the
+ * computation has nothing to work from. It used to answer 0, which billed
+ * nothing and discarded the figure the canvas had already computed.
+ */
+describe('calculateServiceCostBreakdown — a parameter-priced line with no values to price', () => {
+  const parameterService = {
+    pricingMode: ServicePricingMode.PARAMETER,
+    parameters: [
+      { id: 'kit', name: 'Kit', type: 'dropdown', options: [{ id: 'standard', name: 'Standard', price: 50 }] },
+      { id: 'samples', name: 'Samples', type: 'number', isPriceMultiplier: true }
+    ]
+  } as unknown as DampLabService;
+
+  it('prices from the selected values when it has them', () => {
+    const formData = [
+      { id: 'kit', value: 'standard' },
+      { id: 'samples', value: 4 }
+    ];
+    expect(calculateServiceCostBreakdown(parameterService, formData, 999)).toEqual({ unitCost: 50, multiplier: 4, cost: 200 });
+  });
+
+  it.each([
+    ['an empty array', []],
+    ['undefined', undefined],
+    ['null', null]
+  ])('falls back to the price it was handed when formData is %s, rather than billing nothing', (_label, formData) => {
+    expect(calculateServiceCostBreakdown(parameterService, formData, 200)).toEqual({ unitCost: 200, multiplier: 1, cost: 200 });
+  });
+
+  it('still answers 0 when there is no fallback either — that is genuinely unknown, not free', () => {
+    expect(calculateServiceCostBreakdown(parameterService, [], undefined)).toEqual({ unitCost: 0, multiplier: 1, cost: 0 });
+  });
+
+  it('keeps a genuine zero that the selected values actually produce', () => {
+    // The distinction the fallback is keyed on: values were supplied and they
+    // priced to nothing. A fallback here would overwrite a real price.
+    const freeOption = {
+      pricingMode: ServicePricingMode.PARAMETER,
+      parameters: [{ id: 'kit', name: 'Kit', type: 'dropdown', options: [{ id: 'free', name: 'Free', price: 0 }] }]
+    } as unknown as DampLabService;
+    expect(calculateServiceCostBreakdown(freeOption, [{ id: 'kit', value: 'free' }], 500)).toEqual({ unitCost: 0, multiplier: 1, cost: 0 });
+  });
+});

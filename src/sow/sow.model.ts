@@ -64,6 +64,14 @@ export class SowActionGate {
   @Field(() => [DocumentBlocker], { description: 'What stands between the active SENT version and a customer signature, in repair order.' })
   signBlockers: DocumentBlocker[];
 
+  @Field({ description: 'True when the customer can decline to sign the active SENT version.' })
+  canDecline: boolean;
+
+  @Field(() => [DocumentBlocker], {
+    description: 'What stands between the active version and a customer declining it. Only ever AWAITING_SENT_VERSION — a document out for signature can always be refused.'
+  })
+  declineBlockers: DocumentBlocker[];
+
   @Field({ description: 'True when nothing blocks countersigning the signed version in force.' })
   canCountersign: boolean;
 

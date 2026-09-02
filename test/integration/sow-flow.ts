@@ -244,3 +244,77 @@ export async function changeJobCustomerCategory(ctx: TestApp, actor: ActorName, 
 export async function saveJobWorkflowsError(ctx: TestApp, actor: ActorName, jobId: string, workflows: Record<string, unknown>[], note: string): Promise<string> {
   return gqlError(ctx, actor, `mutation ($input: SaveJobWorkflowsInput!) { saveJobWorkflows(input: $input) { id } }`, { input: { jobId, note, workflows } });
 }
+
+// --- Customer-initiated commands -------------------------------------------
+
+export async function rejectJobReview(ctx: TestApp, actor: ActorName, jobId: string, operationId: string, reason: string): Promise<any> {
+  const data = await gql(ctx, actor, `mutation ($input: RejectJobReviewInput!) { rejectJobReview(input: $input) { id state customerActionRequired } }`, { input: { operationId, jobId, reason } });
+  return data.rejectJobReview;
+}
+
+export async function rejectJobReviewError(ctx: TestApp, actor: ActorName, jobId: string, operationId: string, reason: string): Promise<string> {
+  return gqlError(ctx, actor, `mutation ($input: RejectJobReviewInput!) { rejectJobReview(input: $input) { id state } }`, { input: { operationId, jobId, reason } });
+}
+
+export async function cancelJob(ctx: TestApp, actor: ActorName, jobId: string, operationId: string, reason: string): Promise<any> {
+  const data = await gql(ctx, actor, `mutation ($input: CancelJobInput!) { cancelJob(input: $input) { id state } }`, { input: { operationId, jobId, reason } });
+  return data.cancelJob;
+}
+
+export async function cancelJobError(ctx: TestApp, actor: ActorName, jobId: string, operationId: string, reason: string): Promise<string> {
+  return gqlError(ctx, actor, `mutation ($input: CancelJobInput!) { cancelJob(input: $input) { id state } }`, { input: { operationId, jobId, reason } });
+}
+
+export async function requestJobEditAccess(ctx: TestApp, actor: ActorName, jobId: string, operationId: string, message?: string): Promise<any> {
+  const data = await gql(ctx, actor, `mutation ($input: RequestJobEditAccessInput!) { requestJobEditAccess(input: $input) { id state editAccessRequestedAt } }`, {
+    input: { operationId, jobId, message }
+  });
+  return data.requestJobEditAccess;
+}
+
+export async function requestJobEditAccessError(ctx: TestApp, actor: ActorName, jobId: string, operationId: string, message?: string): Promise<string> {
+  return gqlError(ctx, actor, `mutation ($input: RequestJobEditAccessInput!) { requestJobEditAccess(input: $input) { id state } }`, { input: { operationId, jobId, message } });
+}
+
+export async function declineSow(ctx: TestApp, actor: ActorName, sowId: string, reason: string): Promise<any> {
+  const data = await gql(ctx, actor, `mutation ($sowId: ID!, $reason: String!) { declineSow(sowId: $sowId, reason: $reason) { id status currentVersionNumber activeVersionNumber } }`, {
+    sowId,
+    reason
+  });
+  return data.declineSow;
+}
+
+export async function declineSowError(ctx: TestApp, actor: ActorName, sowId: string, reason: string): Promise<string> {
+  return gqlError(ctx, actor, `mutation ($sowId: ID!, $reason: String!) { declineSow(sowId: $sowId, reason: $reason) { id status } }`, { sowId, reason });
+}
+
+/** The customer-visible comment thread — where every one of these commands has to land. */
+export async function jobComments(ctx: TestApp, actor: ActorName, jobId: string): Promise<Array<{ content: string; authorType: string }>> {
+  const data = await gql(ctx, actor, `query ($jobId: ID!) { commentsByJobId(jobId: $jobId) { content author authorType isInternal } }`, { jobId });
+  return data.commentsByJobId;
+}
+
+/**
+ * Reading a job as either party.
+ *
+ * `jobById` carries jobs:view-all, so a customer has to come in through
+ * `ownJobById` — the same split the two job pages use.
+ */
+function jobQuery(actor: ActorName, selection: string): { field: string; query: string } {
+  const field = actor === 'staff' ? 'jobById' : 'ownJobById';
+  return { field, query: `query ($id: ID!) { ${field}(id: $id) { ${selection} } }` };
+}
+
+/** The live graph, as the job actually stands now — what a restore has to move. */
+export async function jobWorkflowNodeIds(ctx: TestApp, actor: ActorName, jobId: string): Promise<string[]> {
+  const { field, query } = jobQuery(actor, 'workflows { nodes { id } }');
+  const data = await gql(ctx, actor, query, { id: jobId });
+  return (data[field].workflows ?? []).flatMap((w: any) => (w.nodes ?? []).map((n: any) => String(n.id)));
+}
+
+/** Content versions only, newest last, with the node ids each one froze. */
+export async function jobContentVersions(ctx: TestApp, actor: ActorName, jobId: string): Promise<any[]> {
+  const { field, query } = jobQuery(actor, 'versions { versionNumber authorRole note isEvent workflows { nodes { id } } }');
+  const data = await gql(ctx, actor, query, { id: jobId });
+  return (data[field].versions ?? []).filter((v: any) => v.isEvent !== true);
+}

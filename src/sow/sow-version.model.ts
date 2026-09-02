@@ -73,6 +73,10 @@ export class SowField {
   @Field({ description: 'False on fields the document cannot be sent to the customer without (e.g. Engagement Resources needs a Project Manager and Project Lead)' })
   allowsEmpty: boolean;
 
+  @Prop({ required: true, default: true })
+  @Field({ description: 'False where asking the customer to initial the section is meaningless (Signatures) — staff are not offered the flag, and a stored one is ignored at signing' })
+  allowsInitials: boolean;
+
   @Prop({ required: true, default: false })
   @Field({ description: 'Staff flag: when true, the customer must type their initials for this section before they can sign' })
   requiresInitials: boolean;
@@ -139,6 +143,15 @@ export class SowVersionService {
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'The run count alone. Superseded by multiplier for display; kept because existing versions carry it.' })
   runCount?: number;
+
+  /**
+   * Carried so an invoice billed from this version can state the line's
+   * category. Nullable: versions frozen before this existed do not have one, and
+   * an invoice generated from them stores an empty category as it always did.
+   */
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Category of the service, as it stood when this version was written.' })
+  category?: string;
 }
 
 @Schema({ _id: false })

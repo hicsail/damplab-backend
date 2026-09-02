@@ -79,6 +79,8 @@ export function staffEditBlockedReason(job: Pick<Job, 'state'>): string | null {
       return 'This job is closed and can no longer be edited.';
     case JobState.REJECTED:
       return 'This job was not accepted and can no longer be edited.';
+    case JobState.CANCELLED:
+      return 'This job was cancelled by the client and can no longer be edited.';
     default:
       return 'This job cannot be edited in its current state.';
   }

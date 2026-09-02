@@ -74,6 +74,7 @@ export function buildLegacyFields(sow: SOW, job: { customerCategory?: string; jo
       isEnabled: true,
       allowsTextOverride: true,
       allowsEmpty: true,
+      allowsInitials: true,
       requiresInitials: false
     });
   });

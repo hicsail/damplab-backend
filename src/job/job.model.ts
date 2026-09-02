@@ -20,7 +20,16 @@ export enum JobState {
    * fully wrapped up. Closed jobs are explicitly excluded from the lab
    * monitor and similar live boards (see getWorkflowIdsForApprovedJobs).
    */
-  CLOSED
+  CLOSED,
+  /**
+   * Terminal state the *client* puts a job in when they decide not to proceed.
+   *
+   * Distinct from REJECTED, which reads as the lab declining the request, and
+   * from CLOSED, which is the lab wrapping up completed work. Appended rather
+   * than inserted: JobState is persisted as an ordinal, so renumbering an
+   * existing member would silently relabel every stored job.
+   */
+  CANCELLED
 }
 registerEnumType(JobState, { name: 'JobState' });
 
@@ -177,6 +186,19 @@ export class Job {
   @Prop({ required: false })
   @Field({ description: 'Keycloak sub of the staff member who last accepted this job', nullable: true })
   acceptedBy?: string;
+
+  /**
+   * When the client last asked for edit access, or absent when no request is
+   * outstanding.
+   *
+   * The request grants nothing on its own — staff open the canvas the way they
+   * always have, with reviewJob(REQUEST_EDITS). This only records that an ask is
+   * pending, so the client's button can say so instead of inviting a second
+   * click, and so staff can see it on the job. Any review decision clears it.
+   */
+  @Prop({ required: false })
+  @Field({ description: 'When the client last requested edit access on this job. Cleared by the next staff review decision.', nullable: true })
+  editAccessRequestedAt?: Date;
 
   @Prop({
     type: [

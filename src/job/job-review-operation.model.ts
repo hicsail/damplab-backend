@@ -9,7 +9,13 @@ export enum JobReviewCommandKind {
   /** Staff take a job back from the customer, restoring the graph they were handed. */
   WITHDRAW_FROM_CUSTOMER = 'WITHDRAW_FROM_CUSTOMER',
   /** Staff reopen an accepted spec so it can be edited again. */
-  WITHDRAW_ACCEPTANCE = 'WITHDRAW_ACCEPTANCE'
+  WITHDRAW_ACCEPTANCE = 'WITHDRAW_ACCEPTANCE',
+  /** The customer declines what the lab asked them to approve, handing the job back. */
+  REJECT = 'REJECT',
+  /** The customer abandons the job outright. Terminal. */
+  CANCEL = 'CANCEL',
+  /** The customer asks for the workflow editor. Grants nothing by itself. */
+  REQUEST_EDIT_ACCESS = 'REQUEST_EDIT_ACCESS'
 }
 
 export enum JobReviewOperationStatus {
@@ -51,7 +57,14 @@ export class JobReviewOperation {
   @Prop({ type: String, required: false })
   normalizedMessage?: string;
 
-  /** The version a withdrawal restores: the job's handover baseline, captured when the command was journaled. */
+  /**
+   * The content version this command puts the graph back to, captured when the
+   * command was journaled so a retry restores the same one.
+   *
+   * A withdrawal restores the handover baseline stamped on the job; a customer
+   * rejection restores the version they last put forward, before the lab's
+   * changes. Absent when there is nothing to undo.
+   */
   @Prop({ type: Number, required: false })
   restoreVersionNumber?: number;
 

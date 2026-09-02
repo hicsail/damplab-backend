@@ -211,6 +211,36 @@ export class JobVersionService {
       .exec();
   }
 
+  /**
+   * The graph as the customer last put it forward — what rejecting the lab's
+   * changes goes back to.
+   *
+   * Their own most recent content version, because everything the lab has done
+   * since is a STAFF-authored version stacked on top of it. Falling back to the
+   * earliest content version covers a job staff submitted on someone's behalf,
+   * where no version is customer-authored at all and the original submission is
+   * the only thing that can be meant by "before the lab's edits".
+   *
+   * This is a scan, unlike the handover baseline a withdrawal restores, which is
+   * stamped on the job when the lab hands it over. The two are not symmetric:
+   * the lab's handover is a single moment worth recording, while "the customer's
+   * last word" is a property of the history itself and stays correct across any
+   * number of rounds. Callers still capture the result when they journal their
+   * command, so a retry restores the same version even if history moves.
+   */
+  async getCustomerBaselineVersion(jobId: string): Promise<JobVersion | null> {
+    const ownedByCustomer = await this.versionModel
+      .findOne({ jobId, isEvent: { $ne: true }, authorRole: JobVersionAuthorRole.CUSTOMER })
+      .sort({ versionNumber: -1 })
+      .exec();
+    if (ownedByCustomer) return ownedByCustomer;
+
+    return this.versionModel
+      .findOne({ jobId, isEvent: { $ne: true } })
+      .sort({ versionNumber: 1 })
+      .exec();
+  }
+
   async getContentVersion(jobId: string, versionNumber: number): Promise<JobVersion | null> {
     return this.versionModel.findOne({ jobId, versionNumber, isEvent: { $ne: true } }).exec();
   }

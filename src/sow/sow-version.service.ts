@@ -5,7 +5,7 @@ import mongoose from 'mongoose';
 import { SOW, SOWDocument, SOWStatus, SOWAdjustmentType, DocumentBlocker, SowActionGate } from './sow.model';
 import { SowVersion, SowVersionDocument, SowVersionInputs, SowVersionService as SowVersionServiceLine, SowField, SowFieldKind, SowPeriod, SowConsent } from './sow-version.model';
 import { adjustmentAmount, adjustmentMultiplier, buildCalculatedFields, calculateFieldValues, normalizeIncomingFields, SowDocumentContext } from './sow-field-calculator';
-import { SOW_FIELD_CATALOG, findFieldDefinition } from './sow-field-defaults';
+import { SOW_FIELD_CATALOG, fieldAllowsInitials, findFieldDefinition } from './sow-field-defaults';
 import { SOWService } from './sow.service';
 import { assertSowContractWritable } from './sow-access';
 import { SaveSowVersionInput } from './dto/save-sow-version.input';
@@ -110,7 +110,10 @@ export class SowVersionService {
         cost: Number(s.cost ?? 0),
         unitCost: s.unitCost,
         multiplier: s.multiplier,
-        runCount: s.runCount
+        runCount: s.runCount,
+        // Carried so an invoice billed from a version can state the line's
+        // category; without it every such line was stored with an empty one.
+        category: s.category ?? ''
       })),
       adjustments: (sow.pricing?.adjustments ?? [])
         .filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)
@@ -1048,11 +1051,20 @@ export class SowVersionService {
       countersignBlockers.push(DocumentBlocker.UNSENT_DRAFT);
     }
 
+    // Declining deliberately does NOT inherit the contract blockers that gate
+    // signing. Those exist to stop someone being bound by a document that no
+    // longer matches the job — none of which is a reason to refuse a "no". If a
+    // document is out for signature, the customer can always decline it; the
+    // only thing that makes decline unavailable is there being nothing in force.
+    const declineBlockers: DocumentBlocker[] = active?.status === SOWStatus.SENT ? [] : [DocumentBlocker.AWAITING_SENT_VERSION];
+
     return {
       canSend: sendBlockers.length === 0,
       sendBlockers,
       canSign: signBlockers.length === 0,
       signBlockers,
+      canDecline: declineBlockers.length === 0,
+      declineBlockers,
       canCountersign: countersignBlockers.length === 0,
       countersignBlockers,
       missingFields
@@ -1067,14 +1079,14 @@ export class SowVersionService {
    * voided signature — it has to reach the one channel they see. Idempotent on
    * the caller's key so a retry cannot post twice.
    */
-  private async postSowComment(sow: SOW, operationId: string, content: string, author: { sub: string; name: string }): Promise<void> {
+  private async postSowComment(sow: SOW, operationId: string, content: string, author: { sub: string; name: string }, authorType: CommentAuthorType = CommentAuthorType.STAFF): Promise<void> {
     try {
       await this.commentService.createIdempotent({
         jobId: String(sow.jobId),
         operationId,
         content,
         author: author.name,
-        authorType: CommentAuthorType.STAFF,
+        authorType,
         isInternal: false
       } as any);
     } catch (error: any) {
@@ -1092,14 +1104,34 @@ export class SowVersionService {
    * sent version stays in history; only the active pointer moves.
    */
   async withdrawFromCustomer(sowId: string, reason: string, author: { sub: string; name: string }): Promise<SOW> {
+    return this.returnSentVersionToStaff(sowId, reason, author, { byCustomer: false });
+  }
+
+  /**
+   * The customer declines to sign the document that was sent to them.
+   *
+   * Mechanically identical to a staff withdrawal — the sent version stops being
+   * in force and staff get an editable draft of exactly what the customer saw —
+   * because the outcome the lab needs is the same either way: the document comes
+   * back so it can be revised and reissued. Only the attribution differs, which
+   * is why this shares the body rather than copying it.
+   */
+  async declineFromCustomer(sowId: string, reason: string, author: { sub: string; name: string }): Promise<SOW> {
+    return this.returnSentVersionToStaff(sowId, reason, author, { byCustomer: true });
+  }
+
+  private async returnSentVersionToStaff(sowId: string, reason: string, author: { sub: string; name: string }, opts: { byCustomer: boolean }): Promise<SOW> {
+    const { byCustomer } = opts;
     await this.reconcile(sowId);
     const sow = await this.requireSow(sowId);
     const active = await this.getActiveVersion(sowId);
     if (active?.status !== SOWStatus.SENT) {
-      throw new BadRequestException('Only a Statement of Work that is out for signature can be withdrawn.');
+      throw new BadRequestException(byCustomer ? 'Only a Statement of Work that is out for signature can be declined.' : 'Only a Statement of Work that is out for signature can be withdrawn.');
     }
     const note = reason?.trim();
-    if (!note) throw new BadRequestException('Give a reason for withdrawing this Statement of Work.');
+    if (!note) {
+      throw new BadRequestException(byCustomer ? 'Give a reason for declining this Statement of Work.' : 'Give a reason for withdrawing this Statement of Work.');
+    }
 
     // Hand the lab back an editable draft of what was sent, rather than leaving
     // currentVersionNumber on a SENT row that can neither be edited nor reissued.
@@ -1113,7 +1145,7 @@ export class SowVersionService {
         expectedStatus: SOWStatus.SENT,
         sourcePointer: 'currentVersionNumber',
         makeActive: false,
-        note: 'Withdrawn from the customer'
+        note: byCustomer ? 'Declined by the client' : 'Withdrawn from the customer'
       },
       author
     );
@@ -1127,9 +1159,12 @@ export class SowVersionService {
 
     await this.postSowComment(
       claimed,
-      `sow-withdrawn:${sowId}:${active.versionNumber}`,
-      `The Statement of Work sent to the client has been withdrawn by the lab and is no longer available to sign.\n\n${note}`,
-      author
+      byCustomer ? `sow-declined:${sowId}:${active.versionNumber}` : `sow-withdrawn:${sowId}:${active.versionNumber}`,
+      byCustomer
+        ? `The client declined to sign this Statement of Work. It is no longer in force and is back with the lab for revision.\n\n${note}`
+        : `The Statement of Work sent to the client has been withdrawn by the lab and is no longer available to sign.\n\n${note}`,
+      author,
+      byCustomer ? CommentAuthorType.CLIENT : CommentAuthorType.STAFF
     );
     return claimed;
   }
@@ -1224,7 +1259,12 @@ export class SowVersionService {
     // Sections staff flagged requiresInitials each need their own typed initials,
     // on top of the one overall consent checkbox.
     const initialsByKey = new Map((input.sectionInitials ?? []).map((s) => [s.key, s.initials?.trim() ?? '']));
-    const enabledRequiringInitials = (active.fields ?? []).filter((f) => f.isEnabled && f.requiresInitials);
+    // `allowsInitials: false` sections are filtered out here rather than trusted
+    // to be flag-free. Signatures is hidden from the customer's document
+    // entirely (customerDocumentFields), so a stored `requiresInitials: true` on
+    // it would demand initials for a section they are never shown — a document
+    // nobody could ever sign, with no way out from their side.
+    const enabledRequiringInitials = (active.fields ?? []).filter((f) => f.isEnabled && f.requiresInitials && fieldAllowsInitials(f.key));
     const missingInitials = enabledRequiringInitials.filter((f) => !initialsByKey.get(f.key));
     if (missingInitials.length > 0) {
       throw new BadRequestException(`Please initial the following before signing: ${missingInitials.map((f) => f.label).join(', ')}.`);
@@ -1311,7 +1351,7 @@ export class SowVersionService {
     );
   }
 
-  async cancel(sowId: string, note: string | undefined, author: { sub: string; name: string }): Promise<SowVersionDocument> {
+  async cancel(sowId: string, note: string | undefined, author: { sub: string; name: string }, opts: { byCustomer?: boolean } = {}): Promise<SowVersionDocument> {
     await this.reconcile(sowId);
     const sow = await this.requireSow(sowId);
     const current = await this.getCurrentVersion(sowId);
@@ -1332,12 +1372,18 @@ export class SowVersionService {
     );
 
     // Cancelling is customer-facing — it withdraws a document they may have been
-    // asked to sign — so it is announced the same way a withdrawal is.
+    // asked to sign — so it is announced the same way a withdrawal is. The key
+    // carries the new version number, which always advances here (appendVersion
+    // above, and an already-CANCELLED document is refused), so a later cancel
+    // cannot collide with this one on the unique {jobId, operationId} index.
     await this.postSowComment(
       sow,
       `sow-cancelled:${String(sow._id)}:${cancelled.versionNumber}`,
-      `This Statement of Work has been cancelled by the lab and is no longer in effect.${note?.trim() ? `\n\n${note.trim()}` : ''}`,
-      author
+      opts.byCustomer
+        ? `This Statement of Work was cancelled because the client cancelled the job. It is no longer in effect.${note?.trim() ? `\n\n${note.trim()}` : ''}`
+        : `This Statement of Work has been cancelled by the lab and is no longer in effect.${note?.trim() ? `\n\n${note.trim()}` : ''}`,
+      author,
+      opts.byCustomer ? CommentAuthorType.CLIENT : CommentAuthorType.STAFF
     );
     return cancelled;
   }

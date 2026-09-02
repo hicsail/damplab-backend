@@ -66,12 +66,16 @@ export function assertStaff(user: User | undefined, action = 'perform this actio
 }
 
 /**
- * Signing is the one action reserved for the customer: it records their assent,
- * so staff must not be able to produce it on their behalf.
+ * Signing and declining are the actions reserved for the customer: each records
+ * their own answer, so staff must not be able to produce either on their behalf.
+ * Staff take a document back with withdrawSowFromCustomer instead.
+ *
+ * `action` names what was attempted — telling someone who tried to decline that
+ * they cannot "sign" reads as the wrong refusal for the wrong act.
  */
-export function assertJobOwner(job: { email?: string; sub?: string; clientEmail?: string } | null | undefined, user: User | undefined): void {
+export function assertJobOwner(job: { email?: string; sub?: string; clientEmail?: string } | null | undefined, user: User | undefined, action = 'sign'): void {
   if (!isJobOwner(job, user)) {
-    throw new ForbiddenException('Only the customer who owns this job can sign its SOW');
+    throw new ForbiddenException(`Only the customer who owns this job can ${action} its SOW`);
   }
 }
 
