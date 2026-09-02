@@ -1,4 +1,4 @@
-import { Args, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Int, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
@@ -33,7 +33,7 @@ export class NotificationResolver {
   }
 
   @Mutation(() => Notification, { nullable: true, description: 'Mark a single notification as read.' })
-  async markNotificationRead(@CurrentUser() user: User, @Args('id') id: string): Promise<Notification | null> {
+  async markNotificationRead(@CurrentUser() user: User, @Args('id', { type: () => ID }) id: string): Promise<Notification | null> {
     return this.notificationService.markRead(id, user.sub) as any;
   }
 
