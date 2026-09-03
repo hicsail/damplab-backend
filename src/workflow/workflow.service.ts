@@ -47,13 +47,25 @@ export class WorkflowService {
     return this.workflowModel.findOneAndUpdate({ _id: workflow._id }, { $set: { state: state } }, { new: true });
   }
 
+  /**
+   * Deprecated sibling of `getByStateForApprovedJobs`, kept only for the orphaned
+   * `/dominos` board. It used to skip the approved-job filter entirely, which made
+   * it a looser view of the same data than the lab monitor it predates — including
+   * jobs whose SOW is unsigned. It now goes through exactly the same gate.
+   */
   async getByState(state: WorkflowState): Promise<Workflow[]> {
-    return this.workflowModel.find({ state });
+    return this.getByStateForApprovedJobs(state);
   }
 
-  /** Workflows in this state that belong to jobs accepted by technicians (for lab monitor). */
-  async getByStateForApprovedJobs(state: WorkflowState): Promise<Workflow[]> {
-    const approvedWorkflowIds = await this.jobService.getWorkflowIdsForApprovedJobs();
+  /**
+   * Workflows in this state that belong to jobs accepted by technicians and
+   * whose SOW is signed (for lab monitor).
+   *
+   * `includeUnsignedSow` is the staff override; see
+   * `JobService.getWorkflowIdsForApprovedJobs`.
+   */
+  async getByStateForApprovedJobs(state: WorkflowState, includeUnsignedSow = false): Promise<Workflow[]> {
+    const approvedWorkflowIds = await this.jobService.getWorkflowIdsForApprovedJobs({ includeUnsignedSow });
     if (approvedWorkflowIds.length === 0) return [];
     return this.workflowModel.find({ state, _id: { $in: approvedWorkflowIds } });
   }

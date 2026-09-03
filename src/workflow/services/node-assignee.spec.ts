@@ -15,7 +15,7 @@ describe('WorkflowNodeService.updateAssignee', () => {
   // an earlier version carried three unused dummy parameters.
   const harness = (): { service: WorkflowNodeService; findOneAndUpdate: jest.Mock } => {
     const findOneAndUpdate: jest.Mock = jest.fn().mockResolvedValue({ _id: 'node-1' });
-    const service = new WorkflowNodeService({ findOneAndUpdate } as any, {} as any, {} as any, {} as any);
+    const service = new WorkflowNodeService({ findOneAndUpdate } as any, {} as any, {} as any, {} as any, {} as any);
     return { service, findOneAndUpdate };
   };
 
@@ -35,7 +35,7 @@ describe('WorkflowNodeService.updateAssignee', () => {
 describe('WorkflowNodeService.updateEstimatedMinutes', () => {
   const harness = (): { service: WorkflowNodeService; findOneAndUpdate: jest.Mock } => {
     const findOneAndUpdate: jest.Mock = jest.fn().mockResolvedValue({ _id: 'node-1' });
-    const service = new WorkflowNodeService({ findOneAndUpdate } as any, {} as any, {} as any, {} as any);
+    const service = new WorkflowNodeService({ findOneAndUpdate } as any, {} as any, {} as any, {} as any, {} as any);
     return { service, findOneAndUpdate };
   };
 

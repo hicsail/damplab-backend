@@ -742,6 +742,28 @@ export class SOWService {
   }
 
   /**
+   * Of these jobs, the ones whose SOW the customer has signed.
+   *
+   * One query for the whole set rather than `findByJobId` per job: the caller is
+   * the lab monitor gate, which runs behind polling boards. `jobId` is indexed
+   * (`SOWSchema.index({ jobId: 1 })`).
+   *
+   * FINAL counts alongside SIGNED. `SIGNED` means the client has signed and staff
+   * have yet to countersign; countersigning moves it to FINAL, so treating SIGNED
+   * as the only signed state would drop a job off the boards at the moment its
+   * paperwork completed.
+   */
+  async findSignedJobIds(jobIds: string[]): Promise<string[]> {
+    if (jobIds.length === 0) return [];
+    const signed = await this.sowModel
+      .find({ jobId: { $in: jobIds }, status: { $in: [SOWStatus.SIGNED, SOWStatus.FINAL] } })
+      .select('jobId')
+      .lean()
+      .exec();
+    return signed.map((sow) => sow.jobId);
+  }
+
+  /**
    * Find SOWs by status
    */
   async findByStatus(status: SOWStatus): Promise<SOW[]> {

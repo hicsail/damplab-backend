@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import mongoose, { HydratedDocument, Model } from 'mongoose';
 import { JobVersion, JobVersionAuthorRole, JobVersionDocument, JobVersionEdge, JobVersionNode, JobVersionWorkflow } from './job-version.model';
+import { jobVersionAuthorOrg } from './author-org';
 import { SaveJobWorkflowsInput, SaveWorkflowInput } from './job-version.dto';
 import { Job, JobDocument, JobState } from '../job/job.model';
 import { Workflow, WorkflowDocument, WorkflowState } from '../workflow/models/workflow.model';
@@ -189,6 +190,7 @@ export class JobVersionService {
         authorRole: JobVersionAuthorRole.CUSTOMER,
         createdBy: job.sub ?? '',
         createdByName: job.clientDisplayName || job.username || job.email || '',
+        createdByOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.CUSTOMER, institute: job.institute }),
         note: 'Original submission',
         createdAt: job.submitted ?? new Date(),
         bumpMajor: true,
@@ -364,6 +366,8 @@ export class JobVersionService {
       authorRole: JobVersionAuthorRole;
       createdBy: string;
       createdByName: string;
+      /** See `jobVersionAuthorOrg`. Resolved by the caller, which is the only place the token is in scope. */
+      createdByOrg?: string;
       note?: string;
       createdAt?: Date;
       jobState?: JobState;
@@ -397,6 +401,7 @@ export class JobVersionService {
         operationId: meta.operationId,
         createdBy: meta.createdBy,
         createdByName: meta.createdByName,
+        createdByOrg: meta.createdByOrg ?? '',
         createdAt: meta.createdAt ?? new Date()
       });
     } catch (error: any) {
@@ -421,7 +426,7 @@ export class JobVersionService {
   async appendStateEvent(
     job: Job,
     newState: JobState,
-    author: { role: JobVersionAuthorRole; sub: string; name: string },
+    author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string },
     note: string,
     operationId?: string,
     sourceWorkflows?: JobVersionWorkflow[]
@@ -448,6 +453,7 @@ export class JobVersionService {
       authorRole: author.role,
       createdBy: author.sub,
       createdByName: author.name,
+      createdByOrg: author.org,
       note,
       jobState: newState,
       isEvent: true,
@@ -479,7 +485,7 @@ export class JobVersionService {
   async restoreVersion(
     jobId: string,
     versionNumber: number,
-    author: { role: JobVersionAuthorRole; sub: string; name: string },
+    author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string },
     note: string,
     opts: { visibleToCustomer?: boolean } = {}
   ): Promise<Job> {
@@ -514,7 +520,7 @@ export class JobVersionService {
     return this.saveWorkflows({ jobId, workflows, note } as SaveJobWorkflowsInput, author, opts);
   }
 
-  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string }, opts: { visibleToCustomer?: boolean } = {}): Promise<Job> {
+  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string }, opts: { visibleToCustomer?: boolean } = {}): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
 
@@ -589,6 +595,7 @@ export class JobVersionService {
       authorRole: author.role,
       createdBy: author.sub,
       createdByName: author.name,
+      createdByOrg: author.org,
       note,
       // Staff edits stay hidden until acceptance publishes them; a customer's
       // own edits are theirs to see. Withdrawal overrides this to true: undoing

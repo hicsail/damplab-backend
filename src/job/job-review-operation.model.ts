@@ -48,6 +48,14 @@ export class JobReviewOperation {
   @Prop({ type: String, required: true })
   actorName: string;
 
+  /**
+   * The actor's org/team at the moment the command was issued, so a resumed
+   * operation stamps its version exactly as the original attempt would have —
+   * even if the actor's tier changed in between. See `jobVersionAuthorOrg`.
+   */
+  @Prop({ type: String, required: false, default: '' })
+  actorOrg?: string;
+
   @Prop({ type: String, required: false, enum: JobReviewDecision })
   decision?: JobReviewDecision;
 

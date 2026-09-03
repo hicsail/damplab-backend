@@ -73,6 +73,13 @@ export class AllJobsInput {
 
   @Field(() => JobArchiveFilter, { description: 'Archive bucket to return (default ACTIVE — archived jobs hidden)', nullable: true })
   archiveFilter?: JobArchiveFilter;
+
+  @Field({
+    description:
+      'Include jobs that have been closed out — CLOSED, CANCELLED and REJECTED. False by default, so the listing shows live work. COMPLETE is not in that set: lab work finishing is not the same as the job being done with. Ignored when `state` names one of them explicitly.',
+    nullable: true
+  })
+  includeClosed?: boolean;
 }
 
 /**

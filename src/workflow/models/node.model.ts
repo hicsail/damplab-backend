@@ -57,6 +57,22 @@ export class WorkflowNode {
   @Field(() => WorkflowNodeState, { description: 'Where in the process is the current node' })
   state: WorkflowNodeState;
 
+  /**
+   * Not stored. Resolved in one batched pass by `getNodesByAssignee`, because
+   * both answers need the whole parent workflow and a per-node lookup would be
+   * a round trip per row of the bench. Null on a node reached by any other
+   * query, which is honest rather than a guess.
+   */
+  @Field(() => ID, { nullable: true, description: 'Parent workflow id, for grouping a bench list. Only populated by assignedOperations.' })
+  workflowId?: string | null;
+
+  @Field(() => Boolean, {
+    nullable: true,
+    description:
+      "True when nothing upstream of this operation is outstanding — every predecessor in its workflow is COMPLETE. Only populated by assignedOperations; a blocking predecessor is often assigned to someone else, so this cannot be derived from the caller's own operations."
+  })
+  isReadyToStart?: boolean | null;
+
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'Snapshot of service price at submission time' })
   price?: number;

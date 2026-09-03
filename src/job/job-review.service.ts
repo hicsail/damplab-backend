@@ -13,10 +13,23 @@ import { CancelJobInput, JobReviewDecision, RejectJobReviewInput, RequestJobEdit
 import { customerMayEdit } from './job-editing';
 import { CustomerActionRequired, Job, JobDocument, JobState } from './job.model';
 import { JobReviewCommandKind, JobReviewOperation, JobReviewOperationDocument, JobReviewOperationStatus } from './job-review-operation.model';
+import { jobVersionAuthorOrg } from '../job-version/author-org';
 
 export interface JobReviewActor {
   sub: string;
   name: string;
+  /**
+   * The actor's realm roles, straight off their token.
+   *
+   * Passed rather than a finished org string because the author role a command
+   * writes with is fixed by the command, not by the caller — a staff command
+   * always stamps STAFF and a customer command always stamps CUSTOMER — so this
+   * service is the only place that can turn claims into the right stamp. It is
+   * resolved once, when the operation record is created, and persisted on it: a
+   * resumed operation must stamp what the original attempt would have, even if
+   * the actor's tier has changed since.
+   */
+  claims?: readonly string[];
 }
 
 interface OperationIdentity {
@@ -213,6 +226,7 @@ export class JobReviewService {
     const operation = await this.createOperation(
       {
         actorName: actor.name,
+        actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.STAFF, claims: actor.claims, institute: job.institute }),
         decision: input.decision,
         normalizedMessage,
         ...this.originalFields(job),
@@ -270,6 +284,7 @@ export class JobReviewService {
     const operation = await this.createOperation(
       {
         actorName: actor.name,
+        actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.CUSTOMER, claims: actor.claims, institute: job.institute }),
         responseAction: job.customerActionRequired,
         normalizedMessage,
         ...this.originalFields(job)
@@ -417,7 +432,7 @@ export class JobReviewService {
       await this.jobVersionService.appendStateEvent(
         job,
         JobState.ACCEPTED,
-        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName },
+        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
         'Accepted',
         operation.operationId,
         version.workflows
@@ -427,7 +442,7 @@ export class JobReviewService {
       await this.jobVersionService.appendStateEvent(
         job,
         JobState.CHANGES_REQUESTED,
-        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName },
+        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
         mapping.heading,
         operation.operationId
       );
@@ -476,7 +491,13 @@ export class JobReviewService {
   private async writeResponseHistory(operation: JobReviewOperation, job: Job): Promise<void> {
     if (operation.historyWrittenAt) return;
     const header = `Customer response: ${operation.responseAction}`;
-    await this.jobVersionService.appendStateEvent(job, JobState.SUBMITTED, { role: JobVersionAuthorRole.CUSTOMER, sub: operation.actorSub, name: operation.actorName }, header, operation.operationId);
+    await this.jobVersionService.appendStateEvent(
+      job,
+      JobState.SUBMITTED,
+      { role: JobVersionAuthorRole.CUSTOMER, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
+      header,
+      operation.operationId
+    );
     await this.updateOperationProgress(operation, { historyWrittenAt: new Date() });
   }
 
@@ -676,6 +697,7 @@ export class JobReviewService {
     const operation = await this.createOperation(
       {
         actorName: actor.name,
+        actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.STAFF, claims: actor.claims, institute: job.institute }),
         normalizedMessage,
         restoreVersionNumber,
         ...this.originalFields(job)
@@ -746,9 +768,15 @@ export class JobReviewService {
   private async writeRestore(operation: JobReviewOperation, author: { role: JobVersionAuthorRole }, note: string): Promise<void> {
     if (operation.restoreVersionNumber == null) return;
     if (!operation.restoreWrittenAt) {
-      await this.jobVersionService.restoreVersion(operation.jobId, operation.restoreVersionNumber, { role: author.role, sub: operation.actorSub, name: operation.actorName }, note, {
-        visibleToCustomer: true
-      });
+      await this.jobVersionService.restoreVersion(
+        operation.jobId,
+        operation.restoreVersionNumber,
+        { role: author.role, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
+        note,
+        {
+          visibleToCustomer: true
+        }
+      );
       await this.updateOperationProgress(operation, { restoreWrittenAt: new Date() });
     }
     await this.sowService.syncServicesFromJobWorkflows(operation.jobId);
@@ -761,7 +789,13 @@ export class JobReviewService {
   private async writeWithdrawalHistory(operation: JobReviewOperation, job: Job, fromCustomer: boolean): Promise<void> {
     if (operation.historyWrittenAt) return;
     const heading = fromCustomer ? 'Withdrawn from the customer' : 'Acceptance withdrawn';
-    await this.jobVersionService.appendStateEvent(job, JobState.SUBMITTED, { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName }, heading, operation.operationId);
+    await this.jobVersionService.appendStateEvent(
+      job,
+      JobState.SUBMITTED,
+      { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
+      heading,
+      operation.operationId
+    );
     await this.updateOperationProgress(operation, { historyWrittenAt: new Date() });
   }
 
@@ -883,7 +917,16 @@ export class JobReviewService {
     if (job.sub !== actor.sub) throw new ForbiddenException('You do not have permission to act on this job.');
     await precondition(job);
 
-    const operation = await this.createOperation({ actorName: actor.name, normalizedMessage, ...this.originalFields(job), ...(await select(job)) }, identity);
+    const operation = await this.createOperation(
+      {
+        actorName: actor.name,
+        actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.CUSTOMER, claims: actor.claims, institute: job.institute }),
+        normalizedMessage,
+        ...this.originalFields(job),
+        ...(await select(job))
+      },
+      identity
+    );
     this.assertOperationMatches(operation, identity);
     return operation;
   }
@@ -927,7 +970,13 @@ export class JobReviewService {
 
   private async writeCustomerHistory(operation: JobReviewOperation, job: Job, state: JobState, heading: string): Promise<void> {
     if (operation.historyWrittenAt) return;
-    await this.jobVersionService.appendStateEvent(job, state, { role: JobVersionAuthorRole.CUSTOMER, sub: operation.actorSub, name: operation.actorName }, heading, operation.operationId);
+    await this.jobVersionService.appendStateEvent(
+      job,
+      state,
+      { role: JobVersionAuthorRole.CUSTOMER, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
+      heading,
+      operation.operationId
+    );
     await this.updateOperationProgress(operation, { historyWrittenAt: new Date() });
   }
 

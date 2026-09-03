@@ -17,11 +17,19 @@ import { User } from '../auth/user.interface';
 import { Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
 import { assertCanReadSow, assertJobOwner, canSeeAllVersions, isStaff } from './sow-access';
+import { KeycloakService } from '../keycloak/keycloak.service';
+import { AccessTier } from '../auth/roles/access-tiers';
+import { LabMonitorStaffMember } from '../workflow/dtos/lab-monitor-staff.dto';
 
 @Resolver(() => SOW)
 @UseGuards(AuthRolesGuard)
 export class SOWResolver {
-  constructor(private readonly sowService: SOWService, private readonly jobService: JobService, private readonly sowVersionService: SowVersionService) {}
+  constructor(
+    private readonly sowService: SOWService,
+    private readonly jobService: JobService,
+    private readonly sowVersionService: SowVersionService,
+    private readonly keycloakService: KeycloakService
+  ) {}
 
   /**
    * Loads a SOW and checks the caller may see it. Every version query and
@@ -65,6 +73,35 @@ export class SOWResolver {
   @Roles(Role.DamplabStaff)
   async allSOWs(): Promise<SOW[]> {
     return this.sowService.findAll();
+  }
+
+  /**
+   * Who may be named Project Manager on a Statement of Work: the Administrator
+   * tier, and only it.
+   *
+   * Deliberately separate from `getLabMonitorStaffList` rather than a narrowing
+   * of it. That one also fills the lab monitor's assignee dropdown and is
+   * configurable through KEYCLOAK_LAB_STAFF_GROUP_NAMES, so narrowing it in
+   * place would have quietly emptied the assignee dropdown of every technician —
+   * and it could be repointed at other groups entirely, which would make it an
+   * unreliable stand-in for an access tier.
+   */
+  @Query(() => [LabMonitorStaffMember], { description: 'Staff-only. Administrators, for the Statement of Work Project Manager field. Sourced from the Administrator tier Keycloak group.' })
+  @Roles(Role.DamplabStaff)
+  async administratorStaffList(): Promise<LabMonitorStaffMember[]> {
+    return this.keycloakService.getAccessTierMembers([AccessTier.ADMINISTRATOR]);
+  }
+
+  /**
+   * Who may be named Project Lead: Administrators and Technicians.
+   *
+   * Wider than Project Manager by exactly one tier, and narrower than the
+   * lab-staff list, which is whatever groups an operator has configured.
+   */
+  @Query(() => [LabMonitorStaffMember], { description: 'Staff-only. Administrators and Technicians, for the Statement of Work Project Lead field. Sourced from those tiers Keycloak groups.' })
+  @Roles(Role.DamplabStaff)
+  async projectLeadStaffList(): Promise<LabMonitorStaffMember[]> {
+    return this.keycloakService.getAccessTierMembers([AccessTier.ADMINISTRATOR, AccessTier.TECHNICIAN]);
   }
 
   @Mutation(() => SOW, { description: 'Staff-only. Create a new SOW.' })

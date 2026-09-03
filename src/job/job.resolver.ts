@@ -27,6 +27,7 @@ import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
+import { jobVersionAuthorOrg } from '../job-version/author-org';
 import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 import { assertJobContractWritable } from './job-editing';
@@ -108,6 +109,21 @@ export class JobResolver {
    */
   private authorRoleFor(user: User): JobVersionAuthorRole {
     return (user.realm_access?.roles ?? []).includes(Role.DamplabStaff) ? JobVersionAuthorRole.STAFF : JobVersionAuthorRole.CUSTOMER;
+  }
+
+  /**
+   * The author stamp for a version this request is about to write, resolved from
+   * the token while it is still in scope. See `jobVersionAuthorOrg` for why the
+   * org cannot be worked out later.
+   */
+  private versionAuthor(user: User, job?: Pick<Job, 'institute'> | null): { role: JobVersionAuthorRole; sub: string; name: string; org: string } {
+    const role = this.authorRoleFor(user);
+    return {
+      role,
+      sub: user.sub,
+      name: user.preferred_username ?? user.email ?? '',
+      org: jobVersionAuthorOrg({ authorRole: role, claims: user.realm_access?.roles ?? [], institute: job?.institute })
+    };
   }
 
   /**
@@ -252,10 +268,12 @@ export class JobResolver {
     });
     // v1 is the submission itself, so the first technician edit has something to
     // diff against.
+    const submissionAuthor = this.versionAuthor(user, created);
     await this.jobVersionService.appendVersion(created, await this.jobVersionService.snapshotLiveWorkflows(created), {
-      authorRole: this.authorRoleFor(user),
-      createdBy: user.sub,
-      createdByName: user.preferred_username ?? user.email ?? '',
+      authorRole: submissionAuthor.role,
+      createdBy: submissionAuthor.sub,
+      createdByName: submissionAuthor.name,
+      createdByOrg: submissionAuthor.org,
       note: 'Original submission',
       bumpMajor: true,
       visibleToCustomer: true
@@ -521,7 +539,7 @@ export class JobResolver {
     // pass would read as a duplicate of the original submission.
     const historyNote = note?.trim() || (wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState]);
     if (historyNote) {
-      await this.jobVersionService.appendStateEvent(updated, newState, { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' }, historyNote);
+      await this.jobVersionService.appendStateEvent(updated, newState, this.versionAuthor(user, updated), historyNote);
     }
 
     return updated;
@@ -534,7 +552,8 @@ export class JobResolver {
   async reviewJob(@Args('input', { type: () => ReviewJobInput }) input: ReviewJobInput, @CurrentUser() user: User): Promise<Job> {
     return this.jobReviewService.reviewJob(input, {
       sub: user.sub,
-      name: user.preferred_username ?? user.email ?? user.sub
+      name: user.preferred_username ?? user.email ?? user.sub,
+      claims: user.realm_access?.roles ?? []
     });
   }
 
@@ -544,7 +563,8 @@ export class JobResolver {
   async respondToJobReview(@Args('input', { type: () => RespondToJobReviewInput }) input: RespondToJobReviewInput, @CurrentUser() user: User): Promise<Job> {
     return this.jobReviewService.respondToJobReview(input, {
       sub: user.sub,
-      name: user.preferred_username ?? user.email ?? user.sub
+      name: user.preferred_username ?? user.email ?? user.sub,
+      claims: user.realm_access?.roles ?? []
     });
   }
 
@@ -554,7 +574,8 @@ export class JobResolver {
   async rejectJobReview(@Args('input', { type: () => RejectJobReviewInput }) input: RejectJobReviewInput, @CurrentUser() user: User): Promise<Job> {
     return this.jobReviewService.rejectJobReview(input, {
       sub: user.sub,
-      name: user.preferred_username ?? user.email ?? user.sub
+      name: user.preferred_username ?? user.email ?? user.sub,
+      claims: user.realm_access?.roles ?? []
     });
   }
 
@@ -564,7 +585,8 @@ export class JobResolver {
   async cancelJob(@Args('input', { type: () => CancelJobInput }) input: CancelJobInput, @CurrentUser() user: User): Promise<Job> {
     return this.jobReviewService.cancelJob(input, {
       sub: user.sub,
-      name: user.preferred_username ?? user.email ?? user.sub
+      name: user.preferred_username ?? user.email ?? user.sub,
+      claims: user.realm_access?.roles ?? []
     });
   }
 
@@ -574,7 +596,8 @@ export class JobResolver {
   async requestJobEditAccess(@Args('input', { type: () => RequestJobEditAccessInput }) input: RequestJobEditAccessInput, @CurrentUser() user: User): Promise<Job> {
     return this.jobReviewService.requestJobEditAccess(input, {
       sub: user.sub,
-      name: user.preferred_username ?? user.email ?? user.sub
+      name: user.preferred_username ?? user.email ?? user.sub,
+      claims: user.realm_access?.roles ?? []
     });
   }
 
@@ -585,7 +608,8 @@ export class JobResolver {
   async withdrawJobFromCustomer(@Args('input', { type: () => WithdrawJobInput }) input: WithdrawJobInput, @CurrentUser() user: User): Promise<Job> {
     return this.jobReviewService.withdrawJobFromCustomer(input, {
       sub: user.sub,
-      name: user.preferred_username ?? user.email ?? user.sub
+      name: user.preferred_username ?? user.email ?? user.sub,
+      claims: user.realm_access?.roles ?? []
     });
   }
 
@@ -596,7 +620,8 @@ export class JobResolver {
   async withdrawJobAcceptance(@Args('input', { type: () => WithdrawJobInput }) input: WithdrawJobInput, @CurrentUser() user: User): Promise<Job> {
     return this.jobReviewService.withdrawJobAcceptance(input, {
       sub: user.sub,
-      name: user.preferred_username ?? user.email ?? user.sub
+      name: user.preferred_username ?? user.email ?? user.sub,
+      claims: user.realm_access?.roles ?? []
     });
   }
 
@@ -639,11 +664,7 @@ export class JobResolver {
 
     this.assertContractWritable(job, user);
 
-    const updated = await this.jobVersionService.saveWorkflows(input, {
-      role: this.authorRoleFor(user),
-      sub: user.sub,
-      name: user.preferred_username ?? user.email ?? ''
-    });
+    const updated = await this.jobVersionService.saveWorkflows(input, this.versionAuthor(user, job));
 
     // The billing core has moved. This is a no-op on a job with no SOW, which is
     // most jobs being edited; where there is one it flags the document stale so

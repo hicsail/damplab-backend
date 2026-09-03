@@ -193,6 +193,15 @@ export class JobVersion {
   @Field({ defaultValue: '', description: 'Display name of the author, resolved at write time' })
   createdByName: string;
 
+  /**
+   * Empty on every row written before this field existed, and deliberately not
+   * backfilled: inventing a tier that was never recorded is the failure this
+   * stamp exists to prevent. See `jobVersionAuthorOrg` for how it is derived.
+   */
+  @Prop({ required: false, default: '' })
+  @Field({ nullable: true, description: "The author's org or team, resolved at write time: their access tier for staff, the job's institute for a customer. Empty on rows predating the field." })
+  createdByOrg?: string;
+
   @Prop({ required: true, default: () => new Date() })
   @Field()
   createdAt: Date;
