@@ -36,6 +36,7 @@ interface Harness {
   operations: any[];
   restores: any[];
   sowSyncs: string[];
+  sowCancels: Array<{ jobId: string; note?: string }>;
   failPublicationOnce: () => void;
   failCommentOnce: () => void;
   failEventOnce: () => void;
@@ -47,7 +48,7 @@ interface Harness {
   preferCasStatus: (status: JobReviewOperationStatus) => void;
 }
 
-function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersions?: any[] } = {}): Harness {
+function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersions?: any[]; sowStatus?: string | null } = {}): Harness {
   const job: any = {
     _id: JOB_ID,
     sub: customer.sub,
@@ -166,8 +167,15 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
       return [...versions].filter((version) => version.isEvent !== true).sort((a, b) => b.versionNumber - a.versionNumber)[0] ?? null;
     },
     restoreVersion: async (_jobId: string, versionNumber: number, author: any, note: string, opts: any = {}) => {
-      restores.push({ versionNumber, note, visibleToCustomer: opts.visibleToCustomer });
+      restores.push({ versionNumber, note, authorRole: author.role, visibleToCustomer: opts.visibleToCustomer });
       return {};
+    },
+    // The customer's own most recent content version, else the earliest one —
+    // the same rule the real query applies.
+    getCustomerBaselineVersion: async () => {
+      const content = versions.filter((v) => v.isEvent !== true);
+      const theirs = content.filter((v) => v.authorRole === JobVersionAuthorRole.CUSTOMER).sort((a, b) => b.versionNumber - a.versionNumber)[0];
+      return theirs ?? [...content].sort((a, b) => a.versionNumber - b.versionNumber)[0] ?? null;
     },
     getContentVersion: async (_jobId: string, versionNumber: number) => versions.find((version) => version.isEvent !== true && version.versionNumber === versionNumber) ?? null,
     findByOperationId: async (_jobId: string, operationId: string) => versions.find((version) => version.isEvent === true && version.operationId === operationId) ?? null,
@@ -226,10 +234,17 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
     }
   };
   const sowSyncs: string[] = [];
+  const sowCancels: Array<{ jobId: string; note?: string }> = [];
   const sowService: any = {
     jobBillingFingerprint: async () => 'billing-current',
     syncServicesFromJobWorkflows: async (jobId: string) => {
       sowSyncs.push(jobId);
+    },
+    // `undefined` status means the job has no SOW at all, which is the common
+    // case for the states these tests drive.
+    findByJobId: async () => (opts.sowStatus == null ? null : { _id: 'sow-1', status: opts.sowStatus }),
+    cancelForCancelledJob: async (jobId: string, note?: string) => {
+      sowCancels.push({ jobId, note });
     }
   };
   const activityService: any = {
@@ -295,6 +310,7 @@ function buildHarness(overrides: Record<string, unknown> = {}, opts: { seedVersi
     operations,
     restores,
     sowSyncs,
+    sowCancels,
     failPublicationOnce: (): void => {
       publicationFailures += 1;
     },
@@ -998,7 +1014,9 @@ describe('JobReviewService withdrawal', () => {
     expect(job.customerActionRequired).toBeNull();
     // Spent once used, so a later withdrawal cannot restore a stale baseline.
     expect(job.handoverVersionNumber).toBeNull();
-    expect(restores).toEqual([{ versionNumber: 1000, note: 'Withdrawn by the lab', visibleToCustomer: true }]);
+    // Authored by the lab, because the lab is who reverted it — a rejection
+    // restores the same way but under the customer's name.
+    expect(restores).toEqual([{ versionNumber: 1000, note: 'Withdrawn by the lab', authorRole: JobVersionAuthorRole.STAFF, visibleToCustomer: true }]);
     expect(comments[0].content).toContain('We need to rework the design.');
     // The live graph moved; the SOW billing core has to follow or Recalculate
     // still shows the customer's unsubmitted draft.
@@ -1114,5 +1132,228 @@ describe('JobReviewService handover baseline', () => {
     const { service, job } = buildHarness();
     await service.reviewJob({ operationId: 'acc-1', jobId: JOB_ID, decision: JobReviewDecision.ACCEPT }, staff);
     expect(job.handoverVersionNumber ?? null).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Customer-initiated commands
+// ---------------------------------------------------------------------------
+
+const awaitingApproval = { state: JobState.CHANGES_REQUESTED, customerActionRequired: CustomerActionRequired.APPROVE_WORKFLOW };
+
+describe('rejectJobReview', () => {
+  const reject = { operationId: 'reject-1', jobId: JOB_ID, reason: 'The volumes are wrong.' };
+
+  it('hands the job back to the lab rather than ending it', async () => {
+    const { service, job } = buildHarness(awaitingApproval);
+    await service.rejectJobReview(reject, customer);
+    expect({ state: job.state, action: job.customerActionRequired ?? null }).toEqual({ state: JobState.SUBMITTED, action: null });
+  });
+
+  it('posts the reason once, as the customer, however many times the submit is retried', async () => {
+    const { service, comments } = buildHarness(awaitingApproval);
+    await service.rejectJobReview(reject, customer);
+    await service.rejectJobReview(reject, customer);
+    expect(comments).toEqual([
+      expect.objectContaining({
+        authorType: 'CLIENT',
+        isInternal: false,
+        content: 'Customer rejected the proposed workflow\n\nThe volumes are wrong.'
+      })
+    ]);
+  });
+
+  it('records the history event against the customer, not the lab', async () => {
+    const { service, versions } = buildHarness(awaitingApproval);
+    await service.rejectJobReview(reject, customer);
+    const event = versions.find((v) => v.isEvent === true && v.operationId === 'reject-1');
+    expect({ role: event?.authorRole, note: event?.note }).toEqual({ role: JobVersionAuthorRole.CUSTOMER, note: 'Rejected by the customer' });
+  });
+
+  it('puts the graph back to the customer’s own last version, dropping the lab’s edits', async () => {
+    // Seeded v1000 CUSTOMER, v1001 STAFF: the lab edited and asked for approval.
+    // Refusing that has to undo it, or the job returns to the lab still carrying
+    // the very changes the customer just refused.
+    const { service, restores, sowSyncs } = buildHarness(awaitingApproval);
+
+    await service.rejectJobReview(reject, customer);
+
+    expect(restores).toEqual([{ versionNumber: 1000, note: 'Rejected the lab’s changes', authorRole: JobVersionAuthorRole.CUSTOMER, visibleToCustomer: true }]);
+    // The live graph moved, so the SOW's billing core has to follow it.
+    expect(sowSyncs).toEqual([JOB_ID]);
+  });
+
+  it('restores nothing when the lab asked for approval without editing anything', async () => {
+    // Appending a version identical to the one below it would read as an edit
+    // the customer never made.
+    const { service, restores } = buildHarness(awaitingApproval, {
+      seedVersions: [{ _id: 'content-1000', jobId: JOB_ID, versionNumber: 1000, authorRole: JobVersionAuthorRole.CUSTOMER, workflows: VERSION_WORKFLOWS, visibleToCustomer: true, isEvent: false }]
+    });
+
+    await service.rejectJobReview(reject, customer);
+
+    expect(restores).toEqual([]);
+  });
+
+  it('falls back to the original submission on a job the lab submitted on their behalf', async () => {
+    // Every version is STAFF-authored, so there is no customer version to go
+    // back to and the first submission is the only thing "before the lab's
+    // edits" can mean.
+    const { service, restores } = buildHarness(awaitingApproval, {
+      seedVersions: [
+        {
+          _id: 'content-1000',
+          jobId: JOB_ID,
+          versionNumber: 1000,
+          authorRole: JobVersionAuthorRole.STAFF,
+          workflows: [{ name: 'as submitted', nodes: [], edges: [] }],
+          visibleToCustomer: true,
+          isEvent: false
+        },
+        { _id: 'content-1001', jobId: JOB_ID, versionNumber: 1001, authorRole: JobVersionAuthorRole.STAFF, workflows: VERSION_WORKFLOWS, visibleToCustomer: true, isEvent: false }
+      ]
+    });
+
+    await service.rejectJobReview(reject, customer);
+
+    expect(restores.map((r: any) => r.versionNumber)).toEqual([1000]);
+  });
+
+  it('restores once however many times the submit is retried', async () => {
+    const { service, restores } = buildHarness(awaitingApproval);
+
+    await service.rejectJobReview(reject, customer);
+    await service.rejectJobReview(reject, customer);
+
+    expect(restores).toHaveLength(1);
+  });
+
+  it('does not announce a revert it has not performed', async () => {
+    // The comment tells the lab the changes were refused; it must not land
+    // before the graph has actually moved back.
+    const { service, restores, comments } = buildHarness(awaitingApproval);
+
+    await service.rejectJobReview(reject, customer);
+
+    expect(restores).toHaveLength(1);
+    expect(comments).toHaveLength(1);
+  });
+
+  it('refuses a job that is not awaiting the customer’s approval', async () => {
+    // Editing and replying are different asks; rejecting is only offered against
+    // an approval request, and the server has to agree with that.
+    for (const overrides of [{ state: JobState.SUBMITTED }, { state: JobState.CHANGES_REQUESTED, customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW }]) {
+      const { service } = buildHarness(overrides);
+      await expect(service.rejectJobReview(reject, customer)).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+
+  it('refuses someone who does not own the job', async () => {
+    const { service } = buildHarness(awaitingApproval);
+    await expect(service.rejectJobReview(reject, staff)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('requires a reason', async () => {
+    const { service } = buildHarness(awaitingApproval);
+    await expect(service.rejectJobReview({ ...reject, reason: '   ' }, customer)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('cancelJob', () => {
+  const cancel = { operationId: 'cancel-1', jobId: JOB_ID, reason: 'Grant fell through.' };
+
+  it.each([
+    ['submitted', { state: JobState.SUBMITTED }, undefined],
+    ['with the customer', awaitingApproval, undefined],
+    ['accepted with the SOW out for signature', { state: JobState.ACCEPTED }, 'SENT'],
+    ['accepted with the SOW signed by the client alone', { state: JobState.ACCEPTED }, 'SIGNED']
+  ])('cancels a job %s', async (_label, overrides, sowStatus) => {
+    const { service, job } = buildHarness(overrides, { sowStatus: sowStatus as string | undefined });
+    await service.cancelJob(cancel, customer);
+    expect(job.state).toBe(JobState.CANCELLED);
+  });
+
+  it('refuses once the SOW is countersigned — that is an agreement between both parties', async () => {
+    const { service, job } = buildHarness({ state: JobState.ACCEPTED }, { sowStatus: 'FINAL' });
+    await expect(service.cancelJob(cancel, customer)).rejects.toBeInstanceOf(BadRequestException);
+    expect(job.state).toBe(JobState.ACCEPTED);
+  });
+
+  it('cancels the standing SOW with the job, so nothing is left signable', async () => {
+    const { service, sowCancels } = buildHarness({ state: JobState.ACCEPTED }, { sowStatus: 'SENT' });
+    await service.cancelJob(cancel, customer);
+    expect(sowCancels).toEqual([{ jobId: JOB_ID, note: 'Grant fell through.' }]);
+  });
+
+  it('is idempotent on a replayed submit', async () => {
+    const { service, comments, activityEvents, sowCancels } = buildHarness({ state: JobState.ACCEPTED }, { sowStatus: 'SENT' });
+    await service.cancelJob(cancel, customer);
+    await service.cancelJob(cancel, customer);
+    expect({ comments: comments.length, activity: activityEvents.length, sowCancels: sowCancels.length }).toEqual({ comments: 1, activity: 1, sowCancels: 1 });
+  });
+
+  it('refuses a non-owner, a closed job, and an already-cancelled one', async () => {
+    const { service } = buildHarness({ state: JobState.SUBMITTED });
+    await expect(service.cancelJob(cancel, staff)).rejects.toBeInstanceOf(ForbiddenException);
+    for (const state of [JobState.CLOSED, JobState.CANCELLED]) {
+      const harness = buildHarness({ state });
+      await expect(harness.service.cancelJob(cancel, customer)).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+
+  it('requires a reason', async () => {
+    const { service } = buildHarness({ state: JobState.SUBMITTED });
+    await expect(service.cancelJob({ ...cancel, reason: '' }, customer)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('requestJobEditAccess', () => {
+  const request = { operationId: 'edit-req-1', jobId: JOB_ID, message: 'I need to add a sample.' };
+
+  it('records the request without moving the job — staff still have to grant it', async () => {
+    const { service, job } = buildHarness({ state: JobState.ACCEPTED });
+    await service.requestJobEditAccess(request, customer);
+    expect({ state: job.state, requested: job.editAccessRequestedAt instanceof Date }).toEqual({ state: JobState.ACCEPTED, requested: true });
+  });
+
+  it('is available with no message at all', async () => {
+    const { service, comments } = buildHarness({ state: JobState.ACCEPTED });
+    await service.requestJobEditAccess({ operationId: 'edit-req-2', jobId: JOB_ID }, customer);
+    expect(comments).toEqual([expect.objectContaining({ authorType: 'CLIENT', content: 'Customer requested access to edit this job' })]);
+  });
+
+  it('is idempotent on a replayed submit', async () => {
+    const { service, comments, activityEvents } = buildHarness({ state: JobState.ACCEPTED });
+    await service.requestJobEditAccess(request, customer);
+    await service.requestJobEditAccess(request, customer);
+    expect({ comments: comments.length, activity: activityEvents.length }).toEqual({ comments: 1, activity: 1 });
+  });
+
+  it.each(['SIGNED', 'FINAL'])('refuses once the SOW is %s', async (sowStatus) => {
+    const { service } = buildHarness({ state: JobState.ACCEPTED }, { sowStatus });
+    await expect(service.requestJobEditAccess(request, customer)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses when the customer already holds edit access', async () => {
+    const { service } = buildHarness({ state: JobState.CHANGES_REQUESTED, customerActionRequired: CustomerActionRequired.EDIT_WORKFLOW });
+    await expect(service.requestJobEditAccess(request, customer)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('refuses a non-owner and a job that is no longer open', async () => {
+    const { service } = buildHarness({ state: JobState.ACCEPTED });
+    await expect(service.requestJobEditAccess(request, staff)).rejects.toBeInstanceOf(ForbiddenException);
+    for (const state of [JobState.CLOSED, JobState.CANCELLED]) {
+      const harness = buildHarness({ state });
+      await expect(harness.service.requestJobEditAccess(request, customer)).rejects.toBeInstanceOf(BadRequestException);
+    }
+  });
+
+  it('is retired by the next staff review decision, so the client is not told a request is still pending', async () => {
+    const { service, job } = buildHarness({ state: JobState.SUBMITTED });
+    await service.requestJobEditAccess(request, customer);
+    expect(job.editAccessRequestedAt).toBeInstanceOf(Date);
+
+    await service.reviewJob({ operationId: 'review-after-request', jobId: JOB_ID, decision: JobReviewDecision.REQUEST_EDITS, message: 'Go ahead.' }, staff);
+    expect(job.editAccessRequestedAt ?? null).toBeNull();
   });
 });

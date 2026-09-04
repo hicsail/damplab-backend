@@ -20,7 +20,7 @@ describe('WorkflowNodeService.getByIDs', () => {
       })
     };
 
-    return new WorkflowNodeService(nodeModel as any, {} as any, {} as any, {} as any);
+    return new WorkflowNodeService(nodeModel as any, {} as any, {} as any, {} as any, {} as any);
   };
 
   it('returns nodes in the order they were asked for, not the order Mongo stored them', async () => {

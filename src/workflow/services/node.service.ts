@@ -5,6 +5,8 @@ import mongoose from 'mongoose';
 import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../models/node.model';
 import { AddNodeInputFull } from '../dtos/add-node.input';
 import { Workflow, WorkflowDocument } from '../models/workflow.model';
+import { WorkflowEdge, WorkflowEdgeDocument } from '../models/edge.model';
+import { readyOperationIds } from '../utils/operation-readiness';
 import { JobService } from '../../job/job.service';
 import { archiveQuery, NodeArchiveFilter } from '../dtos/node-archive-filter.dto';
 import { Job } from '../../job/job.model';
@@ -15,6 +17,7 @@ export class WorkflowNodeService {
   constructor(
     @InjectModel(WorkflowNode.name) private readonly workflowNodeModel: Model<WorkflowNodeDocument>,
     @InjectModel(Workflow.name) private readonly workflowModel: Model<WorkflowDocument>,
+    @InjectModel(WorkflowEdge.name) private readonly workflowEdgeModel: Model<WorkflowEdgeDocument>,
     @Inject(forwardRef(() => JobService)) private readonly jobService: JobService,
     private readonly availability: AvailabilityService
   ) {}
@@ -135,10 +138,68 @@ export class WorkflowNodeService {
     return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, update, { new: true });
   }
 
-  /** All operations (nodes) assigned to a given user, for the technician bench view. */
+  /**
+   * All operations (nodes) assigned to a given user, for the technician bench view.
+   *
+   * Each node is annotated with the workflow it belongs to and whether anything
+   * upstream is still holding it up, so the bench can offer "only what I can
+   * start now". Both answers need the *whole* workflow — a blocking predecessor
+   * is routinely assigned to somebody else — so they are resolved here, in two
+   * queries for the entire bench, rather than through the per-node `workflow`
+   * resolve field, which would be one round trip per row.
+   */
   async getNodesByAssignee(assigneeId: string): Promise<WorkflowNode[]> {
     if (!assigneeId) return [];
-    return this.workflowNodeModel.find({ assigneeId }).exec();
+    const nodes = await this.workflowNodeModel.find({ assigneeId }).exec();
+    if (nodes.length === 0) return [];
+
+    const workflows = await this.workflowModel
+      .find({ nodes: { $in: nodes.map((n) => n._id) } })
+      .select('nodes edges')
+      .lean()
+      .exec();
+
+    // Every node of every workflow involved, not just this user's: readiness is a
+    // property of the graph, and most of the graph belongs to other people.
+    const allNodeIds = workflows.flatMap((w) => (w.nodes ?? []).map(String));
+    const [states, edges] = await Promise.all([
+      this.workflowNodeModel
+        .find({ _id: { $in: allNodeIds } })
+        .select('state')
+        .lean()
+        .exec(),
+      this.workflowEdgeModel
+        .find({ _id: { $in: workflows.flatMap((w) => (w.edges ?? []).map(String)) } })
+        .select('source target')
+        .lean()
+        .exec()
+    ]);
+    const stateById = new Map(states.map((n) => [String(n._id), n.state as WorkflowNodeState]));
+    const edgeById = new Map(edges.map((e) => [String(e._id), e]));
+
+    const ready = new Set<string>();
+    const workflowIdByNode = new Map<string, string>();
+    for (const workflow of workflows) {
+      const nodeIds = (workflow.nodes ?? []).map(String);
+      for (const id of nodeIds) workflowIdByNode.set(id, String(workflow._id));
+      const readyHere = readyOperationIds({
+        nodes: nodeIds.map((id) => ({ id, state: stateById.get(id) ?? WorkflowNodeState.QUEUED })),
+        edges: (workflow.edges ?? [])
+          .map((id) => edgeById.get(String(id)))
+          .filter((e): e is typeof edges[number] => Boolean(e))
+          .map((e) => ({ source: String(e.source), target: String(e.target) }))
+      });
+      for (const id of readyHere) ready.add(id);
+    }
+
+    // Attached to the returned documents so the resolve fields are a plain read.
+    // A node reached by any other query keeps `undefined` there, which those
+    // fields report as null rather than guessing.
+    for (const node of nodes) {
+      (node as any).workflowId = workflowIdByNode.get(String(node._id)) ?? null;
+      (node as any).isReadyToStart = ready.has(String(node._id));
+    }
+    return nodes;
   }
 
   /** Persist the protocols.io step ids a technician has checked off for an operation. */
@@ -154,9 +215,15 @@ export class WorkflowNodeService {
     return this.jobService.findByWorkflow(workflow as unknown as Workflow);
   }
 
-  /** Nodes in this state that belong to workflows on approved jobs (for lab monitor by node state). */
-  async getNodesByStateForApprovedJobs(nodeState: WorkflowNodeState, archiveFilter: NodeArchiveFilter = NodeArchiveFilter.ACTIVE): Promise<WorkflowNode[]> {
-    const approvedWorkflowIds = await this.jobService.getWorkflowIdsForApprovedJobs();
+  /**
+   * Nodes in this state that belong to workflows on approved jobs whose SOW is
+   * signed (for lab monitor by node state).
+   *
+   * `includeUnsignedSow` is the staff override; see
+   * `JobService.getWorkflowIdsForApprovedJobs`.
+   */
+  async getNodesByStateForApprovedJobs(nodeState: WorkflowNodeState, archiveFilter: NodeArchiveFilter = NodeArchiveFilter.ACTIVE, includeUnsignedSow = false): Promise<WorkflowNode[]> {
+    const approvedWorkflowIds = await this.jobService.getWorkflowIdsForApprovedJobs({ includeUnsignedSow });
     if (approvedWorkflowIds.length === 0) return [];
     const workflows = await this.workflowModel
       .find({ _id: { $in: approvedWorkflowIds } })

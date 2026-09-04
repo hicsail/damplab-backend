@@ -21,7 +21,7 @@ const JOB_ID = 'job-1';
 const sow = { id: SOW_ID, jobId: JOB_ID, clientEmail: 'client@lab.org' } as any;
 const job = { sub: 'sub-owner', email: 'client@lab.org' } as any;
 
-function build(overrides: { sow?: any; job?: any } = {}): { resolver: SOWResolver; sowService: any; jobService: any; sowVersionService: any } {
+function build(overrides: { sow?: any; job?: any } = {}): { resolver: SOWResolver; sowService: any; jobService: any; sowVersionService: any; keycloakService: any } {
   const sowService = {
     findById: jest.fn().mockResolvedValue('sow' in overrides ? overrides.sow : sow),
     findByJobId: jest.fn().mockResolvedValue('sow' in overrides ? overrides.sow : sow)
@@ -32,7 +32,10 @@ function build(overrides: { sow?: any; job?: any } = {}): { resolver: SOWResolve
   const sowVersionService = {
     actionGate: jest.fn().mockResolvedValue({ canSend: true, sendBlockers: [], canSign: true, signBlockers: [], canCountersign: false, countersignBlockers: [], missingFields: [] })
   } as any;
-  return { resolver: new SOWResolver(sowService, jobService, sowVersionService), sowService, jobService, sowVersionService };
+  const keycloakService = {
+    getAccessTierMembers: jest.fn().mockResolvedValue([])
+  } as any;
+  return { resolver: new SOWResolver(sowService, jobService, sowVersionService, keycloakService), sowService, jobService, sowVersionService, keycloakService };
 }
 
 describe('SOWResolver.sowByJobId', () => {

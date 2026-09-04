@@ -149,15 +149,17 @@ export class WorkflowNodeResolver {
   }
 
   @Query(() => [WorkflowNode], {
-    description: 'Nodes in this state that belong to approved-job workflows (lab monitor columns by node state). Archived cards are excluded unless asked for.'
+    description: 'Nodes in this state that belong to approved-job workflows whose Statement of Work is signed (lab monitor columns by node state). Archived cards are excluded unless asked for.'
   })
   @UseGuards(AuthRolesGuard)
   @RequirePermission(Permission.LabMonitorView)
   async getLabMonitorNodes(
     @Args('nodeState', { type: () => WorkflowNodeState }) nodeState: WorkflowNodeState,
-    @Args('archiveFilter', { type: () => NodeArchiveFilter, nullable: true, defaultValue: NodeArchiveFilter.ACTIVE }) archiveFilter?: NodeArchiveFilter
+    @Args('archiveFilter', { type: () => NodeArchiveFilter, nullable: true, defaultValue: NodeArchiveFilter.ACTIVE }) archiveFilter?: NodeArchiveFilter,
+    @Args('includeUnsignedSow', { type: () => Boolean, nullable: true, description: 'Staff override: also show approved jobs whose Statement of Work is unsigned, or absent. Off by default.' })
+    includeUnsignedSow?: boolean
   ): Promise<WorkflowNode[]> {
-    return this.nodeService.getNodesByStateForApprovedJobs(nodeState, archiveFilter ?? NodeArchiveFilter.ACTIVE);
+    return this.nodeService.getNodesByStateForApprovedJobs(nodeState, archiveFilter ?? NodeArchiveFilter.ACTIVE, includeUnsignedSow === true);
   }
 
   /**

@@ -14,6 +14,7 @@ import { JobVersionModule } from '../job-version/job-version.module';
 import { ActivityModule } from '../activity/activity.module';
 import { CommentModule } from '../comment/comment.module';
 import { NotificationModule } from '../notification/notification.module';
+import { KeycloakModule } from '../keycloak/keycloak.module';
 
 @Module({
   imports: [
@@ -27,6 +28,8 @@ import { NotificationModule } from '../notification/notification.module';
     SowPresetModule,
     JobVersionModule,
     ActivityModule,
+    // For administratorStaffList: who may be named Project Manager.
+    KeycloakModule,
     forwardRef(() => NotificationModule),
     // For the automated comments a withdrawal or a voided signature posts: the
     // customer's job thread is the only channel they actually read.

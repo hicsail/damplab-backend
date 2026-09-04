@@ -38,7 +38,7 @@ export class WorkflowResolver {
     return (await this.workflowService.updateState(workflow, newState))!;
   }
 
-  @Query(() => [Workflow])
+  @Query(() => [Workflow], { deprecationReason: 'Use getWorkflowsByStateForLabMonitor. Retained for the orphaned /dominos board; it now applies the same signed-SOW gate.' })
   @RequirePermission(Permission.LabMonitorView)
   async getWorkflowByState(@Args('state', { type: () => WorkflowState }) state: WorkflowState): Promise<Workflow[]> {
     return this.workflowService.getByState(state);
@@ -48,8 +48,12 @@ export class WorkflowResolver {
     description: 'Workflows in this state that belong to jobs accepted by technicians (for lab monitor).'
   })
   @RequirePermission(Permission.LabMonitorView)
-  async getWorkflowsByStateForLabMonitor(@Args('state', { type: () => WorkflowState }) state: WorkflowState): Promise<Workflow[]> {
-    return this.workflowService.getByStateForApprovedJobs(state);
+  async getWorkflowsByStateForLabMonitor(
+    @Args('state', { type: () => WorkflowState }) state: WorkflowState,
+    @Args('includeUnsignedSow', { type: () => Boolean, nullable: true, description: 'Staff override: also show approved jobs whose Statement of Work is unsigned, or absent. Off by default.' })
+    includeUnsignedSow?: boolean
+  ): Promise<Workflow[]> {
+    return this.workflowService.getByStateForApprovedJobs(state, includeUnsignedSow === true);
   }
 
   @ResolveField()

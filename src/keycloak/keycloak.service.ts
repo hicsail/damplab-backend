@@ -419,22 +419,68 @@ export class KeycloakService {
   }
 
   /**
-   * Get members of the configured lab staff group (e.g. damplab-staff).
-   * Returns { id, displayName }[] where id is the Keycloak user id (same as sub in tokens).
-   * Returns [] if Keycloak is not configured, group is missing, or the API fails.
+   * Get members of the configured lab staff groups (by default damplab-staff and
+   * technician — see KEYCLOAK_LAB_STAFF_GROUP_NAMES).
+   *
+   * This is the wide list: the lab monitor's assignee dropdown and the SOW's
+   * Project Lead. Do not narrow it to restrict one of its consumers — add a
+   * separate call, as `getAdministratorGroupMembers` does.
    */
   async getLabStaffGroupMembers(): Promise<LabStaffMember[]> {
+    return this.getMembersOfGroups(this.labStaffGroupNames, 'lab staff');
+  }
+
+  /**
+   * Members of the given access tiers' Keycloak groups.
+   *
+   * Sourced from `TIER_GROUP` rather than from the configurable lab-staff list,
+   * because the restrictions these serve — who may be named Project Manager or
+   * Project Lead on a Statement of Work — are about the access tier itself. The
+   * lab-staff list is `KEYCLOAK_LAB_STAFF_GROUP_NAMES`, which an operator can
+   * repoint at any time, so it cannot stand in for a tier.
+   */
+  async getAccessTierMembers(tiers: readonly AccessTier[]): Promise<LabStaffMember[]> {
+    const groups = tiers.map((tier) => TIER_GROUP[tier]).filter((name): name is string => name !== null);
+    if (groups.length === 0) return [];
+
+    const label = tiers.join('+').toLowerCase();
+    const candidates = await this.getMembersOfGroups(groups, label);
+
+    // Group membership names the candidates; each one's *resolved* tier decides
+    // whether they stay. The two can differ — the tier is derived from a member's
+    // whole claim set (`deriveAccessTier`, highest wins), while the group lookup
+    // returns whichever group object matched the name, including one nested under
+    // another. Filtering on the derived tier makes the answer independent of how
+    // the realm happens to nest its groups.
+    const allowed = new Set(tiers);
+    const members: LabStaffMember[] = [];
+    for (const candidate of candidates) {
+      const tier = deriveAccessTierFromGroups(await this.getUserGroups(candidate.id));
+      if (allowed.has(tier)) members.push(candidate);
+    }
+    if (members.length !== candidates.length) {
+      this.logger.log(`Keycloak ${label}: ${candidates.length} group member(s), ${members.length} after resolving access tier`);
+    }
+    return members;
+  }
+
+  /**
+   * Members of the named groups, de-duplicated by user id.
+   * Returns { id, displayName }[] where id is the Keycloak user id (same as sub in tokens).
+   * Returns [] if Keycloak is not configured, the groups are missing, or the API fails.
+   */
+  private async getMembersOfGroups(groupNames: readonly string[], label: string): Promise<LabStaffMember[]> {
     if (!this.isConfigured()) {
-      this.logger.log('Keycloak not configured (missing KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, or KEYCLOAK_CLIENT_SECRET); lab staff list will use LAB_MONITOR_STAFF env or be empty');
+      this.logger.log(`Keycloak not configured (missing KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, or KEYCLOAK_CLIENT_SECRET); ${label} list will use LAB_MONITOR_STAFF env or be empty`);
       return [];
     }
 
     try {
-      // De-duplicated union across every configured group. A technician moved out of
+      // De-duplicated union across every named group. A technician moved out of
       // damplab-staff must stay assignable, and someone in both groups must not
       // appear twice.
       const byId = new Map<string, LabStaffMember>();
-      for (const groupName of this.labStaffGroupNames) {
+      for (const groupName of groupNames) {
         const group = await this.findGroupByName(groupName);
         if (!group) {
           // Not an error: `technician` legitimately does not exist until the realm
@@ -459,10 +505,10 @@ export class KeycloakService {
         }
       }
       const members = [...byId.values()];
-      this.logger.log(`Keycloak lab staff groups "${this.labStaffGroupNames.join(', ')}": ${members.length} member(s)`);
+      this.logger.log(`Keycloak ${label} groups "${groupNames.join(', ')}": ${members.length} member(s)`);
       return members;
     } catch (err) {
-      this.logger.warn(`Keycloak getLabStaffGroupMembers failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.warn(`Keycloak getMembersOfGroups(${label}) failed: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
   }

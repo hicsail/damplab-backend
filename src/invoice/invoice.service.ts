@@ -8,6 +8,7 @@ import { SOWService } from '../sow/sow.service';
 import { SowVersionService } from '../sow/sow-version.service';
 import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
+import { selectServiceLines } from './select-service-lines';
 
 function pad3(n: number): string {
   return String(n).padStart(3, '0');
@@ -31,6 +32,11 @@ export class InvoiceService {
     return this.invoiceModel.find({ jobId }).sort({ createdAt: -1 }).exec();
   }
 
+  /** How many invoices a job has. The jobs list asks this per row, so it never loads the documents. */
+  async countByJobId(jobId: string): Promise<number> {
+    return this.invoiceModel.countDocuments({ jobId }).exec();
+  }
+
   async createForJob(input: CreateInvoiceInput, user: User): Promise<Invoice> {
     const roles = user.realm_access?.roles ?? [];
     const isStaff = roles.includes(Role.DamplabStaff);
@@ -48,25 +54,20 @@ export class InvoiceService {
       throw new BadRequestException('Cannot generate invoice: job has no SOW');
     }
 
-    const serviceIds = Array.isArray(input.serviceIds) ? input.serviceIds.map(String).filter(Boolean) : [];
-    if (!serviceIds.length) {
-      throw new BadRequestException('serviceIds must be a non-empty list');
-    }
-
-    // Bill the version in force with the customer, not the job's current
-    // figures. `sow.services` tracks the job — the workflow sync overwrites it
-    // whenever the spec changes — so invoicing from it would bill a price no
-    // signed document ever stated. The active version is the thing the customer
-    // agreed to. A SOW with no active version at all (legacy, pre-versioning)
-    // falls back to the billing core, which is the only record it has.
+    // What this invoice bills, and what the staff dialog listed — one array, so
+    // a position means the same thing on both sides. See billableServiceLines.
+    const sowServices: any[] = await this.sowService.billableServiceLines(sow);
+    // Adjustments follow the same "version in force, else the billing core"
+    // rule, but keep their own fallback: deriveInputs drops SPECIAL_TERM, and
+    // those are carried onto the invoice as zero-amount notes.
     const active = await this.sowVersionService.getActiveVersion(String((sow as any)._id));
-    const sowServices: any[] = active?.inputs?.services?.length ? active.inputs.services : sow.services ?? [];
-    const serviceById = new Map(sowServices.map((s: any) => [String(s.serviceId ?? s._id ?? ''), s]));
 
-    const selected = serviceIds.map((sid) => serviceById.get(String(sid))).filter(Boolean) as any[];
-    if (!selected.length) {
-      throw new BadRequestException('No matching services found in SOW for provided serviceIds');
-    }
+    // Refuses anything it cannot place exactly, rather than dropping it. Every
+    // unresolvable selection here was previously a silent mis-bill.
+    const selected = selectServiceLines(sowServices, {
+      services: input.services,
+      serviceIds: Array.isArray(input.serviceIds) ? input.serviceIds.map(String).filter(Boolean) : []
+    });
 
     const subtotal = round2(selected.reduce((sum, s) => sum + (Number(s.cost) || 0), 0));
 
@@ -126,12 +127,20 @@ export class InvoiceService {
       invoiceNumber,
       invoiceDate: new Date(),
       createdBy,
+      // Carry the pricing breakdown, not just the total. The SOW's Fee Schedule
+      // renders "$unitCost x multiplier = $cost" off these same three fields;
+      // dropping them here is what left the invoice's pricing column blank.
+      // Undefined is preserved rather than coerced to 0 — a legacy line has no
+      // breakdown, and 0 would read as a free unit rather than as "unknown".
       services: selected.map((s: any) => ({
         _id: String(s.serviceId ?? s._id),
         serviceId: String(s.serviceId ?? s._id),
         name: String(s.name ?? 'Service'),
         description: String(s.description ?? ''),
         cost: Number(s.cost) || 0,
+        unitCost: s.unitCost == null ? undefined : Number(s.unitCost),
+        multiplier: s.multiplier == null ? undefined : Number(s.multiplier),
+        runCount: s.runCount == null ? undefined : Number(s.runCount),
         category: String(s.category ?? '')
       })),
       subtotal,

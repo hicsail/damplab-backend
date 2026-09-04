@@ -9,6 +9,7 @@ import { Job } from '../job/job.model';
 import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
+import { SowVersionInputs } from './sow-version.model';
 import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-field-calculator';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
@@ -341,6 +342,45 @@ export class SOWService {
     await this.update(String(existingSow._id), updateInput);
 
     await this.sowVersionService.refreshDocumentStale(String(existingSow._id));
+  }
+
+  /**
+   * The service lines an invoice for this SOW bills, in order.
+   *
+   * One definition, because there used to be two: `createForJob` billed the
+   * version in force while the staff invoice dialog listed `sow.services`, the
+   * live billing core the workflow sync overwrites on every spec change. Those
+   * two disagreeing is not hypothetical — it is exactly what `documentStale`
+   * flags — so staff could tick lines from one array and bill from another.
+   * Positional selection makes that divergence a mis-bill rather than a
+   * cosmetic difference, so the list and the billing now come from here.
+   *
+   * The version in force is preferred because it is what the customer agreed
+   * to. A SOW with no active version at all (legacy, pre-versioning) falls back
+   * to the billing core, normalized through deriveInputs so both branches
+   * return the same shape.
+   */
+  async billableServiceLines(sow: SOW): Promise<SowVersionInputs['services']> {
+    const active = await this.sowVersionService.getActiveVersion(String((sow as any)._id));
+    if (active?.inputs?.services?.length) return active.inputs.services;
+    return SowVersionService.deriveInputs(sow, null).services;
+  }
+
+  /**
+   * Cancels the SOW attached to a job the client just cancelled, if there is one
+   * still standing.
+   *
+   * Exposed here rather than having JobReviewService reach for SowVersionService
+   * directly: that service already takes SOWService through a forwardRef, and a
+   * second cross-module dependency would deepen the cycle for one call.
+   *
+   * A missing or already-cancelled SOW is not an error — cancelling a job that
+   * never got a document is ordinary, and the cascade has to be replayable.
+   */
+  async cancelForCancelledJob(jobId: string, note: string | undefined, author: { sub: string; name: string }): Promise<void> {
+    const sow = await this.findByJobId(jobId);
+    if (!sow || sow.status === SOWStatus.CANCELLED) return;
+    await this.sowVersionService.cancel(String(sow._id), note, author, { byCustomer: true });
   }
 
   /**
@@ -699,6 +739,28 @@ export class SOWService {
    */
   async findByJobId(jobId: string): Promise<SOW | null> {
     return this.sowModel.findOne({ jobId }).exec();
+  }
+
+  /**
+   * Of these jobs, the ones whose SOW the customer has signed.
+   *
+   * One query for the whole set rather than `findByJobId` per job: the caller is
+   * the lab monitor gate, which runs behind polling boards. `jobId` is indexed
+   * (`SOWSchema.index({ jobId: 1 })`).
+   *
+   * FINAL counts alongside SIGNED. `SIGNED` means the client has signed and staff
+   * have yet to countersign; countersigning moves it to FINAL, so treating SIGNED
+   * as the only signed state would drop a job off the boards at the moment its
+   * paperwork completed.
+   */
+  async findSignedJobIds(jobIds: string[]): Promise<string[]> {
+    if (jobIds.length === 0) return [];
+    const signed = await this.sowModel
+      .find({ jobId: { $in: jobIds }, status: { $in: [SOWStatus.SIGNED, SOWStatus.FINAL] } })
+      .select('jobId')
+      .lean()
+      .exec();
+    return signed.map((sow) => sow.jobId);
   }
 
   /**

@@ -354,6 +354,7 @@ export function buildCalculatedFields(inputs: SowVersionInputs, ctx: SowDocument
     isEnabled: def.enabledByDefault && (values[def.key] ?? '').trim() !== '',
     allowsTextOverride: def.allowsTextOverride,
     allowsEmpty: def.allowsEmpty,
+    allowsInitials: def.allowsInitials !== false,
     requiresInitials: false
   }));
 }
@@ -388,6 +389,7 @@ export function mergeCalculatedFields(previous: SowField[], inputs: SowVersionIn
         isEnabled: def.enabledByDefault && calculated.trim() !== '',
         allowsTextOverride: def.allowsTextOverride,
         allowsEmpty: def.allowsEmpty,
+        allowsInitials: def.allowsInitials !== false,
         requiresInitials: false
       });
       continue;
@@ -412,6 +414,7 @@ export function mergeCalculatedFields(previous: SowField[], inputs: SowVersionIn
       order: def.order,
       allowsTextOverride: canOverride,
       allowsEmpty: def.allowsEmpty,
+      allowsInitials: def.allowsInitials !== false,
       calculatedValue: calculated,
       isOverridden,
       isEnabled: prev.isEnabled || justPopulated,
@@ -453,6 +456,7 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
         isEnabled: field.isEnabled !== false,
         allowsTextOverride: true,
         allowsEmpty: true,
+        allowsInitials: true,
         requiresInitials: field.requiresInitials === true
       });
       continue;
@@ -482,7 +486,10 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
       isEnabled: field.isEnabled !== false || justPopulated,
       allowsTextOverride: def.allowsTextOverride,
       allowsEmpty: def.allowsEmpty,
-      requiresInitials: field.requiresInitials === true
+      allowsInitials: def.allowsInitials !== false,
+      // Forced false where the catalogue disallows initials, so a client that
+      // still sends the old flag cannot round-trip it back into the document.
+      requiresInitials: def.allowsInitials !== false && field.requiresInitials === true
     });
   }
 
@@ -502,6 +509,7 @@ export function normalizeIncomingFields(incoming: SowField[], inputs: SowVersion
       isEnabled: false,
       allowsTextOverride: def.allowsTextOverride,
       allowsEmpty: def.allowsEmpty,
+      allowsInitials: def.allowsInitials !== false,
       requiresInitials: false
     });
   }

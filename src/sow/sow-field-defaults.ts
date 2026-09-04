@@ -26,6 +26,16 @@ export interface SowFieldDefinition {
   allowsTextOverride: boolean;
   enabledByDefault: boolean;
   /**
+   * False where asking the customer to initial the section is meaningless.
+   *
+   * Signatures is the only such section today: it is filtered out of the
+   * customer's document entirely (customerDocumentFields), so a
+   * `requiresInitials` flag on it demands initials for something they are never
+   * shown — a document that can never be signed. Absent means initials are
+   * allowed, which is every other section.
+   */
+  allowsInitials?: boolean;
+  /**
    * False on fields the document cannot be sent without. Blocks "Send to
    * customer" while the generated text is empty, and — since an empty required
    * field would otherwise sit hidden with no way for staff to notice it needs
@@ -101,7 +111,9 @@ export const SOW_FIELD_CATALOG: SowFieldDefinition[] = [
   // clientInstitution. Now ordinary sections, off unless staff fill them in.
   { key: 'clientProjectManager', label: 'Client Project Manager', kind: PROSE, order: 160, allowsTextOverride: true, enabledByDefault: false, allowsEmpty: true },
   { key: 'clientCostCenter', label: 'Client Cost Center', kind: PROSE, order: 170, allowsTextOverride: true, enabledByDefault: false, allowsEmpty: true },
-  { key: 'signatures', label: 'Signatures', kind: PROSE, order: 180, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true }
+  // No initials here: this section is the signature block itself, and it is not
+  // part of the document the customer is shown section by section.
+  { key: 'signatures', label: 'Signatures', kind: PROSE, order: 180, allowsTextOverride: true, enabledByDefault: true, allowsEmpty: true, allowsInitials: false }
 ];
 
 /** Custom fields sort after everything in the catalog. */
@@ -126,4 +138,15 @@ export const CUSTOMER_CATEGORY_LABELS: Record<string, string> = {
 
 export function customerCategoryLabel(category?: string | null): string {
   return (category && CUSTOMER_CATEGORY_LABELS[category]) || 'Customer category';
+}
+
+/**
+ * Whether a section may carry a `requiresInitials` flag at all.
+ *
+ * Custom sections and anything not in the catalogue may; a catalogue section
+ * that sets `allowsInitials: false` may not. Enforced at signing time rather
+ * than trusted, so documents saved before this existed cannot block a signature.
+ */
+export function fieldAllowsInitials(key: string): boolean {
+  return findFieldDefinition(key)?.allowsInitials !== false;
 }

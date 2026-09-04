@@ -10,6 +10,13 @@ import { WorkflowService } from '../workflow/workflow.service';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder, JobArchiveFilter, JobScope, JobsForViewerInput } from './dto/jobs-query.dto';
 import { JobFeedStatus, JobFeedStatusEntity, JobFeedStatusEntityDocument } from './job-feed-status.model';
 import { AddWorkflowInputFull } from '../workflow/dtos/add-workflow.input';
+import { SOWService } from '../sow/sow.service';
+
+/**
+ * The states that mean a job is finished being looked at, hidden from the jobs
+ * listing by default. Not COMPLETE — see `runJobsPipeline`.
+ */
+const CLOSED_JOB_STATES = [JobState.CLOSED, JobState.CANCELLED, JobState.REJECTED];
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -20,7 +27,10 @@ export class JobService {
   constructor(
     @InjectModel(Job.name) private readonly jobModel: Model<JobDocument>,
     @InjectModel(JobFeedStatusEntity.name) private readonly jobFeedStatusModel: Model<JobFeedStatusEntityDocument>,
-    @Inject(forwardRef(() => WorkflowService)) private readonly workflowService: WorkflowService
+    @Inject(forwardRef(() => WorkflowService)) private readonly workflowService: WorkflowService,
+    // Circular by design, the same way JobReviewService takes it: the boards gate
+    // on the SOW, and the SOW is built from the job.
+    @Inject(forwardRef(() => SOWService)) private readonly sowService: SOWService
   ) {}
   private readonly logger = new Logger(JobService.name);
 
@@ -83,8 +93,22 @@ export class JobService {
     return this.jobModel.findOne({ workflows: workflow._id });
   }
 
-  /** Workflow IDs that belong to jobs accepted by technicians (ACCEPTED or later in pipeline). */
-  async getWorkflowIdsForApprovedJobs(): Promise<mongoose.Types.ObjectId[]> {
+  /**
+   * Workflow IDs the live boards may show: jobs accepted by technicians
+   * (ACCEPTED or later) **whose Statement of Work the customer has signed**.
+   *
+   * The signature gate is a lookup against the SOW collection, not a job state.
+   * `WAITING_FOR_SOW` and `QUEUED` are declared on `JobState` but nothing ever
+   * assigns them, so an accepted job sits at ACCEPTED whether or not an SOW
+   * exists — which is how unsigned work reached the monitors in the first place.
+   *
+   * A job with no SOW at all is hidden too. That is deliberate: "no contract yet"
+   * and "contract not signed yet" are the same fact from the lab's point of view.
+   * `includeUnsignedSow` is the staff override behind the Lab Monitor's toggle,
+   * so work in flight without paperwork is still reachable by someone who asks
+   * for it. The unattended TV board never passes it.
+   */
+  async getWorkflowIdsForApprovedJobs(options: { includeUnsignedSow?: boolean } = {}): Promise<mongoose.Types.ObjectId[]> {
     const approvedStates = [JobState.ACCEPTED, JobState.WAITING_FOR_SOW, JobState.QUEUED, JobState.IN_PROGRESS, JobState.COMPLETE];
     // Archived jobs drop off the live boards the same way CLOSED ones do —
     // otherwise archiving an IN_PROGRESS job would leave it on the lab monitor.
@@ -93,8 +117,17 @@ export class JobService {
       .select('workflows')
       .lean()
       .exec();
-    const ids = jobs.flatMap((j) => (j.workflows ?? []) as mongoose.Types.ObjectId[]);
+
+    const visible = options.includeUnsignedSow ? jobs : await this.withSignedSow(jobs);
+    const ids = visible.flatMap((j) => (j.workflows ?? []) as mongoose.Types.ObjectId[]);
     return [...new Set(ids)];
+  }
+
+  /** One SOW query for the whole candidate set — these are polling boards, not a detail page. */
+  private async withSignedSow<T extends { _id: any; workflows?: any[] }>(jobs: T[]): Promise<T[]> {
+    if (jobs.length === 0) return [];
+    const signed = new Set(await this.sowService.findSignedJobIds(jobs.map((j) => j._id.toString())));
+    return jobs.filter((j) => signed.has(j._id.toString()));
   }
 
   /**
@@ -223,7 +256,15 @@ export class JobService {
       match.push(this.buildSearchMatch(input.search.trim()));
     }
     if (input.state != null) {
+      // An explicit state wins outright, including a closed one — otherwise the
+      // state filter could never reach a closed job, because an equality and the
+      // exclusion below would be applied to the same field and match nothing.
       match.push({ state: input.state });
+    } else if ((input as AllJobsInput).includeClosed !== true) {
+      // Closed-out jobs are hidden unless asked for. COMPLETE stays visible: lab
+      // work finishing is not the same as the job being done with, and it is
+      // usually still being wrapped up and billed.
+      match.push({ state: { $nin: CLOSED_JOB_STATES } });
     }
     // Archived jobs are hidden unless explicitly asked for. Applies to the
     // customer listing too (which has no archiveFilter field), so archiving a job

@@ -70,6 +70,28 @@ export class InvoiceServiceLineItem {
   @Field(() => Float, { description: 'Cost of the service line item (already priced)' })
   cost: number;
 
+  /**
+   * The three figures below are what let an invoice state the same pricing basis
+   * its SOW does. The Fee Schedule prints "$unitCost x multiplier = $cost" from
+   * exactly these; the invoice used to keep only `cost`, so a line the SOW
+   * explained as "$50.00 x 4" appeared on the invoice as an unexplained $200.00.
+   *
+   * Nullable because lines written before unit prices were recorded have no
+   * breakdown to state — renderers must fall back to the bare total rather than
+   * inventing one by dividing.
+   */
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Price of a single run, before the multiplier. Absent on lines written before unit prices were recorded.' })
+  unitCost?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Everything baked into cost on top of unitCost — the run count and any other multiplier parameter.' })
+  multiplier?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'The run count alone. Superseded by multiplier for display; kept to match the SOW line.' })
+  runCount?: number;
+
   @Prop({ required: true })
   @Field({ description: 'Category of the service' })
   category: string;

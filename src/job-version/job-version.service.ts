@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectModel } from '@nestjs/mongoose';
 import mongoose, { HydratedDocument, Model } from 'mongoose';
 import { JobVersion, JobVersionAuthorRole, JobVersionDocument, JobVersionEdge, JobVersionNode, JobVersionWorkflow } from './job-version.model';
+import { jobVersionAuthorOrg } from './author-org';
 import { SaveJobWorkflowsInput, SaveWorkflowInput } from './job-version.dto';
 import { Job, JobDocument, JobState } from '../job/job.model';
 import { Workflow, WorkflowDocument, WorkflowState } from '../workflow/models/workflow.model';
@@ -189,6 +190,7 @@ export class JobVersionService {
         authorRole: JobVersionAuthorRole.CUSTOMER,
         createdBy: job.sub ?? '',
         createdByName: job.clientDisplayName || job.username || job.email || '',
+        createdByOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.CUSTOMER, institute: job.institute }),
         note: 'Original submission',
         createdAt: job.submitted ?? new Date(),
         bumpMajor: true,
@@ -208,6 +210,36 @@ export class JobVersionService {
     return this.versionModel
       .findOne({ jobId, isEvent: { $ne: true } })
       .sort({ versionNumber: -1 })
+      .exec();
+  }
+
+  /**
+   * The graph as the customer last put it forward — what rejecting the lab's
+   * changes goes back to.
+   *
+   * Their own most recent content version, because everything the lab has done
+   * since is a STAFF-authored version stacked on top of it. Falling back to the
+   * earliest content version covers a job staff submitted on someone's behalf,
+   * where no version is customer-authored at all and the original submission is
+   * the only thing that can be meant by "before the lab's edits".
+   *
+   * This is a scan, unlike the handover baseline a withdrawal restores, which is
+   * stamped on the job when the lab hands it over. The two are not symmetric:
+   * the lab's handover is a single moment worth recording, while "the customer's
+   * last word" is a property of the history itself and stays correct across any
+   * number of rounds. Callers still capture the result when they journal their
+   * command, so a retry restores the same version even if history moves.
+   */
+  async getCustomerBaselineVersion(jobId: string): Promise<JobVersion | null> {
+    const ownedByCustomer = await this.versionModel
+      .findOne({ jobId, isEvent: { $ne: true }, authorRole: JobVersionAuthorRole.CUSTOMER })
+      .sort({ versionNumber: -1 })
+      .exec();
+    if (ownedByCustomer) return ownedByCustomer;
+
+    return this.versionModel
+      .findOne({ jobId, isEvent: { $ne: true } })
+      .sort({ versionNumber: 1 })
       .exec();
   }
 
@@ -334,6 +366,8 @@ export class JobVersionService {
       authorRole: JobVersionAuthorRole;
       createdBy: string;
       createdByName: string;
+      /** See `jobVersionAuthorOrg`. Resolved by the caller, which is the only place the token is in scope. */
+      createdByOrg?: string;
       note?: string;
       createdAt?: Date;
       jobState?: JobState;
@@ -367,6 +401,7 @@ export class JobVersionService {
         operationId: meta.operationId,
         createdBy: meta.createdBy,
         createdByName: meta.createdByName,
+        createdByOrg: meta.createdByOrg ?? '',
         createdAt: meta.createdAt ?? new Date()
       });
     } catch (error: any) {
@@ -391,7 +426,7 @@ export class JobVersionService {
   async appendStateEvent(
     job: Job,
     newState: JobState,
-    author: { role: JobVersionAuthorRole; sub: string; name: string },
+    author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string },
     note: string,
     operationId?: string,
     sourceWorkflows?: JobVersionWorkflow[]
@@ -418,6 +453,7 @@ export class JobVersionService {
       authorRole: author.role,
       createdBy: author.sub,
       createdByName: author.name,
+      createdByOrg: author.org,
       note,
       jobState: newState,
       isEvent: true,
@@ -449,7 +485,7 @@ export class JobVersionService {
   async restoreVersion(
     jobId: string,
     versionNumber: number,
-    author: { role: JobVersionAuthorRole; sub: string; name: string },
+    author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string },
     note: string,
     opts: { visibleToCustomer?: boolean } = {}
   ): Promise<Job> {
@@ -484,7 +520,7 @@ export class JobVersionService {
     return this.saveWorkflows({ jobId, workflows, note } as SaveJobWorkflowsInput, author, opts);
   }
 
-  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string }, opts: { visibleToCustomer?: boolean } = {}): Promise<Job> {
+  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string }, opts: { visibleToCustomer?: boolean } = {}): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
 
@@ -559,6 +595,7 @@ export class JobVersionService {
       authorRole: author.role,
       createdBy: author.sub,
       createdByName: author.name,
+      createdByOrg: author.org,
       note,
       // Staff edits stay hidden until acceptance publishes them; a customer's
       // own edits are theirs to see. Withdrawal overrides this to true: undoing

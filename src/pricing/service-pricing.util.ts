@@ -187,7 +187,32 @@ export function calculateServiceCostBreakdown(service: DampLabService, rawFormDa
   if (pricingMode === ServicePricingMode.PARAMETER) {
     // Parameter/option level pricing can also be category-specific; resolve inside calculateParameterCost.
     // To preserve the old signature, we pass category through by closing over it via resolveCategoryPrice below.
-    baseCost = calculateParameterCostWithCategory(service.parameters, rawFormData, customerCategory);
+    //
+    // With no parameter values to price, there is nothing to compute from, and
+    // the honest answer is the price the caller already holds — not zero. This
+    // branch used to have no fallback at all, so a parameter-priced line whose
+    // formData did not reach us silently repriced to $0 and billed nothing,
+    // discarding the figure the canvas computed and the customer was quoted.
+    //
+    // Deliberately keyed on "no values at all", not on "the total came out 0":
+    // a genuine zero is a real price and must survive. Falling back on that
+    // instead would mask it.
+    //
+    // The frontend twin (damplab-ui/src/utils/servicePricing.ts) is deliberately
+    // NOT given this branch, despite the standing warning about those copies
+    // drifting. It prices the canvas, where empty parameters mean "nothing
+    // chosen yet" and there is no prior figure worth preserving — zero is the
+    // right answer there. This branch exists for the opposite case: rebuilding a
+    // line that was already priced. Nothing compares the two figures (the SOW's
+    // pricing check is an internal baseCost/adjustments/totalCost consistency
+    // check, not a client-vs-server one), so the two cannot disagree into a
+    // failed save.
+    const hasParameterValues = normalizeFormDataToArray(rawFormData, getMultiValueParamIds(service.parameters)).length > 0;
+    if (hasParameterValues) {
+      baseCost = calculateParameterCostWithCategory(service.parameters, rawFormData, customerCategory);
+    } else {
+      baseCost = normalizePrice(fallbackCost) ?? 0;
+    }
   } else {
     const servicePrice = resolveCategoryPrice(
       {

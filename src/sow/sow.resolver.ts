@@ -17,11 +17,19 @@ import { User } from '../auth/user.interface';
 import { Roles } from '../auth/roles/roles.decorator';
 import { Role } from '../auth/roles/roles.enum';
 import { assertCanReadSow, assertJobOwner, canSeeAllVersions, isStaff } from './sow-access';
+import { KeycloakService } from '../keycloak/keycloak.service';
+import { AccessTier } from '../auth/roles/access-tiers';
+import { LabMonitorStaffMember } from '../workflow/dtos/lab-monitor-staff.dto';
 
 @Resolver(() => SOW)
 @UseGuards(AuthRolesGuard)
 export class SOWResolver {
-  constructor(private readonly sowService: SOWService, private readonly jobService: JobService, private readonly sowVersionService: SowVersionService) {}
+  constructor(
+    private readonly sowService: SOWService,
+    private readonly jobService: JobService,
+    private readonly sowVersionService: SowVersionService,
+    private readonly keycloakService: KeycloakService
+  ) {}
 
   /**
    * Loads a SOW and checks the caller may see it. Every version query and
@@ -65,6 +73,35 @@ export class SOWResolver {
   @Roles(Role.DamplabStaff)
   async allSOWs(): Promise<SOW[]> {
     return this.sowService.findAll();
+  }
+
+  /**
+   * Who may be named Project Manager on a Statement of Work: the Administrator
+   * tier, and only it.
+   *
+   * Deliberately separate from `getLabMonitorStaffList` rather than a narrowing
+   * of it. That one also fills the lab monitor's assignee dropdown and is
+   * configurable through KEYCLOAK_LAB_STAFF_GROUP_NAMES, so narrowing it in
+   * place would have quietly emptied the assignee dropdown of every technician —
+   * and it could be repointed at other groups entirely, which would make it an
+   * unreliable stand-in for an access tier.
+   */
+  @Query(() => [LabMonitorStaffMember], { description: 'Staff-only. Administrators, for the Statement of Work Project Manager field. Sourced from the Administrator tier Keycloak group.' })
+  @Roles(Role.DamplabStaff)
+  async administratorStaffList(): Promise<LabMonitorStaffMember[]> {
+    return this.keycloakService.getAccessTierMembers([AccessTier.ADMINISTRATOR]);
+  }
+
+  /**
+   * Who may be named Project Lead: Administrators and Technicians.
+   *
+   * Wider than Project Manager by exactly one tier, and narrower than the
+   * lab-staff list, which is whatever groups an operator has configured.
+   */
+  @Query(() => [LabMonitorStaffMember], { description: 'Staff-only. Administrators and Technicians, for the Statement of Work Project Lead field. Sourced from those tiers Keycloak groups.' })
+  @Roles(Role.DamplabStaff)
+  async projectLeadStaffList(): Promise<LabMonitorStaffMember[]> {
+    return this.keycloakService.getAccessTierMembers([AccessTier.ADMINISTRATOR, AccessTier.TECHNICIAN]);
   }
 
   @Mutation(() => SOW, { description: 'Staff-only. Create a new SOW.' })
@@ -116,6 +153,14 @@ export class SOWResolver {
     return SowVersionService.deriveInputs(sow, job).services;
   }
 
+  @ResolveField(() => [SowVersionServiceLine], {
+    description:
+      "The service lines an invoice for this SOW would bill, in order: the version in force with the customer, or the live billing core when no version has been issued. Positions here are what createInvoice's `services` selection refers to, so the invoice picker must list this rather than `services`."
+  })
+  async billableServices(@Parent() sow: SOW): Promise<SowVersionServiceLine[]> {
+    return this.sowService.billableServiceLines(sow);
+  }
+
   @ResolveField(() => CustomerCategory, { nullable: true, description: "The job's current pricing category — may differ from what a stale local draft has." })
   async liveCustomerCategory(@Parent() sow: SOW): Promise<CustomerCategory | null> {
     const job = await this.jobService.findById(sow.jobId);
@@ -136,15 +181,17 @@ export class SOWResolver {
     const gate = await this.sowVersionService.actionGate(String((sow as any)._id), expectedSignVersionNumber, { reconcile: staff });
     if (staff) return gate;
 
-    // Signing is the only action a customer can take, and the rest of the gate
-    // is the lab's internal repair checklist — sendBlockers name staff chores,
-    // and missingFields names the document sections still unwritten. None of
-    // that belongs on a customer's job page.
+    // Signing and declining are the two actions a customer can take, and the
+    // rest of the gate is the lab's internal repair checklist — sendBlockers
+    // name staff chores, and missingFields names the document sections still
+    // unwritten. None of that belongs on a customer's job page.
     return {
       canSend: false,
       sendBlockers: [],
       canSign: gate.canSign,
       signBlockers: gate.signBlockers,
+      canDecline: gate.canDecline,
+      declineBlockers: gate.declineBlockers,
       canCountersign: false,
       countersignBlockers: [],
       missingFields: []
@@ -236,6 +283,18 @@ export class SOWResolver {
   async withdrawSowFromCustomer(@Args('sowId', { type: () => ID }) sowId: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<SOW> {
     await this.authorizedSow(sowId, user);
     return this.sowVersionService.withdrawFromCustomer(sowId, reason, { sub: user.sub, name: user.preferred_username ?? user.email ?? user.sub });
+  }
+
+  @Mutation(() => SOW, {
+    description:
+      'Job owner only. Decline to sign the Statement of Work in force, with a required reason posted to the comment thread. The document returns to the lab as an editable draft so it can be revised and reissued.'
+  })
+  async declineSow(@Args('sowId', { type: () => ID }) sowId: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<SOW> {
+    const sow = await this.authorizedSow(sowId, user);
+    // Declining is the customer's own refusal, so staff cannot stand in for
+    // them — the same rule signSow applies. Staff have withdrawSowFromCustomer.
+    assertJobOwner(await this.jobService.findById(sow.jobId), user, 'decline');
+    return this.sowVersionService.declineFromCustomer(sowId, reason, { sub: user.sub, name: user.preferred_username ?? user.email ?? user.sub });
   }
 
   @Mutation(() => SowVersion, { description: 'Job owner only. Records the customer signature on the version in force.' })

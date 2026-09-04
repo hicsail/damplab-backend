@@ -1569,3 +1569,106 @@ describe('cancelling a SOW', () => {
     expect(comments[0].content).not.toMatch(/\bsent to you\b/);
   });
 });
+
+// The author shape the version service takes, as the resolver builds it from
+// the signed-in customer.
+const ownerAuthor = { sub: owner.sub, name: owner.preferred_username! };
+
+describe('the customer declining to sign', () => {
+  // Mechanically a withdrawal — the document comes back so it can be revised —
+  // but initiated and attributed the other way round.
+  it('takes the document out of force and hands staff an editable draft of what was sent', async () => {
+    const { service, sow, versions } = makeHarness();
+    const sent = await service.sendToCustomer(SOW_ID, staff);
+
+    await service.declineFromCustomer(SOW_ID, 'The turnaround is too slow.', ownerAuthor);
+
+    expect(sow.status).toBe(SOWStatus.DRAFT);
+    expect(sow.activeVersionNumber).toBe(0);
+    expect(await service.getActiveVersion(SOW_ID)).toBeNull();
+    // The sent version is immutable and stays in history.
+    expect(versions.find((version) => version.versionNumber === sent.versionNumber)?.status).toBe(SOWStatus.SENT);
+
+    const draft = await service.saveVersion(SOW_ID, saveInput(sow.currentVersionNumber, 'faster turnaround'), staff);
+    expect(draft.status).toBe(SOWStatus.DRAFT);
+    const reissued = await service.sendToCustomer(SOW_ID, staff);
+    expect(reissued.status).toBe(SOWStatus.SENT);
+  });
+
+  it('announces it as the client, not the lab', async () => {
+    const { service, comments } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+    await service.declineFromCustomer(SOW_ID, 'The turnaround is too slow.', ownerAuthor);
+
+    expect(comments[0]).toEqual(
+      expect.objectContaining({
+        authorType: 'CLIENT',
+        content: expect.stringContaining('The client declined to sign this Statement of Work.')
+      })
+    );
+    expect(comments[0].content).toContain('The turnaround is too slow.');
+  });
+
+  it('refuses a document that is not out for signature, and requires a reason', async () => {
+    const { service } = makeHarness();
+    await expect(service.declineFromCustomer(SOW_ID, 'no', ownerAuthor)).rejects.toThrow(/out for signature can be declined/);
+
+    await service.sendToCustomer(SOW_ID, staff);
+    await expect(service.declineFromCustomer(SOW_ID, '   ', ownerAuthor)).rejects.toThrow(BadRequestException);
+  });
+
+  it('stays available even when the document is too stale to sign', async () => {
+    // Declining deliberately does not inherit the contract blockers: none of the
+    // reasons a signature is unsafe is a reason to refuse a refusal.
+    const { service, sow, job } = makeHarness();
+    await service.sendToCustomer(SOW_ID, staff);
+    job.acceptedJobVersionNumber = 9999;
+
+    const gate = await service.actionGate(SOW_ID);
+    expect({ canSign: gate.canSign, canDecline: gate.canDecline }).toEqual({ canSign: false, canDecline: true });
+    await service.declineFromCustomer(SOW_ID, 'Not going ahead.', ownerAuthor);
+    expect(sow.activeVersionNumber).toBe(0);
+  });
+});
+
+describe('sections that cannot take initials', () => {
+  // Signatures is filtered out of the customer's document entirely, so a stored
+  // requiresInitials flag on it used to demand initials for something they are
+  // never shown — a document nobody could sign, with no way out from their side.
+  it('lets the customer sign a document with a stale requiresInitials flag on Signatures', async () => {
+    // Seeded already flagged, because that is the state real documents saved
+    // before the flag was disallowed are in — the editor can no longer produce one.
+    const { service, sow } = makeHarness({
+      fields: [
+        { key: 'billToAddress', label: 'Bill To Address', kind: SowFieldKind.PROSE, order: 110, value: 'x', isOverridden: false, isEnabled: true, allowsTextOverride: true },
+        {
+          key: 'engagementResources',
+          label: 'Engagement Resources',
+          kind: SowFieldKind.CALCULATED,
+          order: 50,
+          value: 'Jane Doe – Project Manager',
+          isOverridden: false,
+          isEnabled: true,
+          allowsTextOverride: true,
+          allowsEmpty: false
+        },
+        {
+          key: 'signatures',
+          label: 'Signatures',
+          kind: SowFieldKind.PROSE,
+          order: 180,
+          value: 'IN WITNESS WHEREOF...',
+          isOverridden: false,
+          isEnabled: true,
+          allowsTextOverride: true,
+          requiresInitials: true
+        }
+      ]
+    });
+    await service.sendToCustomer(SOW_ID, staff);
+
+    const signed = await service.sign(SOW_ID, { versionNumber: sow.activeVersionNumber, name: 'Jane Rivera', consentedGroups: fullConsent }, owner);
+    expect(signed.status).toBe(SOWStatus.SIGNED);
+    expect(signed.clientSignature?.sectionInitials).toEqual([]);
+  });
+});

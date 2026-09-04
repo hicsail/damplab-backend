@@ -6,15 +6,30 @@ import { CommentAuthorType } from '../comment/comment.model';
 import { CommentService } from '../comment/comment.service';
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
 import { JobVersionService } from '../job-version/job-version.service';
+import { SOWStatus } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
 import { ActivityService } from '../activity/activity.service';
-import { JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
+import { CancelJobInput, JobReviewDecision, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
+import { customerMayEdit } from './job-editing';
 import { CustomerActionRequired, Job, JobDocument, JobState } from './job.model';
 import { JobReviewCommandKind, JobReviewOperation, JobReviewOperationDocument, JobReviewOperationStatus } from './job-review-operation.model';
+import { jobVersionAuthorOrg } from '../job-version/author-org';
 
 export interface JobReviewActor {
   sub: string;
   name: string;
+  /**
+   * The actor's realm roles, straight off their token.
+   *
+   * Passed rather than a finished org string because the author role a command
+   * writes with is fixed by the command, not by the caller — a staff command
+   * always stamps STAFF and a customer command always stamps CUSTOMER — so this
+   * service is the only place that can turn claims into the right stamp. It is
+   * resolved once, when the operation record is created, and persisted on it: a
+   * resumed operation must stamp what the original attempt would have, even if
+   * the actor's tier has changed since.
+   */
+  claims?: readonly string[];
 }
 
 interface OperationIdentity {
@@ -211,6 +226,7 @@ export class JobReviewService {
     const operation = await this.createOperation(
       {
         actorName: actor.name,
+        actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.STAFF, claims: actor.claims, institute: job.institute }),
         decision: input.decision,
         normalizedMessage,
         ...this.originalFields(job),
@@ -268,6 +284,7 @@ export class JobReviewService {
     const operation = await this.createOperation(
       {
         actorName: actor.name,
+        actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.CUSTOMER, claims: actor.claims, institute: job.institute }),
         responseAction: job.customerActionRequired,
         normalizedMessage,
         ...this.originalFields(job)
@@ -339,7 +356,10 @@ export class JobReviewService {
         acceptedBillingFingerprint: operation.selectedBillingFingerprint,
         acceptedAt: new Date(),
         acceptedBy: operation.actorSub,
-        lastReviewOperationId: operation.operationId
+        lastReviewOperationId: operation.operationId,
+        // Any decision answers an outstanding "may I edit?" — leaving the flag
+        // set would keep telling the client a request is still pending.
+        editAccessRequestedAt: null
       };
     } else {
       const mapping = this.reviewMapping(operation.decision as Exclude<JobReviewDecision, JobReviewDecision.ACCEPT>);
@@ -351,7 +371,8 @@ export class JobReviewService {
         // whenever staff edited before handing over, or across several rounds.
         // A repeat request-changes re-stamps it — each handover is a fresh start.
         handoverVersionNumber: operation.selectedHandoverVersionNumber ?? null,
-        lastReviewOperationId: operation.operationId
+        lastReviewOperationId: operation.operationId,
+        editAccessRequestedAt: null
       };
     }
 
@@ -411,7 +432,7 @@ export class JobReviewService {
       await this.jobVersionService.appendStateEvent(
         job,
         JobState.ACCEPTED,
-        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName },
+        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
         'Accepted',
         operation.operationId,
         version.workflows
@@ -421,7 +442,7 @@ export class JobReviewService {
       await this.jobVersionService.appendStateEvent(
         job,
         JobState.CHANGES_REQUESTED,
-        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName },
+        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
         mapping.heading,
         operation.operationId
       );
@@ -470,7 +491,13 @@ export class JobReviewService {
   private async writeResponseHistory(operation: JobReviewOperation, job: Job): Promise<void> {
     if (operation.historyWrittenAt) return;
     const header = `Customer response: ${operation.responseAction}`;
-    await this.jobVersionService.appendStateEvent(job, JobState.SUBMITTED, { role: JobVersionAuthorRole.CUSTOMER, sub: operation.actorSub, name: operation.actorName }, header, operation.operationId);
+    await this.jobVersionService.appendStateEvent(
+      job,
+      JobState.SUBMITTED,
+      { role: JobVersionAuthorRole.CUSTOMER, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
+      header,
+      operation.operationId
+    );
     await this.updateOperationProgress(operation, { historyWrittenAt: new Date() });
   }
 
@@ -670,6 +697,7 @@ export class JobReviewService {
     const operation = await this.createOperation(
       {
         actorName: actor.name,
+        actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.STAFF, claims: actor.claims, institute: job.institute }),
         normalizedMessage,
         restoreVersionNumber,
         ...this.originalFields(job)
@@ -737,25 +765,37 @@ export class JobReviewService {
    * catch the cache up. Versions stay frozen; this only rewrites sow.services
    * and flags the document stale.
    */
-  private async writeWithdrawalRestore(operation: JobReviewOperation): Promise<void> {
+  private async writeRestore(operation: JobReviewOperation, author: { role: JobVersionAuthorRole }, note: string): Promise<void> {
     if (operation.restoreVersionNumber == null) return;
     if (!operation.restoreWrittenAt) {
       await this.jobVersionService.restoreVersion(
         operation.jobId,
         operation.restoreVersionNumber,
-        { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName },
-        'Withdrawn by the lab',
-        { visibleToCustomer: true }
+        { role: author.role, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
+        note,
+        {
+          visibleToCustomer: true
+        }
       );
       await this.updateOperationProgress(operation, { restoreWrittenAt: new Date() });
     }
     await this.sowService.syncServicesFromJobWorkflows(operation.jobId);
   }
 
+  private async writeWithdrawalRestore(operation: JobReviewOperation): Promise<void> {
+    await this.writeRestore(operation, { role: JobVersionAuthorRole.STAFF }, 'Withdrawn by the lab');
+  }
+
   private async writeWithdrawalHistory(operation: JobReviewOperation, job: Job, fromCustomer: boolean): Promise<void> {
     if (operation.historyWrittenAt) return;
     const heading = fromCustomer ? 'Withdrawn from the customer' : 'Acceptance withdrawn';
-    await this.jobVersionService.appendStateEvent(job, JobState.SUBMITTED, { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName }, heading, operation.operationId);
+    await this.jobVersionService.appendStateEvent(
+      job,
+      JobState.SUBMITTED,
+      { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
+      heading,
+      operation.operationId
+    );
     await this.updateOperationProgress(operation, { historyWrittenAt: new Date() });
   }
 
@@ -836,5 +876,316 @@ export class JobReviewService {
   async respondToJobReview(input: RespondToJobReviewInput, actor: JobReviewActor): Promise<Job> {
     const operation = await this.loadOrCreateResponseOperation(input, actor);
     return this.completeResponseOperation(operation);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Customer-initiated commands
+  //
+  // Reject, cancel and request-edit-access are the three things a customer can
+  // do to a job besides answering a prompt. All three are journaled exactly like
+  // a review decision so a retried submit resumes rather than duplicating, and
+  // none needs a compensation branch: unlike acceptance they select nothing that
+  // can move underneath them.
+  //
+  // Ownership is the gate, not a role. These mirror `signSow` and
+  // `respondToJobReview`, which check `job.sub` rather than carrying a
+  // @RequirePermission — a customer acting on their own job holds no permission
+  // beyond the baseline.
+  // ---------------------------------------------------------------------------
+
+  private async loadOrCreateCustomerOperation(
+    input: { operationId: string; jobId: string },
+    actor: JobReviewActor,
+    commandKind: JobReviewCommandKind,
+    normalizedMessage: string | undefined,
+    precondition: (job: Job) => Promise<void> | void,
+    // Anything the command selects up front. Captured here, with the journal, so
+    // a retry acts on the same selection even if history moved in between.
+    select: (job: Job) => Promise<Record<string, unknown>> = async (): Promise<Record<string, unknown>> => ({})
+  ): Promise<JobReviewOperation> {
+    const operationId = this.normalizeOperationId(input.operationId);
+    const identity: OperationIdentity = { operationId, jobId: input.jobId, commandKind, actorSub: actor.sub, normalizedMessage };
+
+    const existing = await this.findOperation(operationId);
+    if (existing) {
+      this.assertOperationMatches(existing, identity);
+      return existing;
+    }
+
+    const job = await this.jobModel.findById(input.jobId).exec();
+    if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
+    if (job.sub !== actor.sub) throw new ForbiddenException('You do not have permission to act on this job.');
+    await precondition(job);
+
+    const operation = await this.createOperation(
+      {
+        actorName: actor.name,
+        actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.CUSTOMER, claims: actor.claims, institute: job.institute }),
+        normalizedMessage,
+        ...this.originalFields(job),
+        ...(await select(job))
+      },
+      identity
+    );
+    this.assertOperationMatches(operation, identity);
+    return operation;
+  }
+
+  private requireCustomerReason(value: string | undefined, action: string): string {
+    const normalized = this.normalizeMessage(value);
+    if (!normalized) throw new BadRequestException(`Give a reason for ${action} this job.`);
+    return normalized;
+  }
+
+  /** The SOW in force for a job, or null. Used by the cancel and edit-access cutoffs. */
+  private async sowStatusForJob(jobId: string): Promise<SOWStatus | null> {
+    const sow = await this.sowService.findByJobId(jobId);
+    return (sow?.status as SOWStatus) ?? null;
+  }
+
+  private async writeCustomerComment(operation: JobReviewOperation, heading: string): Promise<void> {
+    if (operation.commentWrittenAt) return;
+    await this.commentService.createIdempotent({
+      jobId: operation.jobId,
+      operationId: operation.operationId,
+      content: this.commentContent(heading, operation.normalizedMessage),
+      author: operation.actorName,
+      authorType: CommentAuthorType.CLIENT,
+      isInternal: false
+    });
+    await this.updateOperationProgress(operation, { commentWrittenAt: new Date() });
+  }
+
+  private async writeCustomerActivity(operation: JobReviewOperation, type: string, message: string): Promise<void> {
+    if (operation.activityWrittenAt) return;
+    await this.activityService.createEventIdempotent({
+      type,
+      operationId: `${type}:${operation.operationId}`,
+      message,
+      actorDisplayName: operation.actorName,
+      jobId: operation.jobId
+    });
+    await this.updateOperationProgress(operation, { activityWrittenAt: new Date() });
+  }
+
+  private async writeCustomerHistory(operation: JobReviewOperation, job: Job, state: JobState, heading: string): Promise<void> {
+    if (operation.historyWrittenAt) return;
+    await this.jobVersionService.appendStateEvent(
+      job,
+      state,
+      { role: JobVersionAuthorRole.CUSTOMER, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
+      heading,
+      operation.operationId
+    );
+    await this.updateOperationProgress(operation, { historyWrittenAt: new Date() });
+  }
+
+  // --- Reject -----------------------------------------------------------------
+
+  /**
+   * The customer declines what the lab asked them to approve.
+   *
+   * Lands the job back at SUBMITTED — exactly where a completed response lands
+   * it — because a rejection is still the customer handing the job back, not
+   * abandoning it. Cancelling is the terminal act, and it is a separate command.
+   */
+  async rejectJobReview(input: RejectJobReviewInput, actor: JobReviewActor): Promise<Job> {
+    const reason = this.requireCustomerReason(input.reason, 'rejecting');
+    const operation = await this.loadOrCreateCustomerOperation(
+      input,
+      actor,
+      JobReviewCommandKind.REJECT,
+      reason,
+      (job) => {
+        if (job.state !== JobState.CHANGES_REQUESTED || job.customerActionRequired !== CustomerActionRequired.APPROVE_WORKFLOW) {
+          throw new BadRequestException('This job is not awaiting your approval.');
+        }
+      },
+      async (job) => {
+        // Rejecting is refusing the lab's changes, so the graph has to go back
+        // to what it was before them. Without this the job returned to the lab
+        // still carrying the very edits the customer had just refused, and the
+        // rejection changed nothing but the state.
+        //
+        // Force the lazy v1 backfill first, exactly as the review path does: a
+        // job submitted before versioning existed has no rows until its history
+        // is read, and getCustomerBaselineVersion is a plain findOne.
+        await this.jobVersionService.listByJob(String(job._id));
+        const baseline = await this.jobVersionService.getCustomerBaselineVersion(String(job._id));
+        const latest = await this.jobVersionService.getLatestContentVersion(String(job._id));
+        // Nothing to undo when the lab asked for approval without editing
+        // anything. Restoring anyway would append a version identical to the one
+        // below it, which reads as an edit the customer never made.
+        if (!baseline || baseline.versionNumber === latest?.versionNumber) return {};
+        return { restoreVersionNumber: baseline.versionNumber };
+      }
+    );
+
+    this.assertOperationResumable(operation);
+    if (operation.status === JobReviewOperationStatus.COMPLETE) {
+      await this.writeCustomerActivity(operation, 'JOB_REJECTED', 'Customer rejected the proposed workflow');
+      return this.completedJob(operation);
+    }
+
+    // The job write is identical to a response: back to the lab, no action
+    // outstanding. Sharing it keeps one definition of "returned to the lab".
+    const job = operation.status === JobReviewOperationStatus.PENDING ? await this.ensureResponseJobWritten(operation) : await this.completedJob(operation);
+    if (operation.status === JobReviewOperationStatus.APPLIED) {
+      await this.casOperationStatus(operation, JobReviewOperationStatus.APPLIED, JobReviewOperationStatus.FINALIZING);
+    }
+    if (operation.status !== JobReviewOperationStatus.FINALIZING) {
+      throw new ConflictException('This rejection is not eligible for finalization.');
+    }
+
+    // Restore before announcing it: the history entry and the comment both
+    // describe a graph that has already moved back, and a failure here must not
+    // leave them claiming a revert that never happened.
+    await this.writeRestore(operation, { role: JobVersionAuthorRole.CUSTOMER }, 'Rejected the lab’s changes');
+    await this.writeCustomerHistory(operation, job, JobState.SUBMITTED, 'Rejected by the customer');
+    await this.writeCustomerComment(operation, 'Customer rejected the proposed workflow');
+    await this.writeCustomerActivity(operation, 'JOB_REJECTED', 'Customer rejected the proposed workflow');
+
+    const completed = await this.casOperationStatus(operation, JobReviewOperationStatus.FINALIZING, JobReviewOperationStatus.COMPLETE, { completedAt: new Date() });
+    if (!completed && (operation.status as JobReviewOperationStatus) !== JobReviewOperationStatus.COMPLETE) {
+      throw new ConflictException('This rejection could not complete finalization.');
+    }
+    return this.completedJob(operation);
+  }
+
+  // --- Cancel -----------------------------------------------------------------
+
+  private cancelTargetIsApplied(operation: JobReviewOperation, job: Job): boolean {
+    return job.lastReviewOperationId === operation.operationId && job.state === JobState.CANCELLED;
+  }
+
+  private async ensureCancelJobWritten(operation: JobReviewOperation): Promise<Job> {
+    let job = await this.jobModel.findById(operation.jobId).exec();
+    if (!job) throw new NotFoundException(`Job with ID ${operation.jobId} not found`);
+    if (operation.jobWrittenAt) return job;
+    if (this.cancelTargetIsApplied(operation, job)) {
+      await this.markJobWritten(operation);
+      return job;
+    }
+
+    job = await this.jobModel
+      .findOneAndUpdate(
+        this.originalJobFilter(operation),
+        { $set: { state: JobState.CANCELLED, customerActionRequired: null, editAccessRequestedAt: null, lastReviewOperationId: operation.operationId } },
+        { new: true }
+      )
+      .exec();
+    if (!job) {
+      const raced = await this.jobModel.findById(operation.jobId).exec();
+      if (raced && this.cancelTargetIsApplied(operation, raced)) {
+        await this.markJobWritten(operation);
+        return raced;
+      }
+      return this.conflictOperation(operation, 'The job changed while it was being cancelled.');
+    }
+    await this.markJobWritten(operation);
+    return job;
+  }
+
+  /**
+   * The customer abandons the job.
+   *
+   * Allowed right up until the SOW is countersigned: a document the customer has
+   * signed but the lab has not is still not an agreement, so FINAL — and only
+   * FINAL — is the cutoff. Any SOW still standing is cancelled with the job,
+   * because leaving a live document attached to a dead job is what would let it
+   * be signed afterwards.
+   */
+  async cancelJob(input: CancelJobInput, actor: JobReviewActor): Promise<Job> {
+    const reason = this.requireCustomerReason(input.reason, 'cancelling');
+    const operation = await this.loadOrCreateCustomerOperation(input, actor, JobReviewCommandKind.CANCEL, reason, async (job) => {
+      if (job.state === JobState.CANCELLED) throw new BadRequestException('This job is already cancelled.');
+      if (job.state === JobState.CLOSED) throw new BadRequestException('This job is closed and can no longer be cancelled.');
+      const status = await this.sowStatusForJob(String(job._id));
+      if (status === SOWStatus.FINAL) {
+        throw new BadRequestException('The Statement of Work for this job has been signed by both parties and the job can no longer be cancelled. Contact the lab.');
+      }
+    });
+
+    this.assertOperationResumable(operation);
+    if (operation.status === JobReviewOperationStatus.COMPLETE) {
+      await this.writeCustomerActivity(operation, 'JOB_CANCELLED', 'Customer cancelled the job');
+      return this.completedJob(operation);
+    }
+
+    const job = operation.status === JobReviewOperationStatus.PENDING ? await this.ensureCancelJobWritten(operation) : await this.completedJob(operation);
+    if (operation.status === JobReviewOperationStatus.APPLIED) {
+      await this.casOperationStatus(operation, JobReviewOperationStatus.APPLIED, JobReviewOperationStatus.FINALIZING);
+    }
+    if (operation.status !== JobReviewOperationStatus.FINALIZING) {
+      throw new ConflictException('This cancellation is not eligible for finalization.');
+    }
+
+    // Cancel the document before announcing anything: the comment says the SOW is
+    // no longer in effect, and it must not say so before that is true.
+    await this.sowService.cancelForCancelledJob(operation.jobId, operation.normalizedMessage, { sub: operation.actorSub, name: operation.actorName });
+    await this.writeCustomerHistory(operation, job, JobState.CANCELLED, 'Cancelled by the customer');
+    await this.writeCustomerComment(operation, 'Customer cancelled this job');
+    await this.writeCustomerActivity(operation, 'JOB_CANCELLED', 'Customer cancelled the job');
+
+    const completed = await this.casOperationStatus(operation, JobReviewOperationStatus.FINALIZING, JobReviewOperationStatus.COMPLETE, { completedAt: new Date() });
+    if (!completed && (operation.status as JobReviewOperationStatus) !== JobReviewOperationStatus.COMPLETE) {
+      throw new ConflictException('This cancellation could not complete finalization.');
+    }
+    return this.completedJob(operation);
+  }
+
+  // --- Request edit access ----------------------------------------------------
+
+  /**
+   * The customer asks for the workflow editor.
+   *
+   * Deliberately grants nothing. Staff open the canvas the way they already do,
+   * with reviewJob(REQUEST_EDITS), so there is still exactly one path that puts a
+   * job in the customer's hands and `assertJobContractWritable` stays the only
+   * gate. All this records is that an ask is outstanding.
+   *
+   * Cut off once the customer has signed — a signed document is priced against a
+   * spec, and reopening that spec is a withdrawal, which is the lab's call.
+   */
+  async requestJobEditAccess(input: RequestJobEditAccessInput, actor: JobReviewActor): Promise<Job> {
+    const message = this.normalizeMessage(input.message);
+    const operation = await this.loadOrCreateCustomerOperation(input, actor, JobReviewCommandKind.REQUEST_EDIT_ACCESS, message, async (job) => {
+      if (job.state === JobState.CANCELLED || job.state === JobState.CLOSED) {
+        throw new BadRequestException('This job is no longer open.');
+      }
+      if (customerMayEdit(job)) throw new BadRequestException('You already have edit access to this job.');
+      const status = await this.sowStatusForJob(String(job._id));
+      if (status === SOWStatus.SIGNED || status === SOWStatus.FINAL) {
+        throw new BadRequestException('The Statement of Work for this job has been signed and its workflow can no longer be changed. Contact the lab.');
+      }
+    });
+
+    this.assertOperationResumable(operation);
+    if (operation.status === JobReviewOperationStatus.COMPLETE) {
+      await this.writeCustomerActivity(operation, 'JOB_EDIT_ACCESS_REQUESTED', 'Customer requested edit access');
+      return this.completedJob(operation);
+    }
+
+    if (operation.status === JobReviewOperationStatus.PENDING) {
+      // The only write is the pending-request stamp. State is untouched on
+      // purpose — this is an ask, and staff answer it with a review decision.
+      await this.jobModel.findOneAndUpdate({ _id: operation.jobId }, { $set: { editAccessRequestedAt: new Date() } }).exec();
+      await this.markJobWritten(operation);
+    }
+    if (operation.status === JobReviewOperationStatus.APPLIED) {
+      await this.casOperationStatus(operation, JobReviewOperationStatus.APPLIED, JobReviewOperationStatus.FINALIZING);
+    }
+    if (operation.status !== JobReviewOperationStatus.FINALIZING) {
+      throw new ConflictException('This request is not eligible for finalization.');
+    }
+
+    await this.writeCustomerComment(operation, 'Customer requested access to edit this job');
+    await this.writeCustomerActivity(operation, 'JOB_EDIT_ACCESS_REQUESTED', 'Customer requested edit access');
+
+    const completed = await this.casOperationStatus(operation, JobReviewOperationStatus.FINALIZING, JobReviewOperationStatus.COMPLETE, { completedAt: new Date() });
+    if (!completed && (operation.status as JobReviewOperationStatus) !== JobReviewOperationStatus.COMPLETE) {
+      throw new ConflictException('This request could not complete finalization.');
+    }
+    return this.completedJob(operation);
   }
 }
