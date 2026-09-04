@@ -4,6 +4,7 @@ import { CustomerCategory } from '../job/job.model';
 import {
   CATEGORY_PRIMARY_GROUP,
   claimsFromGroupList,
+  deriveCustomerCategory,
   deriveCustomerCategoryFromGroups as deriveCategoryFromGroups,
   isCustomerPricingGroupName,
   isDefaultExternalCustomerClaims
@@ -150,6 +151,49 @@ export class KeycloakService {
    */
   deriveCustomerCategoryFromGroups(groups: { name?: string; path?: string }[]): CustomerCategory | undefined {
     return deriveCategoryFromGroups(groups);
+  }
+
+  /**
+   * The pricing category for a signed-in user: from the token when it says so,
+   * and from the Admin API when it does not.
+   *
+   * Pricing lives on Keycloak **groups**. Unlike realm roles, group memberships
+   * reach a token only when the client carries a Group Membership mapper —
+   * nothing in this repository configures that mapper, documents it, or can
+   * verify it. So a user correctly placed in `external-customer-academic` could
+   * arrive carrying no pricing claim at all, derive to `undefined`, and be
+   * silently billed the fallback price on every document. The access matrix says
+   * group membership is what determines price; reading the group back from the
+   * Admin API is what actually makes that true.
+   *
+   * The token is checked first because it costs nothing and is what keeps this
+   * working when the Admin API is unconfigured (local development) or down. The
+   * Admin API is consulted only when the token yields nothing, so a realm that
+   * *does* map groups into the token pays no per-call cost.
+   *
+   * Returns undefined when neither source can say. Callers must treat that as
+   * "unknown", never as a category.
+   */
+  async resolveCustomerCategoryForUser(user: { sub?: string; realm_access?: { roles?: string[] }; groups?: string[] } | null | undefined): Promise<CustomerCategory | undefined> {
+    const claims = [...(user?.realm_access?.roles ?? []), ...(user?.groups ?? [])];
+    const fromToken = deriveCustomerCategory(claims);
+    if (fromToken) return fromToken;
+
+    if (!user?.sub || !this.isConfigured()) return undefined;
+
+    try {
+      const groups = await this.getUserGroups(user.sub);
+      const resolved = deriveCategoryFromGroups(groups);
+      if (!resolved) {
+        this.logger.warn(`No pricing group resolved for user ${user.sub}; pricing will fall back to the catalogue's fallback price.`);
+      }
+      return resolved;
+    } catch (error) {
+      // Never block a submission on the Admin API. Staff can still set the
+      // category on the job, and the warning is what makes the gap visible.
+      this.logger.warn(`Could not read pricing groups for user ${user.sub} from Keycloak; falling back to the token's claims`, error instanceof Error ? error.stack : error);
+      return undefined;
+    }
   }
 
   private isCustomerPricingGroupMember(g: { name?: string }): boolean {

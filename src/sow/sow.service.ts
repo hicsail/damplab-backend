@@ -379,6 +379,41 @@ export class SOWService {
   }
 
   /**
+   * The service lines this job implies *right now*, priced from the catalog as it
+   * currently stands — without writing anything.
+   *
+   * This is what the Fee Schedule's Recalculate pulls, and it deliberately does
+   * not read `sow.services`. That stored core is only rewritten by
+   * `syncServicesFromJobWorkflows`, which fires on a workflow edit or a category
+   * change — never when someone corrects a price in the catalog. So a price the
+   * lab had fixed could not be pulled into the document at all: Recalculate
+   * refreshed the document from a copy that was itself stale.
+   *
+   * Cost is the same traversal `jobBillingFingerprint` already performs on this
+   * request (see the contract gate), so this adds no new class of work to a SOW
+   * read.
+   *
+   * Falls back to the stored core rather than throwing: `transformServices`
+   * rejects a service that has since been deleted from the catalog, and a
+   * document must still render for a job whose catalog moved underneath it.
+   */
+  async liveServiceLines(sow: SOW): Promise<SOW['services']> {
+    const stored = sow.services ?? [];
+    try {
+      const job = await this.getJobForSow(sow);
+      if (!job) return stored;
+
+      const inputs = await this.collectSowServiceInputs(job, stored);
+      if (inputs.length === 0) return stored;
+
+      return await this.transformServices(inputs, (job as any).customerCategory);
+    } catch (error) {
+      this.logger.warn(`Could not price live service lines for SOW ${String((sow as any)._id)}; falling back to the stored billing core`, error instanceof Error ? error.stack : error);
+      return stored;
+    }
+  }
+
+  /**
    * Cancels the SOW attached to a job the client just cancelled, if there is one
    * still standing.
    *
@@ -442,8 +477,14 @@ export class SOWService {
    * knows whether its version row will win the parent-pointer CAS. A lost race
    * would otherwise leave the document billing figures that no version records.
    */
-  async restoreDocumentBilling(sowId: string, pricing: SOW['pricing']): Promise<void> {
-    await this.sowModel.findByIdAndUpdate(sowId, { $set: { pricing, updatedAt: new Date() } }).exec();
+  async restoreDocumentBilling(sowId: string, pricing: SOW['pricing'], services?: SOW['services']): Promise<void> {
+    // `services` is restored alongside `pricing` because a Fee Schedule refresh
+    // re-syncs the billing core, which rewrites both. Putting only the pricing
+    // back would leave repriced service lines that no version accounts for —
+    // exactly the permanently-stale document this rollback exists to prevent.
+    const $set: Record<string, unknown> = { pricing, updatedAt: new Date() };
+    if (services !== undefined) $set.services = services;
+    await this.sowModel.findByIdAndUpdate(sowId, { $set }).exec();
   }
 
   /** Default project length when nothing better is known; staff edit it in the editor. */

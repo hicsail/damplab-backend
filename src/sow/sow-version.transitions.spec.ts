@@ -235,7 +235,18 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; l
     applyDocumentBilling: async () => sow,
     getJobForSow: async () => job,
     jobBillingFingerprint: async () => initial.liveFingerprint ?? 'fp-accepted',
-    autoAssignProjectLead: async () => undefined
+    autoAssignProjectLead: async () => undefined,
+    // A Fee Schedule refresh re-syncs the billing core from the catalog, moving
+    // both halves of it. Stubbed to move them visibly so the rollback below has
+    // something to fail to restore.
+    syncServicesFromJobWorkflows: async () => {
+      sow.services = [{ serviceId: 'svc-a', name: 'PCR', description: '', cost: 999, unitCost: 999, multiplier: 1, category: 'molecular-biology' }];
+      sow.pricing = { ...(sow.pricing ?? {}), baseCost: 999, totalCost: 999 };
+    },
+    restoreDocumentBilling: async (_id: string, pricing: any, services?: any) => {
+      sow.pricing = pricing;
+      if (services !== undefined) sow.services = services;
+    }
   };
 
   // No blocks: prose falls back to SOW_PROSE_DEFAULTS, which is what these
@@ -349,6 +360,27 @@ describe('saveVersion', () => {
     const { service } = makeHarness();
     await service.saveVersion(SOW_ID, saveInput(1), staff);
     await expect(service.saveVersion(SOW_ID, saveInput(1), { sub: 'other', name: 'other' })).rejects.toThrow(ConflictException);
+  });
+
+  it('puts the whole billing core back when a Fee Schedule refresh loses the pointer race', async () => {
+    // The refresh re-syncs service lines as well as pricing. Restoring only the
+    // pricing would leave repriced lines behind with no version recording them,
+    // which the contract gate reads as a permanently stale document — the exact
+    // failure the rollback exists to prevent.
+    const { service, sow, race } = makeHarness();
+    const servicesBefore = sow.services;
+    const pricingBefore = sow.pricing;
+
+    // Someone else moves the pointer between the billing write and the claim, so
+    // the save gets all the way through its writes and then loses.
+    race.beforeSowCas = (): void => {
+      sow.currentVersionNumber = sow.currentVersionNumber + 10;
+    };
+
+    await expect(service.saveVersion(SOW_ID, { ...saveInput(1), refreshFeeSchedule: true }, staff)).rejects.toThrow(ConflictException);
+
+    expect(sow.services).toEqual(servicesBefore);
+    expect(sow.pricing).toEqual(pricingBefore);
   });
 
   it('clears the stale flag, since the saved document now matches the billing core', async () => {

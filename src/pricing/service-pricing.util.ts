@@ -282,15 +282,17 @@ export function calculateServiceCostBreakdown(
       baseCost = fallbackUnitCost() ?? 0;
     }
   } else {
-    const servicePrice = resolveCategoryPrice(
-      {
-        pricing: (service as any).pricing,
-        internalPrice: (service as any).internalPrice,
-        externalPrice: (service as any).externalPrice,
-        price: service.price
-      },
-      customerCategory
-    );
+    // The whole service, not a hand-picked subset of its price fields.
+    //
+    // This used to build `{ pricing, internalPrice, externalPrice, price }`,
+    // which silently omitted `externalAcademicPrice`, `externalMarketPrice` and
+    // `externalNoSalaryPrice` — three of the five fields resolveCategoryPrice
+    // knows how to read. A service whose tiers lived only in those deprecated
+    // flat fields (every service not yet re-saved through AdminEditService)
+    // therefore resolved all three external tiers to `legacy`: the pricing
+    // category had no effect on operation-priced lines at all. Option and
+    // parameter pricing never had the bug because they pass their whole object.
+    const servicePrice = resolveCategoryPrice(service as any, customerCategory);
     baseCost = servicePrice !== undefined ? servicePrice : fallbackUnitCost() ?? 0;
   }
 

@@ -50,18 +50,36 @@ export class DampLabServices {
   /**
    * Backward compatibility: hydrate `pricing` from legacy scalar fields when present.
    */
+  /**
+   * Synthesizes `pricing` from the deprecated flat fields when a service has no
+   * pricing object yet.
+   *
+   * All five tiers, not three. It used to carry only internal/external/legacy,
+   * so a service priced per-tier in the flat fields came back claiming to have
+   * pricing while `externalAcademic`, `externalMarket` and `externalNoSalary`
+   * were quietly absent — and every reader of the synthesized object (the
+   * client-facing catalog quote among them) fell through to `legacy` for those
+   * three categories.
+   */
   private normalizePricing(service: DampLabService): DampLabService {
     const hasPricingObject = service.pricing && typeof service.pricing === 'object';
     if (hasPricingObject) return service;
 
-    const internal = (service as any).internalPrice;
-    const external = (service as any).externalPrice;
-    const legacy = (service as any).price;
+    const row = service as any;
+    const internal = row.internalPrice;
+    const external = row.externalPrice;
+    const externalAcademic = row.externalAcademicPrice;
+    const externalMarket = row.externalMarketPrice;
+    const externalNoSalary = row.externalNoSalaryPrice;
+    const legacy = row.price;
 
-    if (internal != null || external != null || legacy != null) {
+    if (internal != null || external != null || externalAcademic != null || externalMarket != null || externalNoSalary != null || legacy != null) {
       const pricing: Pricing = {
         internal: internal ?? undefined,
         external: external ?? undefined,
+        externalAcademic: externalAcademic ?? undefined,
+        externalMarket: externalMarket ?? undefined,
+        externalNoSalary: externalNoSalary ?? undefined,
         legacy: legacy ?? undefined
       };
       service.pricing = pricing;

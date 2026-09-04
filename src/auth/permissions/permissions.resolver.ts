@@ -8,6 +8,8 @@ import { RequirePermission } from './permissions.decorator';
 import { Permission } from './permission.enum';
 import { permissionsForRoles } from './role-permissions';
 import { customerPermissionsFor, permissionsFor } from './permissions';
+import { KeycloakService } from '../../keycloak/keycloak.service';
+import { CustomerCategory } from '../../job/job.model';
 
 @ObjectType({ description: "The caller's resolved permissions. The frontend never hardcodes the role -> permission table; it asks for the answer." })
 export class MyPermissions {
@@ -35,6 +37,22 @@ export class MyPermissions {
       "The realm roles the *server* resolved for this caller. Exposed so the UI can detect DEV_AS_ROLES / VITE_DEV_AS_ROLES drift under the local auth bypass: only the backend's value decides what `effective` contains, so if the two halves disagree the UI renders one role's menu while claiming another. Discloses nothing — the caller's own token already carries these."
   })
   roles: string[];
+
+  /**
+   * The caller's pricing category, resolved by the *server*.
+   *
+   * Exposed because the browser cannot resolve it reliably on its own: pricing
+   * lives on Keycloak groups, and groups reach a token only when the realm's
+   * client carries a Group Membership mapper. A UI deriving from the token alone
+   * showed academic customers the fallback price on the canvas while the SOW
+   * billed them correctly. Null when no pricing group can be resolved — which
+   * the UI must render as "unknown", not as a category.
+   */
+  @Field(() => CustomerCategory, {
+    nullable: true,
+    description: "The caller's pricing category as the server resolves it, from their Keycloak groups. Null when they belong to no pricing group."
+  })
+  customerCategory?: CustomerCategory;
 }
 
 @ObjectType({ description: 'One access tier an administrator may preview the UI as, with the permissions that tier resolves to.' })
@@ -51,18 +69,25 @@ export class RolePreview {
 
 @Resolver()
 export class PermissionsResolver {
+  constructor(private readonly keycloakService: KeycloakService) {}
+
   /**
    * Deliberately has no `@Roles` and no `@RequirePermission`: any authenticated
    * caller must be able to ask what they may do, and the answer is derived from
    * their own token, so it discloses nothing they do not already hold.
+   *
+   * `customerCategory` is the one part not derived from the token alone — it may
+   * cost one Keycloak Admin API call, and only when the token carries no pricing
+   * group. It discloses nothing either: it is the caller's own price tier.
    */
   @Query(() => MyPermissions, { description: 'The permissions granted to the calling user.' })
   @UseGuards(AuthRolesGuard)
-  myPermissions(@CurrentUser() user: User): MyPermissions {
+  async myPermissions(@CurrentUser() user: User): Promise<MyPermissions> {
     return {
       effective: [...permissionsFor(user)],
       asCustomer: [...customerPermissionsFor(user)],
-      roles: user?.realm_access?.roles ?? []
+      roles: user?.realm_access?.roles ?? [],
+      customerCategory: await this.keycloakService.resolveCustomerCategoryForUser(user)
     };
   }
 

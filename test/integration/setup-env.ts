@@ -6,7 +6,12 @@
  * at a scratch database here is what keeps `npm run test:integration` from
  * dropping the developer's real one.
  */
-process.env.MONGO_URI = process.env.MONGO_TEST_URI ?? 'mongodb://localhost:27018/damplab_itest';
+// Port matches docker-compose.yml's default. Jest never loads .env (this file
+// runs before any dotenv pass, deliberately — see above), so a developer who
+// moved the host port has to export MONGO_HOST_PORT or MONGO_TEST_URI for the
+// harness to find their Mongo. CI sets MONGO_TEST_URI explicitly.
+const testPort = process.env.MONGO_HOST_PORT ?? '27017';
+process.env.MONGO_URI = process.env.MONGO_TEST_URI ?? `mongodb://localhost:${testPort}/damplab_itest`;
 
 // AuthModule calls getOrThrow('auth.jwksEndpoint') while it is being constructed,
 // so the app cannot boot without a value. Nothing ever dereferences it: the tests

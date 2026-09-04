@@ -91,6 +91,31 @@ export class SowVersionService {
    * (see SOWService.calculateAdjustmentsTotal), so an amount typed against one
    * silently vanished. The migration preserves their wording as a custom field.
    */
+  /**
+   * SOW service lines in the shape a version snapshot stores them.
+   *
+   * Split out of deriveInputs so the `liveServices` resolver can map freshly
+   * priced lines through exactly the same projection. Two copies of this mapping
+   * is how a field silently stops reaching invoices.
+   */
+  static toServiceLines(services: SOW['services'] | null | undefined): SowVersionInputs['services'] {
+    return (services ?? []).map((s) => ({
+      serviceId: String(s.serviceId ?? s._id ?? ''),
+      name: s.name ?? 'Service',
+      description: s.description ?? '',
+      cost: Number(s.cost ?? 0),
+      unitCost: s.unitCost,
+      multiplier: s.multiplier,
+      runCount: s.runCount,
+      // Carried so an invoice billed from a version can state the line's
+      // category; without it every such line was stored with an empty one.
+      category: s.category ?? '',
+      // Same reason: the invoice explains a parameter-priced line from these
+      // rows, and a version that dropped them would bill an unexplained total.
+      pricingDetails: s.pricingDetails
+    }));
+  }
+
   static deriveInputs(sow: SOW, job?: { customerCategory?: string } | null): SowVersionInputs {
     const timeline = sow.timeline ?? ({} as any);
     const durationDays = SowVersionService.parseDurationDays(timeline.duration);
@@ -103,21 +128,7 @@ export class SowVersionService {
       sowTitle: sow.sowTitle ?? '',
       scopeOfWork: sow.scopeOfWork ?? [],
       deliverables: sow.deliverables ?? [],
-      services: (sow.services ?? []).map((s) => ({
-        serviceId: String(s.serviceId ?? s._id ?? ''),
-        name: s.name ?? 'Service',
-        description: s.description ?? '',
-        cost: Number(s.cost ?? 0),
-        unitCost: s.unitCost,
-        multiplier: s.multiplier,
-        runCount: s.runCount,
-        // Carried so an invoice billed from a version can state the line's
-        // category; without it every such line was stored with an empty one.
-        category: s.category ?? '',
-        // Same reason: the invoice explains a parameter-priced line from these
-        // rows, and a version that dropped them would bill an unexplained total.
-        pricingDetails: s.pricingDetails
-      })),
+      services: SowVersionService.toServiceLines(sow.services),
       adjustments: (sow.pricing?.adjustments ?? [])
         .filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)
         .map((a) => ({
@@ -701,7 +712,15 @@ export class SowVersionService {
     // core back. Deleting the staged version row alone is not enough: the SOW's
     // figures would have moved with no version recording them, which the gate
     // then reads as a permanently stale document.
-    const pricingBeforeBillingEdits = hasBillingEdits ? (baseSow.toObject?.() ?? baseSow).pricing : undefined;
+    //
+    // A Fee Schedule refresh moves the core too — it re-syncs service lines from
+    // the catalog below — so the capture covers both writes, and `services` as
+    // well as `pricing`. Before that sync existed nothing in this method touched
+    // `services`, which is why the capture used to be pricing-only.
+    const refreshesFeeSchedule = input.refreshFeeSchedule === true;
+    const baseSowSnapshot = hasBillingEdits || refreshesFeeSchedule ? baseSow.toObject?.() ?? baseSow : undefined;
+    const pricingBeforeBillingEdits = baseSowSnapshot?.pricing;
+    const servicesBeforeBillingEdits = refreshesFeeSchedule ? baseSowSnapshot?.services : undefined;
     if (hasBillingEdits) {
       await this.sowService.applyDocumentBilling(sowId, {
         adjustments: (input.inputs.adjustments ?? []).map((a) => ({
@@ -716,6 +735,16 @@ export class SowVersionService {
       });
     }
 
+    // A refresh means "adopt the current figures", so the billing core has to be
+    // brought up to date before they are read back. The sync reprices every line
+    // from the catalog as it stands, which is the half a stored core cannot
+    // supply: it is only rewritten on a workflow edit or a category change, so a
+    // price corrected in the catalog would otherwise be shown in the editor by
+    // the `liveServices` resolver and then not saved.
+    if (refreshesFeeSchedule) {
+      await this.sowService.syncServicesFromJobWorkflows(String(baseSow.jobId));
+    }
+
     const fresh = await this.requireSow(sowId);
     const job = await this.sowService.getJobForSow(fresh);
 
@@ -726,7 +755,7 @@ export class SowVersionService {
     // Fee Schedule figures are a static record: they carry forward from the
     // previous version unless staff explicitly refreshed them. See
     // feeScheduleInputs for why this is a flag rather than figures on the wire.
-    const feeSchedule = SowVersionService.feeScheduleInputs(derived, current?.inputs, input.refreshFeeSchedule === true);
+    const feeSchedule = SowVersionService.feeScheduleInputs(derived, current?.inputs, refreshesFeeSchedule);
     const inputs: SowVersionInputs = {
       ...derived,
       ...feeSchedule,
@@ -800,7 +829,7 @@ export class SowVersionService {
         // survive a save that never landed, leaving the document billing figures
         // no version accounts for.
         if (pricingBeforeBillingEdits !== undefined) {
-          await this.sowService.restoreDocumentBilling(sowId, pricingBeforeBillingEdits);
+          await this.sowService.restoreDocumentBilling(sowId, pricingBeforeBillingEdits, servicesBeforeBillingEdits);
         }
       } finally {
         throw new ConflictException('This SOW changed while your draft was being saved. Reload and try again.');

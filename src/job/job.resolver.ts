@@ -4,7 +4,6 @@ import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInpu
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { matchesClientEmail } from './client-email';
-import { deriveCustomerCategory } from '../pricing/pricing-groups';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { Comment } from '../comment/comment.model';
@@ -255,9 +254,15 @@ export class JobResolver {
 
   @Mutation(() => Job)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
-    const roles = user.realm_access?.roles ?? [];
-    const groups = user.groups ?? [];
-    const customerCategory: CustomerCategory | undefined = deriveCustomerCategory([...roles, ...groups]);
+    // Not derived from the token alone. Pricing lives on Keycloak groups, and a
+    // group reaches a token only when the realm's client carries a Group
+    // Membership mapper — so a customer correctly placed in
+    // `external-customer-academic` could submit with no pricing claim at all and
+    // have every document silently billed at the fallback price. The resolver
+    // reads the token first and falls back to the Admin API, which is what makes
+    // group membership actually decide the price, as the access matrix says it
+    // does.
+    const customerCategory: CustomerCategory | undefined = await this.keycloakService.resolveCustomerCategoryForUser(user);
     const created = await this.jobService.create({
       ...createJobInput,
       username: user.preferred_username,
