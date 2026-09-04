@@ -1,11 +1,12 @@
 # Local development: MongoDB only.
 # Run from backend root: docker compose up -d
-# Backend connects with MONGO_URI=mongodb://localhost:27017/damplab (default).
+# Backend connects with MONGO_URI from .env (see .env.example).
+
 version: '3'
 services:
   mongo:
     image: mongo:7
-    ports: ["27017:27017"]
+    ports: ["${MONGO_HOST_PORT:-27017}:27017"]
     volumes:
       - mongo-data:/data/db
 
