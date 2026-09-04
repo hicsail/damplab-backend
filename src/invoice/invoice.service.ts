@@ -69,6 +69,67 @@ export class InvoiceService {
       serviceIds: Array.isArray(input.serviceIds) ? input.serviceIds.map(String).filter(Boolean) : []
     });
 
+    // Which lines these are, by position in the billing source — the same thing
+    // the staff dialog ticked. Recomputed by identity here rather than read off
+    // `input`, because the legacy serviceIds branch carries no positions of its
+    // own; the used-set keeps two picks of the same line from resolving to one
+    // position. -1 cannot happen (selectServiceLines returns members of this very
+    // array) but is carried honestly rather than asserted away.
+    const claimedIndexes = new Set<number>();
+    const selectedIndexes = selected.map((line) => {
+      const found = sowServices.findIndex((candidate, index) => candidate === line && !claimedIndexes.has(index));
+      if (found >= 0) claimedIndexes.add(found);
+      return found;
+    });
+    const sowVersionNumber = active?.versionNumber ?? null;
+
+    // Nothing used to stop a job being invoiced twice for the same line. The
+    // duplicate guard inside selectServiceLines is per-call, so two invoices
+    // could each bill position 0: the work was charged twice, and because
+    // adjustments are prorated per invoice, the discount was credited twice as
+    // well. The comment below about every invoice summing to the SOW total holds
+    // only if the invoices partition the lines, which is what this enforces.
+    const priorInvoices = await this.invoiceModel.find({ jobId: input.jobId }).exec();
+    const billingWarnings: string[] = [];
+    const billedIndexes = new Map<number, string>();
+
+    for (const prior of priorInvoices) {
+      const priorNumber = String((prior as any).invoiceNumber ?? prior._id);
+      const priorLines: any[] = Array.isArray((prior as any).services) ? (prior as any).services : [];
+      const priorVersion = (prior as any).sowVersionNumber ?? null;
+      const positioned = priorLines.filter((line) => typeof line?.sourceIndex === 'number');
+
+      if (positioned.length !== priorLines.length) {
+        // Written before positions were recorded: its lines cannot be compared
+        // with these, and pretending otherwise would be the same silent
+        // assumption this check exists to remove.
+        billingWarnings.push(`Invoice ${priorNumber} predates line tracking, so its services could not be checked against this one.`);
+        continue;
+      }
+      if (priorVersion === null || sowVersionNumber === null) {
+        // One of the two was billed off the live billing core rather than an
+        // issued version — which is what happens when no version is in force
+        // (see billableServiceLines). The core is rewritten by every workflow
+        // sync, so a position in it does not keep its meaning between invoices.
+        billingWarnings.push(`Invoice ${priorNumber} was billed from the Statement of Work's live figures rather than an issued version, so its services could not be checked against this one.`);
+        continue;
+      }
+      if (priorVersion !== sowVersionNumber) {
+        // Positions are only comparable within one version — a re-synced SOW can
+        // reorder its lines.
+        billingWarnings.push(`Invoice ${priorNumber} was billed from a different version of this Statement of Work, so its services could not be checked against this one.`);
+        continue;
+      }
+      for (const line of positioned) billedIndexes.set(Number(line.sourceIndex), priorNumber);
+    }
+
+    const alreadyBilled = selectedIndexes.map((index, position) => ({ index, position })).filter(({ index }) => index >= 0 && billedIndexes.has(index));
+
+    if (alreadyBilled.length > 0) {
+      const described = alreadyBilled.map(({ index, position }) => `"${String((selected[position] as any)?.name ?? 'Service')}" (already on invoice ${billedIndexes.get(index)})`).join(', ');
+      throw new BadRequestException(`These services have already been invoiced for this job: ${described}. Deselect them, or void the earlier invoice first.`);
+    }
+
     const subtotal = round2(selected.reduce((sum, s) => sum + (Number(s.cost) || 0), 0));
 
     // Carry the SOW's pricing adjustments onto the invoice.
@@ -132,7 +193,7 @@ export class InvoiceService {
       // dropping them here is what left the invoice's pricing column blank.
       // Undefined is preserved rather than coerced to 0 — a legacy line has no
       // breakdown, and 0 would read as a free unit rather than as "unknown".
-      services: selected.map((s: any) => ({
+      services: selected.map((s: any, position: number) => ({
         _id: String(s.serviceId ?? s._id),
         serviceId: String(s.serviceId ?? s._id),
         name: String(s.name ?? 'Service'),
@@ -141,7 +202,12 @@ export class InvoiceService {
         unitCost: s.unitCost == null ? undefined : Number(s.unitCost),
         multiplier: s.multiplier == null ? undefined : Number(s.multiplier),
         runCount: s.runCount == null ? undefined : Number(s.runCount),
-        category: String(s.category ?? '')
+        // What the SOW's Fee Schedule itemises for a parameter-priced line.
+        // Without it the invoice printed the total and nothing else, so a
+        // customer could not see which selections they were being billed for.
+        pricingDetails: Array.isArray(s.pricingDetails) && s.pricingDetails.length > 0 ? s.pricingDetails : undefined,
+        category: String(s.category ?? ''),
+        sourceIndex: selectedIndexes[position] >= 0 ? selectedIndexes[position] : undefined
       })),
       subtotal,
       adjustments,
@@ -150,6 +216,8 @@ export class InvoiceService {
       billedToEmail: String((sow as any).clientEmail ?? ''),
       billedToAddress: (sow as any).clientAddress ?? undefined,
       customerCategory: (job as any).customerCategory ?? undefined,
+      sowVersionNumber: sowVersionNumber ?? undefined,
+      billingWarnings: billingWarnings.length > 0 ? billingWarnings : undefined,
       createdAt: new Date()
     });
 

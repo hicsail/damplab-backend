@@ -606,3 +606,32 @@ describe('prose blocks', () => {
     expect(fieldByKey(merged, 'invoiceProcedures').value).toBe('Fresh wording.');
   });
 });
+
+describe('Fee Schedule: what a parameter-priced line was made of', () => {
+  const line = (pricingDetails?: unknown): string =>
+    calculateFieldValues(
+      inputs({
+        services: [{ serviceId: 's1', name: 'Equipment use', description: '', cost: 220, unitCost: 220, multiplier: 1, pricingDetails } as any],
+        baseCost: 220,
+        totalCost: 220
+      }),
+      ctx
+    ).feeSchedule;
+
+  it('itemises the selections under the line', () => {
+    const v = line([
+      { label: 'Instrument: Bioanalyzer', quantity: 1, unitPrice: 100, total: 100 },
+      { label: 'Hours in use', quantity: 3, unitPrice: 40, total: 120 }
+    ]);
+    expect(v).toContain('- Equipment use — $220.00');
+    expect(v).toContain('    - Instrument: Bioanalyzer — 1 x $100.00 = $100.00');
+    expect(v).toContain('    - Hours in use — 3 x $40.00 = $120.00');
+  });
+
+  it('leaves a line with nothing to itemise exactly as it read before', () => {
+    // The rule that keeps already-issued documents from moving: no details, no
+    // change to the text.
+    expect(line(undefined)).toContain('- Equipment use — $220.00');
+    expect(line(undefined)).not.toContain('    - ');
+  });
+});

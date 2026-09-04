@@ -640,7 +640,10 @@ export class JobResolver {
       jobId,
       versionNumber,
       { role: this.authorRoleFor(user), sub: user.sub, name: user.preferred_username ?? user.email ?? '' },
-      note?.trim() || `Restored version ${versionNumber}`
+      // Display label, not the raw encoded integer: the editor already sends
+      // "Restored version 1.2", and a caller that omits the note should not write
+      // "Restored version 1002" into the same history.
+      note?.trim() || `Restored version ${JobVersionService.displayVersionLabel(versionNumber)}`
     );
     await this.sowService.syncServicesFromJobWorkflows(jobId);
     return restored;

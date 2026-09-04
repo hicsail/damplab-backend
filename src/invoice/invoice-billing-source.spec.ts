@@ -19,13 +19,19 @@ interface HarnessOptions {
   livePricing?: any;
   /** The version in force with the customer, or null for a legacy pre-versioning SOW. */
   activeInputs?: any | null;
+  /** Version number of the document in force, mirrored onto invoices billed from it. */
+  activeVersionNumber?: number;
+  /** Invoices already generated for this job, which the double-billing check reads. */
+  existingInvoices?: any[];
 }
 
 function harness(opts: HarnessOptions = {}): { service: InvoiceService; created: any[] } {
   const created: any[] = [];
+  const existing = opts.existingInvoices ?? [];
 
   const invoiceModel: any = {
-    countDocuments: () => ({ exec: async (): Promise<number> => 0 }),
+    countDocuments: () => ({ exec: async (): Promise<number> => existing.length }),
+    find: () => ({ exec: async (): Promise<any[]> => existing }),
     create: async (doc: any): Promise<any> => {
       created.push(doc);
       return doc;
@@ -34,7 +40,8 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
 
   const jobService: any = { findById: async () => ({ _id: 'job-1', jobId: '04217', name: 'Test job' }) };
 
-  const activeVersion = (): any => (opts.activeInputs === null ? null : { inputs: opts.activeInputs ?? { services: [{ serviceId: 's1', name: 'PCR', cost: 350 }], adjustments: [] } });
+  const activeVersion = (): any =>
+    opts.activeInputs === null ? null : { versionNumber: opts.activeVersionNumber ?? 1000, inputs: opts.activeInputs ?? { services: [{ serviceId: 's1', name: 'PCR', cost: 350 }], adjustments: [] } };
   const liveServices = (): any[] => opts.liveServices ?? [{ serviceId: 's1', name: 'PCR', cost: 420 }];
 
   const sowService: any = {
@@ -242,5 +249,118 @@ describe('selections the invoice refuses rather than silently mis-billing', () =
     const { service } = harness(oneLine);
     await expect(service.createForJob({ jobId: 'job-1' } as any, staff)).rejects.toThrow(/at least one service/);
     await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }], serviceIds: ['s1'] } as any, staff)).rejects.toThrow(/not both/);
+  });
+});
+
+describe('a job invoiced more than once', () => {
+  const twoLines = {
+    services: [
+      { serviceId: 's1', name: 'PCR', cost: 300 },
+      { serviceId: 's2', name: 'Sequencing', cost: 100 }
+    ],
+    adjustments: [{ type: 'DISCOUNT', description: 'Academic', amount: 40 }]
+  };
+
+  /** An invoice as the service now writes them: positions recorded, version stamped. */
+  function priorInvoice(indexes: number[], over: Record<string, unknown> = {}): any {
+    return {
+      _id: 'inv-1',
+      invoiceNumber: '04217-001',
+      sowVersionNumber: 1000,
+      services: indexes.map((sourceIndex) => ({ serviceId: `s${sourceIndex + 1}`, sourceIndex })),
+      ...over
+    };
+  }
+
+  it('refuses to bill a line that an earlier invoice already covered', async () => {
+    const { service } = harness({ activeInputs: twoLines, existingInvoices: [priorInvoice([0])] });
+    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/already been invoiced/i);
+  });
+
+  it('names the service and the invoice it is already on', async () => {
+    const { service } = harness({ activeInputs: twoLines, existingInvoices: [priorInvoice([0])] });
+    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/PCR.*04217-001/);
+  });
+
+  it('lets the second invoice bill the lines the first did not', async () => {
+    const { service, created } = harness({ activeInputs: twoLines, existingInvoices: [priorInvoice([0])] });
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 1, serviceId: 's2' }] } as any, staff);
+    expect(created[0].subtotal).toBe(100);
+    expect(created[0].services[0].sourceIndex).toBe(1);
+  });
+
+  it('splits a job across two invoices that together sum to the SOW total', async () => {
+    // The promise the proration comment makes, now that nothing can bill a line
+    // twice: 300 - 30 and 100 - 10 against a 400 base and a 40 discount.
+    const first = harness({ activeInputs: twoLines });
+    await first.service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+
+    const second = harness({ activeInputs: twoLines, existingInvoices: [priorInvoice([0])] });
+    await second.service.createForJob({ jobId: 'job-1', services: [{ index: 1, serviceId: 's2' }] } as any, staff);
+
+    expect(first.created[0].totalCost + second.created[0].totalCost).toBe(360);
+  });
+
+  it('warns rather than asserting when an earlier invoice predates line tracking', async () => {
+    const legacy = priorInvoice([0]);
+    legacy.services = [{ serviceId: 's1' }];
+    const { service, created } = harness({ activeInputs: twoLines, existingInvoices: [legacy] });
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+    expect(created[0].billingWarnings).toEqual([expect.stringMatching(/predates line tracking/i)]);
+  });
+
+  it('warns rather than asserting when an earlier invoice came off a different version', async () => {
+    const { service, created } = harness({
+      activeInputs: twoLines,
+      activeVersionNumber: 2000,
+      existingInvoices: [priorInvoice([0])]
+    });
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+    expect(created[0].billingWarnings).toEqual([expect.stringMatching(/different version/i)]);
+  });
+
+  it('records no warning when every earlier invoice could be checked', async () => {
+    const { service, created } = harness({ activeInputs: twoLines, existingInvoices: [priorInvoice([0])] });
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 1, serviceId: 's2' }] } as any, staff);
+    expect(created[0].billingWarnings).toBeUndefined();
+    expect(created[0].sowVersionNumber).toBe(1000);
+  });
+});
+
+describe('the itemised breakdown behind a parameter-priced line', () => {
+  it("carries the SOW line's pricing details onto the invoice", async () => {
+    const details = [
+      { label: 'Instrument: Bioanalyzer', quantity: 1, unitPrice: 100, total: 100 },
+      { label: 'Hours in use', quantity: 3, unitPrice: 40, total: 120 }
+    ];
+    const { service, created } = harness({
+      activeInputs: { services: [{ serviceId: 's1', name: 'Equipment use', cost: 220, unitCost: 220, multiplier: 1, pricingDetails: details }], adjustments: [] }
+    });
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+    expect(created[0].services[0].pricingDetails).toEqual(details);
+  });
+
+  it('leaves it undefined on a line with nothing to itemise, rather than an empty list', async () => {
+    // Same rule unitCost and multiplier already follow: absent must stay
+    // distinguishable from "itemised, and it came to nothing".
+    const { service, created } = harness({
+      activeInputs: { services: [{ serviceId: 's1', name: 'PCR', cost: 350, pricingDetails: [] }], adjustments: [] }
+    });
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+    expect(created[0].services[0].pricingDetails).toBeUndefined();
+  });
+});
+
+describe('two invoices with no issued version to anchor them', () => {
+  it('warns instead of comparing positions in a billing core that gets rewritten', async () => {
+    // With no version in force, both invoices bill the live core — which every
+    // workflow sync rewrites — so position 0 is not the same line twice.
+    const { service, created } = harness({
+      activeInputs: null,
+      existingInvoices: [{ _id: 'inv-1', invoiceNumber: '04217-001', services: [{ serviceId: 's1', sourceIndex: 0 }] }]
+    });
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+    expect(created[0].billingWarnings).toEqual([expect.stringMatching(/live figures rather than an issued version/i)]);
+    expect(created[0].sowVersionNumber).toBeUndefined();
   });
 });

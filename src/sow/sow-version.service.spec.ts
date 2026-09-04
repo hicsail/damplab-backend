@@ -254,6 +254,17 @@ describe('previewCalculatedValues — prose blocks', () => {
  * agreement to the spec.
  */
 describe('jobBillingFingerprint', () => {
+  it('encodes a line as serviceId:name:cost:unitCost:multiplier, the exact format already stamped on accepted jobs', () => {
+    // Pinned, not merely exercised. `acceptedBillingFingerprint` is a stored
+    // string compared against a freshly computed one, so any change to this
+    // format makes every in-flight accepted job report drift it does not have
+    // and locks its SOW from being sent. See the note in SOWService.jobBillingFingerprint
+    // on why the line total is fed into the unitCost slot.
+    expect(SowVersionService.jobBillingFingerprint([{ serviceId: 's1', name: 'PCR', cost: 350, unitCost: 350, multiplier: undefined }], 'INTERNAL_CUSTOMERS')).toBe(
+      's1:PCR:350.00:350.00:#INTERNAL_CUSTOMERS'
+    );
+  });
+
   const services = [{ serviceId: 's1', name: 'PCR', cost: 350, unitCost: 5, multiplier: 70 }];
 
   it('is stable for the same services and category', () => {

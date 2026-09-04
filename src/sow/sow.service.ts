@@ -174,9 +174,14 @@ export class SOWService {
         if (!serviceRecord || serviceRecord.isDeleted === true) {
           throw new NotFoundException(`Service with ID ${service.id} not found`);
         }
-        // The fallback is a *unit* price, so prefer an incoming unitCost: passing a
-        // line total here would see it multiplied a second time.
-        const { unitCost, multiplier, cost } = calculateServiceCostBreakdown(serviceRecord, service.formData, service.unitCost ?? service.cost, customerCategory);
+        // Two fallbacks, because callers hold two different figures. `unitCost` is
+        // a unit price and goes in as one. `cost` off the sync path is a workflow
+        // node's line total, multiplier already applied — handing that to the unit
+        // position is what billed a catalogue-priceless service `unit x N x N`, so
+        // it goes in as what it is and is divided back down.
+        const { unitCost, multiplier, cost, details } = calculateServiceCostBreakdown(serviceRecord, service.formData, service.unitCost, customerCategory, {
+          fallbackLineCost: service.cost
+        });
         const runCount = extractRunCount(service.formData);
         return {
           _id: service.id,
@@ -187,7 +192,8 @@ export class SOWService {
           unitCost,
           multiplier,
           category: service.category,
-          runCount
+          runCount,
+          pricingDetails: details
         };
       })
     );
@@ -274,9 +280,10 @@ export class SOWService {
         id: serviceId,
         name: existing?.name ?? node.label ?? 'Service',
         description: existing?.description ?? node.label ?? 'Service',
-        // A unit price, not a line total: transformServices multiplies whatever
-        // arrives here by the node's multiplier when the service record carries
-        // no price of its own.
+        // A line total, and only that. `node.price` is what calculateServiceCost
+        // returned for the node — unit price times multiplier — so naming it
+        // `unitCost` as well made transformServices multiply it a second time
+        // whenever the service record had no price of its own to prefer.
         //
         // The job's node price always wins. The stored SOW figure used to be
         // preferred, which was correct while the SOW editor could override a
@@ -284,7 +291,6 @@ export class SOWService {
         // line silently didn't, leaving a stale figure on the document forever.
         // Service lines are no longer document-editable, so there is nothing on
         // the SOW side worth preserving here.
-        unitCost: node.price ?? 0,
         cost: node.price ?? 0,
         category: existing?.category ?? 'molecular-biology',
         formData: node.formData ?? []
@@ -314,7 +320,13 @@ export class SOWService {
       // `cost`, and the multiplier includes __runCount), so a run-count or
       // sample-count change moves the figure below on its own. Both sides of the
       // gate's comparison run through here, so omitting it cannot cause drift.
-      services.map((s) => ({ serviceId: String(s.id), name: s.name, cost: Number(s.cost) || 0, unitCost: s.unitCost, multiplier: undefined })),
+      // `unitCost` is fed the line total deliberately, and must keep being fed it.
+      // collectSowServiceInputs used to set unitCost = cost = node.price, so every
+      // fingerprint already stamped on an accepted job encodes the total twice.
+      // Sending anything else here — including nothing — changes the string and
+      // makes every in-flight accepted job report drift it does not have, which
+      // would lock its SOW from being sent.
+      services.map((s) => ({ serviceId: String(s.id), name: s.name, cost: Number(s.cost) || 0, unitCost: Number(s.cost) || 0, multiplier: undefined })),
       (job as any).customerCategory ?? null
     );
   }

@@ -241,12 +241,22 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
     // documents that are already sent, signed or finalized — every load
     // regenerates this text (see mergeCalculatedFields) and Fee Schedule has no
     // text override to fall back on.
-    if (s.unitCost == null || !Number.isFinite(multiplier) || multiplier === 1) {
-      return `${s.name} — ${formatCurrency(s.cost)}`;
-    }
-    return `${s.name} — ${formatCurrency(s.unitCost)} x ${formatMultiplier(multiplier)} = ${formatCurrency(s.cost)}`;
+    const headline =
+      s.unitCost == null || !Number.isFinite(multiplier) || multiplier === 1
+        ? `${s.name} — ${formatCurrency(s.cost)}`
+        : `${s.name} — ${formatCurrency(s.unitCost)} x ${formatMultiplier(multiplier)} = ${formatCurrency(s.cost)}`;
+
+    // What the unit price was made of, for a parameter-priced line.
+    //
+    // Without these a service priced off its selected options quoted a bare
+    // total — the rule above suppresses the "x N =" form at a multiplier of 1,
+    // which is the normal case for option pricing — so the customer could not
+    // see what they were being billed for. Lines with nothing to itemise render
+    // exactly as they did, so no already-issued document's text moves.
+    const detailRows = (s.pricingDetails ?? []).map((d) => `    - ${d.label} — ${formatMultiplier(Number(d.quantity))} x ${formatCurrency(Number(d.unitPrice))} = ${formatCurrency(Number(d.total))}`);
+    return [`- ${headline}`, ...detailRows].join('\n');
   });
-  lines.push(...(serviceRows.length ? [bulletList(serviceRows)] : ['- No services listed']));
+  lines.push(...(serviceRows.length ? [serviceRows.join('\n')] : ['- No services listed']));
 
   const adjustments = inputs.adjustments ?? [];
   if (adjustments.length > 0) {

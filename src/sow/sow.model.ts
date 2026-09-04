@@ -3,6 +3,7 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, registerEnumType, Float, Int } from '@nestjs/graphql';
 import { Job } from '../job/job.model';
+import { PricingDetail } from '../pricing/pricing.model';
 
 export enum SOWStatus {
   DRAFT = 'DRAFT',
@@ -276,6 +277,10 @@ export class SOWService {
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'The run count alone. Superseded by multiplier for display; kept because existing documents carry it.' })
   runCount?: number;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false })
+  @Field(() => [PricingDetail], { nullable: true, description: 'How unitCost was arrived at, for parameter-priced lines. Absent where there is nothing to itemise.' })
+  pricingDetails?: PricingDetail[];
 }
 
 @Schema()

@@ -3,6 +3,7 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, Int, Float, registerEnumType } from '@nestjs/graphql';
 import { SOWStatus, SOWAdjustmentType, SOWAdjustmentCategory } from './sow.model';
+import { PricingDetail } from '../pricing/pricing.model';
 
 /**
  * A SOW version is an immutable snapshot of the document. Save, send, sign,
@@ -152,6 +153,10 @@ export class SowVersionService {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Category of the service, as it stood when this version was written.' })
   category?: string;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false })
+  @Field(() => [PricingDetail], { nullable: true, description: 'How unitCost was arrived at, for parameter-priced lines. Absent where there is nothing to itemise.' })
+  pricingDetails?: PricingDetail[];
 }
 
 @Schema({ _id: false })

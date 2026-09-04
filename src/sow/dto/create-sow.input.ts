@@ -88,10 +88,14 @@ export class SOWServiceInput {
   @Field({ description: 'Description of the service' })
   description: string;
 
-  @Field(() => Float, { description: 'Cost of the service. Used only as a fallback when the service record carries no price of its own.', nullable: true })
+  @Field(() => Float, {
+    description:
+      'Line total for the service — unit price times multiplier. Used only as a fallback when the service record carries no price of its own, and divided back down by the multiplier before it is used as one.',
+    nullable: true
+  })
   cost?: number;
 
-  @Field(() => Float, { description: 'Price of a single run, preferred over cost as the fallback: cost is already multiplied.', nullable: true })
+  @Field(() => Float, { description: 'Price of a single run. Preferred over cost as the fallback, since it needs no dividing.', nullable: true })
   unitCost?: number;
 
   @Field(() => JSON, { description: 'Parameter values for pricing', nullable: true })

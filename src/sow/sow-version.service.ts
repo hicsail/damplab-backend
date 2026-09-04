@@ -113,7 +113,10 @@ export class SowVersionService {
         runCount: s.runCount,
         // Carried so an invoice billed from a version can state the line's
         // category; without it every such line was stored with an empty one.
-        category: s.category ?? ''
+        category: s.category ?? '',
+        // Same reason: the invoice explains a parameter-priced line from these
+        // rows, and a version that dropped them would bill an unexplained total.
+        pricingDetails: s.pricingDetails
       })),
       adjustments: (sow.pricing?.adjustments ?? [])
         .filter((a) => a.type !== SOWAdjustmentType.SPECIAL_TERM)

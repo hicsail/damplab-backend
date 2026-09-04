@@ -196,7 +196,13 @@ describe('calculateServiceCostBreakdown — a parameter-priced line with no valu
       { id: 'kit', value: 'standard' },
       { id: 'samples', value: 4 }
     ];
-    expect(calculateServiceCostBreakdown(parameterService, formData, 999)).toEqual({ unitCost: 50, multiplier: 4, cost: 200 });
+    expect(calculateServiceCostBreakdown(parameterService, formData, 999)).toEqual({
+      unitCost: 50,
+      multiplier: 4,
+      cost: 200,
+      // Samples carries no price of its own, so it still scales the whole line.
+      details: [{ label: 'Kit: Standard', quantity: 1, unitPrice: 50, total: 50 }]
+    });
   });
 
   it.each([
@@ -218,6 +224,104 @@ describe('calculateServiceCostBreakdown — a parameter-priced line with no valu
       pricingMode: ServicePricingMode.PARAMETER,
       parameters: [{ id: 'kit', name: 'Kit', type: 'dropdown', options: [{ id: 'free', name: 'Free', price: 0 }] }]
     } as unknown as DampLabService;
-    expect(calculateServiceCostBreakdown(freeOption, [{ id: 'kit', value: 'free' }], 500)).toEqual({ unitCost: 0, multiplier: 1, cost: 0 });
+    expect(calculateServiceCostBreakdown(freeOption, [{ id: 'kit', value: 'free' }], 500)).toEqual({
+      unitCost: 0,
+      multiplier: 1,
+      cost: 0,
+      details: [{ label: 'Kit: Free', quantity: 1, unitPrice: 0, total: 0 }]
+    });
+  });
+});
+
+describe('a priced multiplier parameter scales only itself', () => {
+  // The shape the lab actually needs and could not express: a fixed instrument
+  // charge plus an hourly rate, on one operation.
+  const equipment = {
+    pricingMode: ServicePricingMode.PARAMETER,
+    parameters: [
+      { id: 'instrument', name: 'Instrument', type: 'dropdown', options: [{ id: 'bioanalyzer', name: 'Bioanalyzer', price: 100 }] },
+      { id: 'hours', name: 'Hours in use', type: 'number', isPriceMultiplier: true, price: 40 }
+    ]
+  } as unknown as DampLabService;
+
+  const threeHours = [
+    { id: 'instrument', value: 'bioanalyzer' },
+    { id: 'hours', value: 3 }
+  ];
+
+  it('bills the setup fee once and the hourly rate per hour', () => {
+    // Was (100 + 40) x 3 = 420: the hours scaled the instrument charge too.
+    const breakdown = calculateServiceCostBreakdown(equipment, threeHours);
+    expect(breakdown.cost).toBe(220);
+    expect(breakdown.multiplier).toBe(1);
+    expect(breakdown.details).toEqual([
+      { label: 'Instrument: Bioanalyzer', quantity: 1, unitPrice: 100, total: 100 },
+      { label: 'Hours in use', quantity: 3, unitPrice: 40, total: 120 }
+    ]);
+  });
+
+  it('reads the number rather than counting the selection', () => {
+    // The other half of the old trap: unflagging the parameter billed a flat
+    // $140 however many hours were entered.
+    const sixHours = [
+      { id: 'instrument', value: 'bioanalyzer' },
+      { id: 'hours', value: 6 }
+    ];
+    expect(calculateServiceCostBreakdown(equipment, sixHours).cost).toBe(340);
+  });
+
+  it('still lets the universal run count scale the whole line', () => {
+    // Two runs of a $220 session. The run count has no price of its own, so it
+    // is not one of the parameters excluded from the multiplier.
+    const twoRuns = [...threeHours, { id: RUN_COUNT_PARAM_ID, value: 2 }];
+    const breakdown = calculateServiceCostBreakdown(equipment, twoRuns);
+    expect(breakdown.multiplier).toBe(2);
+    expect(breakdown.cost).toBe(440);
+  });
+
+  it('leaves SERVICE-mode pricing alone, where a multiplier parameter scales the service price', () => {
+    // In SERVICE mode a parameter's own price is never read, so there is nothing
+    // that could have been double-counted and nothing to exclude.
+    const flat = {
+      pricingMode: ServicePricingMode.SERVICE,
+      price: 100,
+      parameters: [{ id: 'hours', name: 'Hours in use', type: 'number', isPriceMultiplier: true, price: 40 }]
+    } as unknown as DampLabService;
+    expect(calculateServiceCostBreakdown(flat, [{ id: 'hours', value: 3 }]).cost).toBe(300);
+  });
+});
+
+describe('a line rebuilt from a figure the node already computed', () => {
+  // A catalogue service with no resolvable price at all: no pricing.*, no tier
+  // price, no flat price. transformServices then has nothing to price from and
+  // falls back to what the workflow node carries.
+  const priceless = {
+    pricingMode: ServicePricingMode.SERVICE,
+    parameters: [{ id: RUN_COUNT_PARAM_ID, isPriceMultiplier: true }]
+  } as unknown as DampLabService;
+
+  const fourRuns = [{ id: RUN_COUNT_PARAM_ID, value: 4 }];
+
+  it('divides a line-total fallback back down instead of multiplying it again', () => {
+    // node.price is already unit x 4. Passed in the unit position it billed
+    // unit x 4 x 4 — $800 for a $50 service run four times.
+    const breakdown = calculateServiceCostBreakdown(priceless, fourRuns, undefined, undefined, { fallbackLineCost: 200 });
+    expect(breakdown.unitCost).toBe(50);
+    expect(breakdown.multiplier).toBe(4);
+    expect(breakdown.cost).toBe(200);
+  });
+
+  it('still treats an explicit unit fallback as a unit price', () => {
+    expect(calculateServiceCostBreakdown(priceless, fourRuns, 50)).toEqual({ unitCost: 50, multiplier: 4, cost: 200, details: undefined });
+  });
+
+  it('prefers the unit fallback when both are supplied', () => {
+    const breakdown = calculateServiceCostBreakdown(priceless, fourRuns, 50, undefined, { fallbackLineCost: 999 });
+    expect(breakdown.cost).toBe(200);
+  });
+
+  it('never overrides a price the catalogue can actually resolve', () => {
+    const priced = { pricingMode: ServicePricingMode.SERVICE, price: 10, parameters: [{ id: RUN_COUNT_PARAM_ID, isPriceMultiplier: true }] } as unknown as DampLabService;
+    expect(calculateServiceCostBreakdown(priced, fourRuns, undefined, undefined, { fallbackLineCost: 200 }).cost).toBe(40);
   });
 });

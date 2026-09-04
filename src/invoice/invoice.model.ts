@@ -1,9 +1,10 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
-import { Field, ObjectType, ID, Float } from '@nestjs/graphql';
+import { Field, ObjectType, ID, Float, Int } from '@nestjs/graphql';
 import { Job } from '../job/job.model';
 import { SOWAdjustmentType } from '../sow/sow.model';
+import { PricingDetail } from '../pricing/pricing.model';
 
 /**
  * A SOW pricing adjustment as applied to THIS invoice (snapshot at generation).
@@ -95,6 +96,23 @@ export class InvoiceServiceLineItem {
   @Prop({ required: true })
   @Field({ description: 'Category of the service' })
   category: string;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false })
+  @Field(() => [PricingDetail], { nullable: true, description: 'How unitCost was arrived at, for parameter-priced lines. Absent where there is nothing to itemise.' })
+  pricingDetails?: PricingDetail[];
+
+  /**
+   * Which line of the billing source this was — the position the staff dialog
+   * ticked, and the only thing that identifies a line.
+   *
+   * `serviceId` cannot: a job may run the same catalog service twice at two
+   * different prices. Recording the position is what lets a later invoice for
+   * the same job see that this line is already billed. Nullable, because
+   * invoices written before this existed cannot say.
+   */
+  @Prop({ required: false })
+  @Field(() => Int, { nullable: true, description: 'Position of this line in the SOW billing source it was taken from.' })
+  sourceIndex?: number;
 }
 
 @Schema()
@@ -165,6 +183,32 @@ export class Invoice {
   @Prop({ required: false })
   @Field({ description: 'Customer category used for pricing (if known)', nullable: true })
   customerCategory?: string;
+
+  /**
+   * The SOW version these lines were taken from.
+   *
+   * `sourceIndex` only means something relative to a particular version: a
+   * re-synced SOW can reorder its lines, so position 2 on one version is not
+   * position 2 on another. Recording the version is what lets the double-billing
+   * check know when two invoices are comparable and when they are merely
+   * unproven. Nullable for invoices written before this existed, and for a
+   * legacy SOW with no version in force at all.
+   */
+  @Prop({ required: false })
+  @Field(() => Int, { nullable: true, description: 'Version number of the SOW these lines were billed from, when one was in force.' })
+  sowVersionNumber?: number;
+
+  /**
+   * What could not be checked at generation time, in the reader's terms.
+   *
+   * An overlap this invoice can prove is refused outright. This is for the cases
+   * it cannot prove — an earlier invoice that predates `sourceIndex`, or one
+   * billed from a different SOW version — where staying silent would imply a
+   * guarantee that was never made.
+   */
+  @Prop({ type: [String], required: false })
+  @Field(() => [String], { nullable: true, description: 'Billing checks that could not be completed when this invoice was generated.' })
+  billingWarnings?: string[];
 
   @Prop({ required: true, default: new Date() })
   @Field({ description: 'Date when the invoice record was created' })
