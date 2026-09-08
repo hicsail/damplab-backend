@@ -14,5 +14,7 @@
 # Build artifacts
 *.tsbuildinfo
 
+# Catalog
+/catalog-export.json
 # Certs
 /secure_dna/certs/
