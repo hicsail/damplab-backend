@@ -63,6 +63,7 @@ access group. See `damplab-backend/src/pricing/pricing-groups.ts`.
 | `labstatustv:view` | ✓ | | | |
 | `bench:use` — My Bench (technician bench) | ✓ | ✓ | ✓ | |
 | `billing:view` — Billing / usage billing | ✓ | | | |
+| `billing:write` — void an invoice | ✓ | | | |
 | `customers:manage` — Customer Management | ✓ | | | |
 | `apikeys:manage` — API Keys | ✓ | | | |
 | `datatranslation:use` — Data Translation | ✓ | | | |
@@ -86,7 +87,9 @@ access group. See `damplab-backend/src/pricing/pricing-groups.ts`.
 ### Amendments to the transcription
 
 Three cells were changed after the Phase 2a transcription, on request. **They are
-not yet in the source spreadsheet** — mirror them there.
+not yet in the source spreadsheet** — mirror them there. `billing:write` is newer
+still: the spreadsheet has no row for it at all, because voiding an invoice did not
+exist when the matrix was written.
 
 | Cell | Was | Now | Why |
 |---|---|---|---|
@@ -95,6 +98,7 @@ not yet in the source spreadsheet** — mirror them there.
 | `bench:use` | Admin + Technician | **+ Equipment User** | Requested. Equipment users should reach My Bench. |
 | `/technician_view/:id` (Q8) | Administrator only | **`jobs:view-all`** | The merged Jobs page makes it reachable for the first time: `/dashboard` is `jobs:view-all`, so keying the link off anything narrower means a technician clicks a job and bounces to `/`. |
 | Homepage: My Jobs + Jobs | Two buttons, two sections | **One button, Client Tools** | The two pages rendered the same component; scope is enforced server-side now. Client Tools because the baseline holds `jobs:view`. |
+| `billing:write` | *(absent)* | **Administrator only** | New. Voiding an invoice reverses a financial record and releases its lines for re-invoicing, so it sits above generating one — which is still a bare `damplab-staff` check inside `InvoiceService.createForJob`. |
 
 Two notes on the equipment-user grants, because a bare table edit misses both:
 

@@ -24,6 +24,7 @@ import { TrainingResolver } from '../../training/training.resolver';
 import { AnnouncementResolver } from '../../announcements/announcement.resolver';
 import { CustomerManagementResolver } from '../../workflow/resolvers/customer-management.resolver';
 import { PermissionsResolver } from './permissions.resolver';
+import { InvoiceResolver } from '../../invoice/invoice.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -130,6 +131,12 @@ const GATES: Row[] = [
   // Billing acts that live on pages lower tiers can now reach.
   [BookingResolver, 'confirmBookingUsage', Permission.BillingView],
   [BookingResolver, 'billableBookings', Permission.BillingView],
+
+  // Voiding an invoice reverses a financial record and releases its lines for
+  // re-invoicing, so it sits above `billing:view` and above generating one.
+  // `createInvoice` is deliberately absent from this table: it still hand-rolls a
+  // `damplab-staff` check inside InvoiceService, and migrating it is separate work.
+  [InvoiceResolver, 'voidInvoice', Permission.BillingWrite],
 
   // /edit
   [DampLabServicesResolver, 'createService', Permission.CatalogEditorWrite],
@@ -250,6 +257,15 @@ describe('Phase 2b widening — who each gate lets through', () => {
     for (const permission of [Permission.CatalogEditorWrite, Permission.LabLayoutWrite, Permission.InventoryWrite]) {
       expect({ permission, reach: reach(permission) }).toEqual({ permission, reach: ['administrator'] });
     }
+  });
+
+  /**
+   * Voiding is the one billing act above the page: a technician who can see the
+   * Billing page must not be able to reverse a charge from it.
+   */
+  it('keeps voiding an invoice above viewing billing', () => {
+    expect(reach(Permission.BillingWrite)).toEqual(['administrator']);
+    expect(reach(Permission.BillingView)).toEqual(['administrator']);
   });
 
   it('keeps confirm-usage administrator-only even though the page it sits on widened', () => {

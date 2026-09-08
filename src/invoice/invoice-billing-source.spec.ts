@@ -31,7 +31,12 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
 
   const invoiceModel: any = {
     countDocuments: () => ({ exec: async (): Promise<number> => existing.length }),
-    find: () => ({ exec: async (): Promise<any[]> => existing }),
+    // Honours the `voidedAt: null` half of the filter, because that is what makes
+    // voiding release a line: a harness that returned voided invoices anyway would
+    // let the guard look correct while the real query had stopped matching.
+    find: (filter: any = {}) => ({
+      exec: async (): Promise<any[]> => (Object.prototype.hasOwnProperty.call(filter, 'voidedAt') ? existing.filter((inv: any) => inv.voidedAt == null) : existing)
+    }),
     create: async (doc: any): Promise<any> => {
       created.push(doc);
       return doc;

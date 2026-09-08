@@ -9,6 +9,8 @@ import { User } from '../auth/user.interface';
 import { Job } from '../job/job.model';
 import { JobService } from '../job/job.service';
 import { Role } from '../auth/roles/roles.enum';
+import { RequirePermission } from '../auth/permissions/permissions.decorator';
+import { Permission } from '../auth/permissions/permission.enum';
 
 @Resolver(() => Invoice)
 @UseGuards(AuthRolesGuard)
@@ -33,6 +35,21 @@ export class InvoiceResolver {
   @Mutation(() => Invoice, { description: 'Staff-only. Generate a new invoice for a job by selecting a subset of services from the job SOW.' })
   async createInvoice(@Args('input', { type: () => CreateInvoiceInput }) input: CreateInvoiceInput, @CurrentUser() user: User): Promise<Invoice> {
     return this.invoiceService.createForJob(input, user);
+  }
+
+  /**
+   * Void an invoice, keeping the record and releasing its service lines.
+   *
+   * Gated on `billing:write` rather than on the bare `damplab-staff` check
+   * `createForJob` still hand-rolls: a void reverses a financial record, so it sits
+   * a tier above generating one. Do not add a `@Roles` here as well — the guard
+   * evaluates both, and a leftover `@Roles` re-denies everyone the permission was
+   * meant to admit.
+   */
+  @Mutation(() => Invoice, { description: 'Void an invoice. The record is kept and renumbering never happens; its service lines become available to invoice again.' })
+  @RequirePermission(Permission.BillingWrite)
+  async voidInvoice(@Args('invoiceId', { type: () => ID }) invoiceId: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<Invoice> {
+    return this.invoiceService.voidInvoice(invoiceId, reason, user);
   }
 
   @ResolveField(() => Job, { description: 'Job this invoice is associated with' })

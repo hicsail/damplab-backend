@@ -32,9 +32,18 @@ export class InvoiceService {
     return this.invoiceModel.find({ jobId }).sort({ createdAt: -1 }).exec();
   }
 
-  /** How many invoices a job has. The jobs list asks this per row, so it never loads the documents. */
+  /**
+   * How many invoices **stand** against a job. The jobs list asks this per row, so
+   * it never loads the documents.
+   *
+   * Voided invoices are excluded, because the only question this answers is
+   * "has this job been billed yet" — and a job whose one invoice was voided has
+   * not. Note the contrast with the numbering count inside `createForJob`, which
+   * deliberately counts everything: a void releases an invoice's lines but never
+   * its number.
+   */
   async countByJobId(jobId: string): Promise<number> {
-    return this.invoiceModel.countDocuments({ jobId }).exec();
+    return this.invoiceModel.countDocuments({ jobId, voidedAt: null }).exec();
   }
 
   async createForJob(input: CreateInvoiceInput, user: User): Promise<Invoice> {
@@ -89,7 +98,12 @@ export class InvoiceService {
     // adjustments are prorated per invoice, the discount was credited twice as
     // well. The comment below about every invoice summing to the SOW total holds
     // only if the invoices partition the lines, which is what this enforces.
-    const priorInvoices = await this.invoiceModel.find({ jobId: input.jobId }).exec();
+    //
+    // Voided invoices are excluded here, and that exclusion is what makes voiding
+    // mean anything: a void releases its lines back for re-invoicing. `voidedAt:
+    // null` matches both an absent field and an explicit null, so live invoices
+    // written before voiding existed still count.
+    const priorInvoices = await this.invoiceModel.find({ jobId: input.jobId, voidedAt: null }).exec();
     const billingWarnings: string[] = [];
     const billedIndexes = new Map<number, string>();
 
@@ -127,7 +141,7 @@ export class InvoiceService {
 
     if (alreadyBilled.length > 0) {
       const described = alreadyBilled.map(({ index, position }) => `"${String((selected[position] as any)?.name ?? 'Service')}" (already on invoice ${billedIndexes.get(index)})`).join(', ');
-      throw new BadRequestException(`These services have already been invoiced for this job: ${described}. Deselect them, or void the earlier invoice first.`);
+      throw new BadRequestException(`These services have already been invoiced for this job: ${described}. Deselect them, or void that invoice to release its lines.`);
     }
 
     const subtotal = round2(selected.reduce((sum, s) => sum + (Number(s.cost) || 0), 0));
@@ -173,6 +187,9 @@ export class InvoiceService {
     const totalCost = round2(Math.max(0, subtotal + adjustmentsTotal));
 
     // Generate next invoice number per job: "<jobDisplayId>-<seq>"
+    // Every invoice, voided ones included — unlike countByJobId. A void releases an
+    // invoice's lines but never its number; counting only live ones here would hand
+    // a voided invoice's number to its own replacement.
     const existingCount = await this.invoiceModel.countDocuments({ jobId: input.jobId }).exec();
     const seq = existingCount + 1;
     const jobDisplayId = String((job as any).jobId ?? job._id);
@@ -222,5 +239,43 @@ export class InvoiceService {
     });
 
     return invoice;
+  }
+
+  /**
+   * Void an invoice: keep the document, release its lines.
+   *
+   * There is deliberately no delete. See the comment on `Invoice.voidedAt` —
+   * removing a document would recycle its invoice number, because numbering is
+   * derived from `countDocuments`.
+   *
+   * Idempotence is refused rather than silently accepted: voiding an already-void
+   * invoice almost always means someone is looking at a stale list, and the second
+   * void would overwrite the first reason and actor. Authorization lives on the
+   * resolver (`@RequirePermission(Permission.BillingWrite)`), which is where the
+   * rest of the backend puts it.
+   */
+  async voidInvoice(invoiceId: string, reason: string, user: User): Promise<Invoice> {
+    const trimmed = String(reason ?? '').trim();
+    if (!trimmed) {
+      throw new BadRequestException('A reason is required to void an invoice.');
+    }
+
+    const invoice = await this.invoiceModel.findById(invoiceId).exec();
+    if (!invoice) {
+      throw new NotFoundException(`Invoice with ID ${invoiceId} not found`);
+    }
+    if ((invoice as any).voidedAt) {
+      throw new BadRequestException(`Invoice ${(invoice as any).invoiceNumber} has already been voided.`);
+    }
+
+    const voidedBy = user.email || user.preferred_username || 'unknown';
+    // Conditional on still being live, so two staff voiding the same invoice at
+    // once cannot overwrite each other's reason — the loser gets the refusal
+    // above rather than a silent last-write-wins.
+    const updated = await this.invoiceModel.findOneAndUpdate({ _id: invoiceId, voidedAt: null }, { $set: { voidedAt: new Date(), voidedBy, voidReason: trimmed } }, { new: true }).exec();
+    if (!updated) {
+      throw new BadRequestException(`Invoice ${(invoice as any).invoiceNumber} has already been voided.`);
+    }
+    return updated;
   }
 }

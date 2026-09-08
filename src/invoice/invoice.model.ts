@@ -210,6 +210,32 @@ export class Invoice {
   @Field(() => [String], { nullable: true, description: 'Billing checks that could not be completed when this invoice was generated.' })
   billingWarnings?: string[];
 
+  /**
+   * Void, not delete. **Nothing may ever remove an invoice document**, and this is
+   * load-bearing rather than tidiness: the invoice number is
+   * `countDocuments({ jobId }) + 1` (see `InvoiceService.createForJob`), so
+   * deleting one hands its number straight to the next invoice and produces two
+   * `04217-003`s. A void leaves the count intact.
+   *
+   * Voiding releases the invoice's service lines: `createForJob`'s prior-invoice
+   * scan skips voided documents, so those positions can be billed again. That is
+   * the whole point — the double-billing guard would otherwise make a
+   * mis-generated invoice permanent.
+   *
+   * All three fields move together. `voidedAt` is the flag every reader tests.
+   */
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When this invoice was voided. Absent on a live invoice.' })
+  voidedAt?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Who voided it (username/email).' })
+  voidedBy?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Why it was voided. Required when voiding.' })
+  voidReason?: string;
+
   @Prop({ required: true, default: new Date() })
   @Field({ description: 'Date when the invoice record was created' })
   createdAt: Date;
