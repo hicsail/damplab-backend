@@ -245,6 +245,30 @@ export class Job {
     description: 'The state the job was in when archived — kept as an audit trail, since staff may archive work that was still in progress.'
   })
   archivedFromState?: JobState;
+
+  /**
+   * The lab's pause on equipment booking for this job.
+   *
+   * A flag rather than a JobState value, for the same reason `isArchived` is one:
+   * pausing is orthogonal to where the job sits in its lifecycle, and it must be
+   * reversible without disturbing that. Existing bookings are never touched — this
+   * only stops new ones being made and existing ones being moved.
+   */
+  @Prop({ required: false, default: false })
+  @Field(() => Boolean, { nullable: true, defaultValue: false, description: 'Whether the lab has paused equipment booking on this job.' })
+  bookingBlocked?: boolean;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Why booking is paused. Shown to the customer verbatim.' })
+  bookingBlockedReason?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Who last changed the booking pause (username/email).' })
+  bookingBlockedBy?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When the booking pause was last changed.' })
+  bookingBlockedAt?: Date;
 }
 
 export type JobDocument = Job & Document;

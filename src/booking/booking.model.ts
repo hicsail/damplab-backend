@@ -150,6 +150,26 @@ export class Booking {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Free-text notes.' })
   notes?: string;
+
+  // --- Job-scoped booking (booked from a job page, against one of its
+  // equipment-use operations). Absent on a walk-up booking, and that absence is
+  // load-bearing: it is what tells the availability board to redact the label and
+  // what tells `cancelBooking` which ownership rule applies.
+  //
+  // Plain strings, not ObjectIds, matching `SOW.jobId`. Nothing about the
+  // estimated window is stored — "outside the estimated window" is computed on
+  // read from the node's reserved parameters, so a re-estimate is never stale.
+  @Prop({ required: false })
+  @Field(() => ID, { nullable: true, description: 'Job this booking belongs to (job-scoped bookings only).' })
+  jobId?: string;
+
+  @Prop({ required: false })
+  @Field(() => ID, { nullable: true, description: 'Workflow node id of the equipment-use operation this booking is against.' })
+  nodeId?: string;
+
+  @Prop({ required: false })
+  @Field(() => ID, { nullable: true, description: "The operation's service, whose per-category price is the rate snapshot." })
+  serviceId?: string;
 }
 
 export type BookingDocument = Booking & Document;
@@ -159,3 +179,4 @@ BookingSchema.index({ inventoryItem: 1, startTime: 1, endTime: 1 });
 BookingSchema.index({ ownerSub: 1 });
 BookingSchema.index({ billingStatus: 1 });
 BookingSchema.index({ status: 1 });
+BookingSchema.index({ jobId: 1 });
