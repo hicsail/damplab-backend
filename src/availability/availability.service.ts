@@ -37,6 +37,19 @@ const DEFAULT_HOLD_MIN = 240; // a windowless/derived hold occupies ~4h by defau
 const overlaps = (aS: Date, aE: Date, bS: Date, bE: Date): boolean => aS < bE && bS < aE;
 
 /**
+ * What a booking's conflict says about itself on the shared availability board.
+ *
+ * A job-scoped booking is redacted to a bare reservation — no owner, no job
+ * number — because this label is printed on the lab monitor, on the status TV and
+ * in the refusal a *different* customer gets when their slot collides with it.
+ * Naming the other party there would leak who is running what. A walk-up booking
+ * keeps its existing wording: those are the lab's own users on the lab's own
+ * board.
+ */
+export const bookingConflictLabel = (booking: { jobId?: string; ownerName?: string; ownerEmail?: string }): string =>
+  booking.jobId ? 'reserved (equipment booking)' : `booked by ${booking.ownerName || booking.ownerEmail || 'a user'}`;
+
+/**
  * Single source of truth for "is this inventory item free in this window?" across
  * BOTH worlds: operations holding inventory (WorkflowNode.usedInventory) and timed
  * calendar bookings. Used by the Lab Monitor picker and by booking creation, so the
@@ -87,12 +100,12 @@ export class AvailabilityService {
     };
     if (ids.length) bookingFilter.inventoryItem = { $in: oids };
     if (q.excludeBookingId) bookingFilter._id = { $ne: q.excludeBookingId };
-    const bookings = await this.bookingModel.find(bookingFilter).select('_id inventoryItem inventoryName startTime endTime ownerName ownerEmail').lean().exec();
+    const bookings = await this.bookingModel.find(bookingFilter).select('_id inventoryItem inventoryName startTime endTime ownerName ownerEmail jobId').lean().exec();
     for (const b of bookings as any[]) {
       conflicts.push({
         itemId: String(b.inventoryItem),
         source: 'BOOKING',
-        label: `booked by ${b.ownerName || b.ownerEmail || 'a user'}`,
+        label: bookingConflictLabel(b),
         start: b.startTime,
         end: b.endTime
       });
