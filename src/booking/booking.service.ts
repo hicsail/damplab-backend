@@ -159,6 +159,14 @@ export class BookingService {
     return this.model.find({ ownerSub }).sort({ startTime: -1, usedOn: -1, createdAt: -1 }).exec();
   }
 
+  /** A job's live bookings — cancelled ones are history, not schedule. */
+  async findByJob(jobId: string): Promise<Booking[]> {
+    return this.model
+      .find({ jobId, status: { $ne: BookingStatus.CANCELLED } })
+      .sort({ startTime: 1 })
+      .exec();
+  }
+
   async findAll(filter: BookingFilter = {}): Promise<Booking[]> {
     const q: Record<string, unknown> = {};
     if (filter.inventoryItemId) q.inventoryItem = filter.inventoryItemId;

@@ -9,11 +9,13 @@ import { Permission } from '../auth/permissions/permission.enum';
 import { hasPermission } from '../auth/permissions/permissions';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
+import { JobEquipmentBookingService } from './job-equipment-booking.service';
+import { JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
 
 @Resolver(() => Booking)
 @UseGuards(AuthRolesGuard)
 export class BookingResolver {
-  constructor(private readonly bookingService: BookingService) {}
+  constructor(private readonly bookingService: BookingService, private readonly jobEquipmentBookingService: JobEquipmentBookingService) {}
 
   /**
    * "May set another user's details on a booking, and may cancel anyone's."
@@ -76,6 +78,21 @@ export class BookingResolver {
     @Args('inventoryItemId', { type: () => ID, nullable: true }) inventoryItemId?: string
   ): Promise<Booking[]> {
     return this.bookingService.findAll({ from, to, inventoryItemId });
+  }
+
+  /**
+   * The job page's equipment-booking panel, in one round trip.
+   *
+   * Deliberately carries NO `@RequirePermission`, exactly like `ownJobById`: an
+   * ordinary client with no inventory permission at all must be able to load their
+   * own job page and be told why booking is closed. The scope is enforced inside —
+   * a caller who is neither the job's owner, nor a listed booker, nor staff gets
+   * `HIDDEN` and no data whatsoever. See `resolver-gates.spec.ts`, which asserts
+   * the absence so a later "tidy this up" cannot silently 403 every client.
+   */
+  @Query(() => JobEquipmentBookingView, { description: "A job's equipment-use operations, its bookings, and whether the caller may book." })
+  async jobEquipmentBooking(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<JobEquipmentBookingView> {
+    return this.jobEquipmentBookingService.view(jobId, user);
   }
 
   /** Confirmed-but-unbilled usage for a user — candidates for a usage SOW/invoice. */
