@@ -131,6 +131,11 @@ const GATES: Row[] = [
   [BookingResolver, 'confirmBookingUsage', Permission.BillingView],
   [BookingResolver, 'billableBookings', Permission.BillingView],
 
+  // Job-scoped equipment booking. `inventory:book` is the tier; being on the job
+  // is checked inside JobEquipmentBookingService.
+  [BookingResolver, 'createJobEquipmentBooking', Permission.InventoryBook],
+  [BookingResolver, 'updateJobEquipmentBooking', Permission.InventoryBook],
+
   // /edit
   [DampLabServicesResolver, 'createService', Permission.CatalogEditorWrite],
   [DampLabServicesResolver, 'updateService', Permission.CatalogEditorWrite],

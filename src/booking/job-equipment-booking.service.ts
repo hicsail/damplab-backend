@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { JobService } from '../job/job.service';
 import { SOWService } from '../sow/sow.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -12,6 +12,8 @@ import { User } from '../auth/user.interface';
 import { EquipmentWindow, readEquipmentBookers, readEquipmentHoursPerWeek, readEquipmentWindow } from './equipment-window';
 import { AccessActor, JobBookingAccessStatus, JobBookingAccessVerdict, resolveJobEquipmentBookingAccess } from './job-equipment-booking-access';
 import { JobBookingItem, JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
+import { Booking } from './booking.model';
+import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
 
 /** One equipment-use operation of a job, with everything the panel and the mutations need. */
 export interface LoadedOperation {
@@ -131,6 +133,61 @@ export class JobEquipmentBookingService {
       operations.map((op) => ({ nodeId: op.nodeId, bookers: op.bookers })),
       signed
     );
+  }
+
+  /** The refusal a non-OPEN verdict earns on a write. */
+  private refuse(verdict: JobBookingAccessVerdict): never {
+    if (verdict.status === JobBookingAccessStatus.BLOCKED) throw new ForbiddenException('Booking on this job is paused by the lab.');
+    if (verdict.status === JobBookingAccessStatus.SOW_NOT_SIGNED) {
+      throw new ForbiddenException('Booking opens once the Statement of Work is signed by both parties.');
+    }
+    // HIDDEN and NOT_ELIGIBLE deliberately share one refusal: telling a stranger
+    // which of the two applies would tell them the job exists.
+    throw new ForbiddenException('You are not authorized to book equipment on this job.');
+  }
+
+  /** The job, the operation and the caller's right to book it — or a refusal. */
+  private async authorize(jobId: string, nodeId: string, user: User): Promise<{ job: any; operation: LoadedOperation }> {
+    const job: any = await this.jobService.findById(jobId);
+    if (!job) throw new NotFoundException('Job not found.');
+    const operations = await this.loadOperations(job);
+    const verdict = await this.verdict(job, user, operations);
+    if (verdict.status !== JobBookingAccessStatus.OPEN) this.refuse(verdict);
+
+    const operation = operations.find((op) => op.nodeId === nodeId);
+    if (!operation) throw new NotFoundException('That operation is not on this job.');
+    if (!verdict.bookableNodeIds.includes(nodeId)) throw new ForbiddenException('You are not authorized to book this operation.');
+    return { job, operation };
+  }
+
+  async create(input: CreateJobEquipmentBookingInput, user: User): Promise<Booking> {
+    const { job, operation } = await this.authorize(String(input.jobId), String(input.nodeId), user);
+    const item = operation.items.find((i) => i.id === String(input.inventoryItemId));
+    if (!item) throw new BadRequestException('That item is not required by this operation.');
+    if (!item.schedulable) throw new BadRequestException('That item is not schedulable here — consumables are billed by quantity, not by time slot.');
+
+    const full = await this.inventory.find(item.id);
+    if (!full) throw new NotFoundException('Inventory item not found.');
+
+    return this.bookings.createForJob({
+      job,
+      nodeId: operation.nodeId,
+      nodeLabel: operation.label,
+      service: operation.service,
+      item: full,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      notes: input.notes,
+      actor: { sub: user?.sub, email: user?.email, name: user?.preferred_username || user?.email }
+    });
+  }
+
+  async update(id: string, input: UpdateJobEquipmentBookingInput, user: User): Promise<Booking> {
+    const existing: any = await this.bookings.findById(id);
+    if (!existing) throw new NotFoundException('Booking not found.');
+    if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
+    await this.authorize(String(existing.jobId), String(existing.nodeId), user);
+    return this.bookings.updateForJob(id, { startTime: input.startTime, endTime: input.endTime, notes: input.notes });
   }
 
   async view(jobId: string, user: User): Promise<JobEquipmentBookingView> {

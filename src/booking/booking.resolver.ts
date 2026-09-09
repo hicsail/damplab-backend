@@ -11,6 +11,7 @@ import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 import { JobEquipmentBookingService } from './job-equipment-booking.service';
 import { JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
+import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
 
 @Resolver(() => Booking)
 @UseGuards(AuthRolesGuard)
@@ -54,6 +55,31 @@ export class BookingResolver {
       cleaned.ownerInstitution = undefined;
     }
     return this.bookingService.create(cleaned, { sub: user?.sub, email: user?.email, name: this.displayName(user) });
+  }
+
+  /**
+   * Book equipment against a job's equipment-use operation.
+   *
+   * Two gates, both real: `inventory:book` is the lab's equipment-user tier, and
+   * the access check inside decides whether THIS caller may book THIS job's THIS
+   * operation. Neither implies the other — holding the role does not put you on
+   * someone else's job.
+   */
+  @Mutation(() => Booking)
+  @RequirePermission(Permission.InventoryBook)
+  async createJobEquipmentBooking(@Args('input', { type: () => CreateJobEquipmentBookingInput }) input: CreateJobEquipmentBookingInput, @CurrentUser() user: User): Promise<Booking> {
+    return this.jobEquipmentBookingService.create(input, user);
+  }
+
+  /** Move or re-note a job-scoped booking. Refused once it has been billed. */
+  @Mutation(() => Booking)
+  @RequirePermission(Permission.InventoryBook)
+  async updateJobEquipmentBooking(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input', { type: () => UpdateJobEquipmentBookingInput }) input: UpdateJobEquipmentBookingInput,
+    @CurrentUser() user: User
+  ): Promise<Booking> {
+    return this.jobEquipmentBookingService.update(id, input, user);
   }
 
   /** The current user's own bookings. */

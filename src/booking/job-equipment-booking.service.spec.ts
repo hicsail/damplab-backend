@@ -1,5 +1,7 @@
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { JobEquipmentBookingService } from './job-equipment-booking.service';
 import { JobBookingAccessStatus } from './job-equipment-booking-access';
+import { BookingService } from './booking.service';
 
 const equipmentService = {
   _id: 'svc-1',
@@ -122,5 +124,123 @@ describe('JobEquipmentBookingService.view', () => {
       operations: [],
       bookings: []
     });
+  });
+});
+
+/** As `build`, but with a spying booking service so the write can be asserted. */
+const buildWithWriter = (over: { sowStatus?: string; job?: any } = {}): { service: JobEquipmentBookingService; written: any[] } => {
+  const written: any[] = [];
+  const bookings = {
+    findByJob: async (): Promise<any[]> => [],
+    createForJob: async (params: any): Promise<{ _id: string }> => {
+      written.push(params);
+      return { _id: 'bk-new' };
+    }
+  };
+  const service = new JobEquipmentBookingService(
+    { findById: async () => over.job ?? job } as any,
+    { findByJobId: async () => (over.sowStatus ? { status: over.sowStatus } : null) } as any,
+    { findById: async () => ({ nodes: ['node-a', 'node-b'] }) } as any,
+    { getByIDs: async () => [nodeEquip, nodePlain] } as any,
+    { findOne: async (id: string) => (id === 'svc-1' ? equipmentService : plainService) } as any,
+    // `loadOperations` uses findByIds; `create` re-reads the chosen item with find.
+    { findByIds: async () => items, find: async (id: string) => items.find((i) => i.id === id) } as any,
+    bookings as any
+  );
+  return { service, written };
+};
+
+const slot = { startTime: new Date('2026-01-06T10:00:00Z'), endTime: new Date('2026-01-06T12:00:00Z') };
+
+describe('JobEquipmentBookingService.create', () => {
+  const input = { jobId: 'job-1', nodeId: 'node-a', inventoryItemId: 'item-timed', ...slot };
+
+  it('hands the booking service the job, the operation and the schedulable item', async () => {
+    const { service, written } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await service.create(input as any, bookerUser() as any);
+    expect(written[0]).toMatchObject({ nodeId: 'node-a', nodeLabel: 'Bioanalyzer time' });
+    expect(written[0].job._id).toBe('job-1');
+    expect(written[0].item.id).toBe('item-timed');
+    expect(written[0].service._id).toBe('svc-1');
+  });
+
+  it('refuses while the SOW is unsigned', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SENT' });
+    await expect(service.create(input as any, bookerUser() as any)).rejects.toThrow(ForbiddenException);
+  });
+
+  it('refuses with the lab wording while booking is paused', async () => {
+    const paused = { ...job, bookingBlocked: true, bookingBlockedReason: 'unpaid invoice' };
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED', job: paused });
+    await expect(service.create(input as any, bookerUser() as any)).rejects.toThrow('Booking on this job is paused by the lab.');
+  });
+
+  it('refuses a consumable, which is bookable but not schedulable here', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.create({ ...input, inventoryItemId: 'item-consumable' } as any, bookerUser() as any)).rejects.toThrow(BadRequestException);
+  });
+
+  it('refuses an operation that is not on this job', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.create({ ...input, nodeId: 'node-zzz' } as any, bookerUser() as any)).rejects.toThrow('That operation is not on this job.');
+  });
+});
+
+describe('BookingService.createForJob', () => {
+  const make = (conflicts: any[] = []): { svc: BookingService; created: any[] } => {
+    const created: any[] = [];
+    // Stands in for the Mongoose model, which is called as `new this.model(doc)`
+    // by some collaborators; `createForJob` only ever calls `.create`, so the
+    // constructor body itself does nothing.
+    const model: any = function (): void {
+      /* unused: createForJob only calls model.create */
+    };
+    model.create = async (doc: any): Promise<any> => {
+      created.push(doc);
+      return doc;
+    };
+    const svc = new BookingService(model, {} as any, { findItemConflicts: async () => conflicts } as any);
+    return { svc, created };
+  };
+
+  const params = {
+    job: { _id: 'job-1', jobId: '04217', sub: 'creator-sub', email: 'creator@bu.edu', username: 'Creator', institute: 'BU', customerCategory: 'INTERNAL_CUSTOMERS' },
+    nodeId: 'node-a',
+    nodeLabel: 'Bioanalyzer time',
+    service: { _id: 'svc-1', pricing: { internal: 40 } },
+    item: { id: 'item-timed', name: 'Bioanalyzer', type: 'EQUIPMENT', bookable: true, rateType: 'HOURLY' },
+    startTime: new Date('2026-01-06T10:00:00Z'),
+    endTime: new Date('2026-01-06T12:00:00Z'),
+    actor: { sub: 'booker-sub', name: 'Booker' }
+  };
+
+  it("takes the owner from the job and the rate from the operation's service price", async () => {
+    const { svc, created } = make();
+    await svc.createForJob(params as any);
+    expect(created[0]).toMatchObject({
+      jobId: 'job-1',
+      nodeId: 'node-a',
+      serviceId: 'svc-1',
+      ownerSub: 'creator-sub',
+      ownerEmail: 'creator@bu.edu',
+      ownerInstitution: 'BU',
+      customerCategory: 'INTERNAL_CUSTOMERS',
+      createdBySub: 'booker-sub',
+      rateSnapshot: 40,
+      cost: 80,
+      notes: 'Job #04217 · Bioanalyzer time'
+    });
+  });
+
+  it('leaves rate and cost undefined when the category resolves no price', async () => {
+    const { svc, created } = make();
+    await svc.createForJob({ ...params, service: { _id: 'svc-1', pricing: {} } } as any);
+    expect(created[0].rateSnapshot).toBeUndefined();
+    expect(created[0].cost).toBeUndefined();
+  });
+
+  it('refuses a slot that overlaps any other hold on the item', async () => {
+    const { svc } = make([{ itemId: 'item-timed', source: 'BOOKING', label: 'reserved (equipment booking)' }]);
+    await expect(svc.createForJob(params as any)).rejects.toThrow('That item is unavailable for the selected time (reserved (equipment booking)).');
   });
 });
