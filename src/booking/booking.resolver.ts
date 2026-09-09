@@ -151,13 +151,18 @@ export class BookingResolver {
   /**
    * Cancel a booking. Owner only, unless the caller may manage others' bookings.
    * The ownership check is the real gate — an equipment user reaching the lab-wide
-   * calendar must not be able to cancel someone else's slot.
+   * calendar must not be able to cancel someone else's slot. A job-scoped booking
+   * goes through the wider job-aware gate instead, below.
    */
   @Mutation(() => Booking)
   async cancelBooking(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Booking> {
-    const booking = await this.bookingService.findById(id);
+    const booking: any = await this.bookingService.findById(id);
     if (!booking) throw new NotFoundException('Booking not found.');
-    if (!this.canManageOthersBookings(user) && booking.ownerSub !== user?.sub) {
+    if (booking.jobId) {
+      // A job-scoped booking's owner is the job, not the person who made it, so
+      // the walk-up owner check below would lock out every listed booker.
+      await this.jobEquipmentBookingService.assertMayCancel(booking, user);
+    } else if (!this.canManageOthersBookings(user) && booking.ownerSub !== user?.sub) {
       throw new ForbiddenException('You can only cancel your own bookings.');
     }
     return this.bookingService.cancel(id);

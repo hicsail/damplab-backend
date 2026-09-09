@@ -252,3 +252,32 @@ describe('BookingService.createForJob', () => {
     await expect(svc.createForJob({ ...params, item: deletedItem } as any)).rejects.toThrow('That inventory item is no longer available.');
   });
 });
+
+describe('JobEquipmentBookingService.assertMayCancel', () => {
+  const booking = { _id: 'bk-1', jobId: 'job-1', nodeId: 'node-a', ownerSub: 'creator-sub', createdBySub: 'booker-sub' };
+
+  it('lets the job creator cancel', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.assertMayCancel(booking, user({ sub: 'creator-sub', email: 'creator@bu.edu' }) as any)).resolves.toBeUndefined();
+  });
+
+  it('lets a listed booker of that operation cancel', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'BOOKER@bu.edu' }) as any)).resolves.toBeUndefined();
+  });
+
+  it('lets whoever made the booking cancel it', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.assertMayCancel(booking, user({ sub: 'booker-sub', email: 'someone@bu.edu' }) as any)).resolves.toBeUndefined();
+  });
+
+  it('lets jobs:view-all staff cancel', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'tech@bu.edu', realm_access: { roles: ['damplab-staff'] } }) as any)).resolves.toBeUndefined();
+  });
+
+  it('refuses anyone else', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'nobody@bu.edu' }) as any)).rejects.toThrow('You are not authorized to cancel this booking.');
+  });
+});

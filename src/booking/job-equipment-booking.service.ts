@@ -14,6 +14,8 @@ import { AccessActor, JobBookingAccessStatus, JobBookingAccessVerdict, resolveJo
 import { JobBookingItem, JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
 import { Booking } from './booking.model';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
+import { matchesClientEmail } from '../job/client-email';
+import { normalizeBookerEmails } from './booker-emails';
 
 /** One equipment-use operation of a job, with everything the panel and the mutations need. */
 export interface LoadedOperation {
@@ -219,5 +221,33 @@ export class JobEquipmentBookingService {
       })),
       bookings: await this.bookings.findByJob(String(job._id))
     };
+  }
+
+  /**
+   * Who may cancel a job-scoped booking.
+   *
+   * Wider than the walk-up rule (owner-only) and deliberately so: the booking's
+   * owner is the JOB, so its `ownerSub` is the job creator's and a listed booker
+   * would otherwise be unable to undo their own reservation. Note this is
+   * independent of the SOW state and of the lab's pause — a paused job's existing
+   * bookings must still be cancellable, which is what "it never touches existing
+   * bookings" means.
+   */
+  async assertMayCancel(booking: any, user: User): Promise<void> {
+    const actor = this.actorFor(user);
+    if (actor.hasJobsViewAll || hasPermission(user, Permission.InventoryWrite)) return;
+    if (booking.createdBySub && actor.sub && booking.createdBySub === actor.sub) return;
+
+    const job: any = await this.jobService.findById(String(booking.jobId));
+    if (!job) throw new ForbiddenException('You are not authorized to cancel this booking.');
+    if (job.sub && actor.sub && job.sub === actor.sub) return;
+    if (matchesClientEmail(job.clientEmail, actor.email)) return;
+
+    const operations = await this.loadOperations(job);
+    const operation = operations.find((op) => op.nodeId === String(booking.nodeId));
+    const [actorEmail] = normalizeBookerEmails(actor.email);
+    if (operation && actorEmail && operation.bookers.includes(actorEmail)) return;
+
+    throw new ForbiddenException('You are not authorized to cancel this booking.');
   }
 }
