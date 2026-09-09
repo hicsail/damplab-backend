@@ -57,33 +57,32 @@ export class BookingService {
   }
 
   /**
-   * Validate a booking's time window and check the shared availability pool for
-   * conflicts — the two checks every timed booking write needs, in the same order
-   * and with the same exception/message every caller relied on before this was
-   * pulled out. `excludeBookingId` lets a booking being moved ignore its own
-   * current slot.
+   * Parse and validate a booking's time window — the same exception/message
+   * every caller relied on before this was pulled out. Kept separate from the
+   * availability check below so each method can place the item guards (deleted/
+   * bookable) between the two, matching each method's own pre-existing order.
    */
-  private async assertWindowAndAvailability(
-    itemId: string,
-    startTime: Date | string | number | null | undefined,
-    endTime: Date | string | number | null | undefined,
-    excludeBookingId?: string
-  ): Promise<{ start: Date; end: Date }> {
+  private assertValidWindow(startTime: Date | string | number | null | undefined, endTime: Date | string | number | null | undefined): { start: Date; end: Date } {
     const start = startTime ? new Date(startTime) : null;
     const end = endTime ? new Date(endTime) : null;
     if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
       throw new BadRequestException('Start and end time are required to book this item.');
     }
     if (end.getTime() <= start.getTime()) throw new BadRequestException('End time must be after start time.');
+    return { start, end };
+  }
 
-    // One availability pool: walk-up bookings, lab-monitor operation holds and
-    // other jobs' bookings all conflict here.
+  /**
+   * Check the shared availability pool for conflicts on a validated window —
+   * walk-up bookings, lab-monitor operation holds and other jobs' bookings all
+   * conflict here. `excludeBookingId` lets a booking being moved ignore its own
+   * current slot.
+   */
+  private async assertAvailable(itemId: string, start: Date, end: Date, excludeBookingId?: string): Promise<void> {
     const conflicts = await this.availability.findItemConflicts({ itemIds: [itemId], start, end, excludeBookingId });
     if (conflicts.length > 0) {
       throw new BadRequestException(`That item is unavailable for the selected time (${conflicts.map((c) => c.label).join('; ')}).`);
     }
-
-    return { start, end };
   }
 
   async create(input: CreateBookingInput, actor: ActorIdentity): Promise<Booking> {
@@ -118,7 +117,8 @@ export class BookingService {
     };
 
     if (kind === BookingKind.TIMED) {
-      const { start, end } = await this.assertWindowAndAvailability(item.id, input.startTime, input.endTime);
+      const { start, end } = this.assertValidWindow(input.startTime, input.endTime);
+      await this.assertAvailable(item.id, start, end);
 
       base.startTime = start;
       base.endTime = end;
@@ -146,9 +146,10 @@ export class BookingService {
    */
   async createForJob(params: { job: any; nodeId: string; nodeLabel: string; service: any; item: any; startTime: Date; endTime: Date; notes?: string; actor: ActorIdentity }): Promise<Booking> {
     const { job, item, service, actor } = params;
-    const { start, end } = await this.assertWindowAndAvailability(String(item.id), params.startTime, params.endTime);
+    const { start, end } = this.assertValidWindow(params.startTime, params.endTime);
     if (item.isDeleted) throw new BadRequestException('That inventory item is no longer available.');
     if (!item.bookable) throw new BadRequestException('That inventory item is not bookable.');
+    await this.assertAvailable(String(item.id), start, end);
 
     const rate = resolveCategoryPrice(service, job.customerCategory as CustomerCategory | undefined);
     const hours = (end.getTime() - start.getTime()) / 3_600_000;
@@ -191,7 +192,8 @@ export class BookingService {
     if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
     if (existing.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException('Cannot change a booking that has already been billed.');
 
-    const { start, end } = await this.assertWindowAndAvailability(String(existing.inventoryItem), changes.startTime, changes.endTime, id);
+    const { start, end } = this.assertValidWindow(changes.startTime, changes.endTime);
+    await this.assertAvailable(String(existing.inventoryItem), start, end, id);
 
     const hours = (end.getTime() - start.getTime()) / 3_600_000;
     const set: Record<string, unknown> = {

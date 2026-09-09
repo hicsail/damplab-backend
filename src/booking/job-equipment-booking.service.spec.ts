@@ -243,4 +243,12 @@ describe('BookingService.createForJob', () => {
     const { svc } = make([{ itemId: 'item-timed', source: 'BOOKING', label: 'reserved (equipment booking)' }]);
     await expect(svc.createForJob(params as any)).rejects.toThrow('That item is unavailable for the selected time (reserved (equipment booking)).');
   });
+
+  it('surfaces the item-deleted guard, not the conflict message, when both apply', async () => {
+    // Regression: a deleted item with a conflicting window must fail on the
+    // item.isDeleted guard, which runs before the availability check.
+    const { svc } = make([{ itemId: 'item-timed', source: 'BOOKING', label: 'reserved (equipment booking)' }]);
+    const deletedItem = { ...params.item, isDeleted: true };
+    await expect(svc.createForJob({ ...params, item: deletedItem } as any)).rejects.toThrow('That inventory item is no longer available.');
+  });
 });
