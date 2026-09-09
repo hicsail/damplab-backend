@@ -56,6 +56,36 @@ export class BookingService {
     return item.type === 'CONSUMABLE' ? BookingKind.QUANTITY : BookingKind.TIMED;
   }
 
+  /**
+   * Validate a booking's time window and check the shared availability pool for
+   * conflicts — the two checks every timed booking write needs, in the same order
+   * and with the same exception/message every caller relied on before this was
+   * pulled out. `excludeBookingId` lets a booking being moved ignore its own
+   * current slot.
+   */
+  private async assertWindowAndAvailability(
+    itemId: string,
+    startTime: Date | string | number | null | undefined,
+    endTime: Date | string | number | null | undefined,
+    excludeBookingId?: string
+  ): Promise<{ start: Date; end: Date }> {
+    const start = startTime ? new Date(startTime) : null;
+    const end = endTime ? new Date(endTime) : null;
+    if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new BadRequestException('Start and end time are required to book this item.');
+    }
+    if (end.getTime() <= start.getTime()) throw new BadRequestException('End time must be after start time.');
+
+    // One availability pool: walk-up bookings, lab-monitor operation holds and
+    // other jobs' bookings all conflict here.
+    const conflicts = await this.availability.findItemConflicts({ itemIds: [itemId], start, end, excludeBookingId });
+    if (conflicts.length > 0) {
+      throw new BadRequestException(`That item is unavailable for the selected time (${conflicts.map((c) => c.label).join('; ')}).`);
+    }
+
+    return { start, end };
+  }
+
   async create(input: CreateBookingInput, actor: ActorIdentity): Promise<Booking> {
     const item: any = await this.inventoryService.find(input.inventoryItemId);
     if (!item) throw new NotFoundException('Inventory item not found.');
@@ -88,19 +118,7 @@ export class BookingService {
     };
 
     if (kind === BookingKind.TIMED) {
-      const start = input.startTime ? new Date(input.startTime) : null;
-      const end = input.endTime ? new Date(input.endTime) : null;
-      if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
-        throw new BadRequestException('Start and end time are required to book this item.');
-      }
-      if (end.getTime() <= start.getTime()) throw new BadRequestException('End time must be after start time.');
-
-      // Shared availability pool: conflicts with other bookings AND with operation holds.
-      const conflicts = await this.availability.findItemConflicts({ itemIds: [item.id], start, end });
-      if (conflicts.length > 0) {
-        const detail = conflicts.map((c) => c.label).join('; ');
-        throw new BadRequestException(`That item is unavailable for the selected time (${detail}).`);
-      }
+      const { start, end } = await this.assertWindowAndAvailability(item.id, input.startTime, input.endTime);
 
       base.startTime = start;
       base.endTime = end;
@@ -128,19 +146,9 @@ export class BookingService {
    */
   async createForJob(params: { job: any; nodeId: string; nodeLabel: string; service: any; item: any; startTime: Date; endTime: Date; notes?: string; actor: ActorIdentity }): Promise<Booking> {
     const { job, item, service, actor } = params;
-    const start = new Date(params.startTime);
-    const end = new Date(params.endTime);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) throw new BadRequestException('Start and end time are required to book this item.');
-    if (end.getTime() <= start.getTime()) throw new BadRequestException('End time must be after start time.');
+    const { start, end } = await this.assertWindowAndAvailability(String(item.id), params.startTime, params.endTime);
     if (item.isDeleted) throw new BadRequestException('That inventory item is no longer available.');
     if (!item.bookable) throw new BadRequestException('That inventory item is not bookable.');
-
-    // One availability pool: walk-up bookings, lab-monitor operation holds and
-    // other jobs' bookings all conflict here.
-    const conflicts = await this.availability.findItemConflicts({ itemIds: [String(item.id)], start, end });
-    if (conflicts.length > 0) {
-      throw new BadRequestException(`That item is unavailable for the selected time (${conflicts.map((c) => c.label).join('; ')}).`);
-    }
 
     const rate = resolveCategoryPrice(service, job.customerCategory as CustomerCategory | undefined);
     const hours = (end.getTime() - start.getTime()) / 3_600_000;
@@ -183,16 +191,7 @@ export class BookingService {
     if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
     if (existing.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException('Cannot change a booking that has already been billed.');
 
-    const start = new Date(changes.startTime);
-    const end = new Date(changes.endTime);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) throw new BadRequestException('Start and end time are required to book this item.');
-    if (end.getTime() <= start.getTime()) throw new BadRequestException('End time must be after start time.');
-
-    // `excludeBookingId` so a booking never conflicts with the slot it is leaving.
-    const conflicts = await this.availability.findItemConflicts({ itemIds: [String(existing.inventoryItem)], start, end, excludeBookingId: id });
-    if (conflicts.length > 0) {
-      throw new BadRequestException(`That item is unavailable for the selected time (${conflicts.map((c) => c.label).join('; ')}).`);
-    }
+    const { start, end } = await this.assertWindowAndAvailability(String(existing.inventoryItem), changes.startTime, changes.endTime, id);
 
     const hours = (end.getTime() - start.getTime()) / 3_600_000;
     const set: Record<string, unknown> = {
