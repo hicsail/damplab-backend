@@ -28,6 +28,29 @@ interface BookingFilter {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+/**
+ * The Mongo filter for "touches this window": a timed slot that OVERLAPS it, or a
+ * consumable whose usedOn falls inside it.
+ *
+ * It used to match timed slots by start time alone, so a reservation that began
+ * before the window and ran through it — a multi-day hold — was missing from the
+ * schedule, the availability board and every week but its first.
+ */
+export function windowFilter(from?: Date | string, to?: Date | string): Record<string, unknown> {
+  if (!from && !to) return {};
+  const timed: Record<string, unknown> = {};
+  const usedOn: Record<string, unknown> = {};
+  if (to) {
+    timed.startTime = { $lte: new Date(to) };
+    usedOn.$lte = new Date(to);
+  }
+  if (from) {
+    timed.endTime = { $gte: new Date(from) };
+    usedOn.$gte = new Date(from);
+  }
+  return { $or: [timed, { usedOn }] };
+}
+
 @Injectable()
 export class BookingService {
   constructor(
@@ -277,13 +300,7 @@ export class BookingService {
     if (filter.inventoryItemId) q.inventoryItem = filter.inventoryItemId;
     if (filter.status) q.status = filter.status;
     if (filter.ownerSub) q.ownerSub = filter.ownerSub;
-    // Date-range overlap on either the timed slot or the consumable usedOn date.
-    if (filter.from || filter.to) {
-      const range: any = {};
-      if (filter.from) range.$gte = new Date(filter.from);
-      if (filter.to) range.$lte = new Date(filter.to);
-      q.$or = [{ startTime: range }, { usedOn: range }];
-    }
+    Object.assign(q, windowFilter(filter.from, filter.to));
     return this.model.find(q).sort({ startTime: 1, usedOn: 1 }).exec();
   }
 
