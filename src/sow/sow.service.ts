@@ -659,11 +659,14 @@ export class SOWService {
       services,
       timeline: createSOWInput.timeline,
       resources: createSOWInput.resources,
+      // `discount` is deliberately not written. It is a dead field (see SOWDiscount)
+      // and a new SOW should not acquire one; the mechanism that works is a
+      // DISCOUNT entry in `adjustments`. The input still accepts it, for one
+      // deprecation release, and now ignores it.
       pricing: {
         baseCost,
         adjustments,
-        totalCost,
-        discount: createSOWInput.pricing.discount
+        totalCost
       },
       terms: createSOWInput.terms,
       additionalInformation: createSOWInput.additionalInformation,
@@ -754,11 +757,17 @@ export class SOWService {
       const baseCost = this.calculateBaseCost(services);
       const totalCost = this.calculateTotalCost(baseCost, adjustments);
       this.validatePricingConsistency(updateSOWInput.pricing, baseCost, totalCost);
+      // Carries the stored value forward, and ignores any new one from the input.
+      // Note this assignment REPLACES the whole pricing object, so omitting the key
+      // would not merely stop refreshing the field — it would erase a legacy
+      // document's stored discount on the next unrelated pricing edit. Preserving
+      // it keeps the deprecation non-destructive; the field goes away when the
+      // field goes away.
       updateData.pricing = {
         baseCost,
         adjustments,
         totalCost,
-        discount: updateSOWInput.pricing?.discount ?? sow.pricing.discount
+        discount: sow.pricing.discount
       };
     }
     if (updateSOWInput.terms !== undefined) updateData.terms = updateSOWInput.terms;

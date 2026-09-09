@@ -5,9 +5,10 @@ import { BookingService } from './booking.service';
 import { BookingResolver } from './booking.resolver';
 import { InventoryModule } from '../inventory/inventory.module';
 import { AvailabilityModule } from '../availability/availability.module';
+import { KeycloakModule } from '../keycloak/keycloak.module';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: Booking.name, schema: BookingSchema }]), InventoryModule, AvailabilityModule],
+  imports: [MongooseModule.forFeature([{ name: Booking.name, schema: BookingSchema }]), InventoryModule, AvailabilityModule, KeycloakModule],
   providers: [BookingService, BookingResolver],
   exports: [BookingService]
 })

@@ -5,11 +5,17 @@ import { Booking, BookingBillingStatus, BookingDocument, BookingKind, BookingSta
 import { CreateBookingInput } from './dtos/create-booking.input';
 import { InventoryService } from '../inventory/inventory.service';
 import { AvailabilityService } from '../availability/availability.service';
+import { KeycloakService } from '../keycloak/keycloak.service';
+import { resolveCategoryPrice } from '../pricing/service-pricing.util';
+import { CustomerCategory } from '../pricing/customer-category';
 
 interface ActorIdentity {
   sub?: string;
   email?: string;
   name?: string;
+  /** The caller's own token claims, so their category resolves without an API call. */
+  realm_access?: { roles?: string[] };
+  groups?: string[];
 }
 
 interface BookingFilter {
@@ -24,27 +30,31 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 @Injectable()
 export class BookingService {
-  constructor(@InjectModel(Booking.name) private readonly model: Model<BookingDocument>, private readonly inventoryService: InventoryService, private readonly availability: AvailabilityService) {}
+  constructor(
+    @InjectModel(Booking.name) private readonly model: Model<BookingDocument>,
+    private readonly inventoryService: InventoryService,
+    private readonly availability: AvailabilityService,
+    private readonly keycloakService: KeycloakService
+  ) {}
 
-  /** Resolve the $/hour or $/unit rate for a customer category from a Pricing object. */
-  private resolveRate(pricing: any, category?: string): number | undefined {
-    if (!pricing || typeof pricing !== 'object') return undefined;
-    const num = (v: unknown): number | undefined => {
-      const n = Number(v);
-      return Number.isFinite(n) ? n : undefined;
-    };
-    switch (category) {
-      case 'INTERNAL_CUSTOMERS':
-        return num(pricing.internal) ?? num(pricing.legacy);
-      case 'EXTERNAL_CUSTOMER_ACADEMIC':
-        return num(pricing.externalAcademic) ?? num(pricing.external) ?? num(pricing.legacy);
-      case 'EXTERNAL_CUSTOMER_MARKET':
-        return num(pricing.externalMarket) ?? num(pricing.external) ?? num(pricing.legacy);
-      case 'EXTERNAL_CUSTOMER_NO_SALARY':
-        return num(pricing.externalNoSalary) ?? num(pricing.external) ?? num(pricing.legacy);
-      default:
-        return num(pricing.legacy) ?? num(pricing.internal) ?? num(pricing.external);
-    }
+  /**
+   * Which pricing category this booking is billed at.
+   *
+   * The **owner's**, never the requester's — staff may book on someone else's
+   * behalf, and pricing a colleague's booking at staff rates is the same mistake
+   * `AddNodeInputPipe` makes with `node.price`. When the two are the same person
+   * (the ordinary case) the caller's own token claims answer it with no round trip;
+   * only an owner override reaches the Keycloak Admin API.
+   *
+   * Returns undefined rather than throwing when nothing resolves. A booking must
+   * not fail because Keycloak is unreachable — `UsageBillingService.generateBilling`
+   * refuses an unrated booking at billing time instead, where there is a person to
+   * read the message and an owner to give a pricing group to.
+   */
+  private async resolveOwnerCategory(input: CreateBookingInput, ownerSub: string, actor: ActorIdentity): Promise<CustomerCategory | undefined> {
+    if (input.customerCategory) return input.customerCategory as CustomerCategory;
+    const bookingForSelf = !!actor.sub && actor.sub === ownerSub;
+    return this.keycloakService.resolveCustomerCategoryForUser(bookingForSelf ? { sub: actor.sub, realm_access: actor.realm_access, groups: actor.groups } : { sub: ownerSub });
   }
 
   /** Timed (hourly machine) vs quantity (per-unit consumable). */
@@ -64,8 +74,13 @@ export class BookingService {
     const ownerSub = input.ownerSub || actor.sub || '';
     const ownerEmail = input.ownerEmail || actor.email || '';
     if (!ownerSub || !ownerEmail) throw new BadRequestException('Booking owner could not be determined.');
-    const customerCategory = input.customerCategory || undefined;
-    const rate = this.resolveRate(item.pricing, customerCategory);
+    const customerCategory = await this.resolveOwnerCategory(input, ownerSub, actor);
+    // THE pricing chain, shared with services and the SOW. `resolveRate` used to be
+    // a second copy of it that differed in exactly two ways for an uncategorised
+    // caller: it fell through to the *internal* tier — the leak `pricing-visibility`
+    // exists to prevent — and `Number(null)` is 0, so a null price became a free
+    // booking. Resolving the category above is what keeps that fall-through rare.
+    const rate = resolveCategoryPrice(item, customerCategory);
 
     const base: any = {
       inventoryItem: item.id,

@@ -39,7 +39,7 @@ export class UpdateSOWPricingInput {
   @Field(() => Float, { description: 'Total cost after adjustments', nullable: true })
   totalCost?: number;
 
-  @Field(() => SOWDiscountInput, { description: 'Discount applied to the pricing', nullable: true })
+  @Field(() => SOWDiscountInput, { deprecationReason: 'Accepted and ignored; never applied to any total. Use adjustments with type DISCOUNT.', description: 'DEPRECATED — ignored.', nullable: true })
   discount?: SOWDiscountInput;
 }
 

@@ -55,6 +55,20 @@ export class UsageBillingService {
       if (b.status === BookingStatus.CANCELLED) throw new BadRequestException('A selected booking is cancelled.');
       if (!b.usageConfirmed) throw new BadRequestException(`Usage for "${b.inventoryName}" must be confirmed before billing.`);
       if (b.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException(`"${b.inventoryName}" has already been billed.`);
+      // A booking whose rate never resolved has no cost, and `toLineItem` reads
+      // `b.cost ?? 0` — so without this it was billed at **$0, silently**. That
+      // happens when the owner is in no Keycloak pricing group, or was booked while
+      // the Admin API was unreachable; `rateSnapshot` is written once at creation
+      // and never revisited, so nothing later would have corrected it.
+      //
+      // Refused here rather than at booking time on purpose: a Keycloak outage must
+      // not stop someone booking a machine, and by the time anyone bills there is a
+      // person reading the message who can fix the owner's group.
+      if (b.rateSnapshot == null) {
+        throw new BadRequestException(
+          `"${b.inventoryName}" has no rate, so it cannot be billed. Its owner was in no pricing group when it was booked — assign one and re-book, or record the charge manually.`
+        );
+      }
     }
 
     const first = bookings[0];

@@ -105,6 +105,18 @@ describe('a pricing group with no realm role, absent from the token', () => {
     const { jobId, cost } = await submitAndPrice(TIERED, []);
     expect(cost).toBe(150);
 
+    // Invoicing requires a countersigned SOW now, so walk the document through the
+    // real lifecycle rather than invoicing a draft. The figure under test is the
+    // pricing one; the gate is covered in invoice-countersign-gate.spec.ts.
+    await F.reviewJob(testApp, 'staff', jobId, 'ACCEPT', `op-accept-${jobId}`);
+    const { sowByJobId: sowIds } = await gql(testApp, 'staff', `query ($jobId: ID!) { sowByJobId(jobId: $jobId) { id } }`, { jobId });
+    const fresh = await F.readSow(testApp, 'staff', sowIds.id);
+    await F.saveSowVersion(testApp, 'staff', sowIds.id, fresh.currentVersion, { note: 'Filled in' });
+    await F.sendSowToCustomer(testApp, 'staff', sowIds.id);
+    const sent = await F.readSow(testApp, 'staff', sowIds.id);
+    await F.signSow(testApp, 'groupOnlyCustomer', sowIds.id, F.signatureFor(sent.activeVersion, 'Cara Client'));
+    await F.finalizeSow(testApp, 'staff', sowIds.id, 'Tess Technician');
+
     const { sowByJobId } = await gql(testApp, 'staff', `query ($jobId: ID!) { sowByJobId(jobId: $jobId) { billableServices { serviceId } } }`, { jobId });
     const invoice = await gql(testApp, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { subtotal totalCost services { cost } } }`, {
       input: { jobId, services: [{ index: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }

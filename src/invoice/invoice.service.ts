@@ -9,6 +9,8 @@ import { SowVersionService } from '../sow/sow-version.service';
 import { User } from '../auth/user.interface';
 import { Role } from '../auth/roles/roles.enum';
 import { selectServiceLines } from './select-service-lines';
+import { invoiceBlockedReason } from '../sow/sow-access';
+import { SOWStatus } from '../sow/sow.model';
 
 function pad3(n: number): string {
   return String(n).padStart(3, '0');
@@ -38,9 +40,17 @@ export class InvoiceService {
    *
    * Voided invoices are excluded, because the only question this answers is
    * "has this job been billed yet" — and a job whose one invoice was voided has
-   * not. Note the contrast with the numbering count inside `createForJob`, which
-   * deliberately counts everything: a void releases an invoice's lines but never
-   * its number.
+   * not.
+   *
+   * **Two other counts deliberately differ, and the split is easy to misread:**
+   *
+   *  - the numbering count inside `createForJob` counts *everything*, because a
+   *    void releases an invoice's lines but never its number;
+   *  - the job detail pane (`TechnicianView` / `ClientView`) counts *records*, so
+   *    a job with one voided invoice reads "Invoices · None" in the jobs list and
+   *    "1 invoice, voided" on the detail page. That is intentional: the list
+   *    answers "billed?", the pane lists what exists — and the pane says "voided"
+   *    on the same line so the two cannot be read as contradicting each other.
    */
   async countByJobId(jobId: string): Promise<number> {
     return this.invoiceModel.countDocuments({ jobId, voidedAt: null }).exec();
@@ -61,6 +71,26 @@ export class InvoiceService {
     const sow = await this.sowService.findByJobId(input.jobId);
     if (!sow) {
       throw new BadRequestException('Cannot generate invoice: job has no SOW');
+    }
+
+    // An invoice bills a countersigned document, or nothing. Without this a DRAFT,
+    // never-sent SOW invoiced happily — and with no version in force
+    // `billableServiceLines` falls back to the *live* billing core, which the
+    // workflow sync rewrites, so the figure billed was one no document ever stated.
+    //
+    // The history is fetched rather than inferred from the pointer: withdrawing a
+    // SOW zeroes `activeVersionNumber` exactly as never having issued one leaves
+    // it, and staff who countersigned a SOW last week need to be told it was
+    // withdrawn, not that they never countersigned it.
+    const sowIdForGate = String((sow as any)._id);
+    const activeForGate = await this.sowVersionService.getActiveVersion(sowIdForGate);
+    if (activeForGate?.status !== SOWStatus.FINAL) {
+      const history = await this.sowVersionService.listVersions(sowIdForGate);
+      const blocked = invoiceBlockedReason(activeForGate?.status, {
+        hasAnyVersion: history.length > 0,
+        everCountersigned: history.some((version) => version.status === SOWStatus.FINAL)
+      });
+      if (blocked) throw new BadRequestException(blocked);
     }
 
     // What this invoice bills, and what the staff dialog listed — one array, so
@@ -232,7 +262,17 @@ export class InvoiceService {
       billedToName: String((sow as any).clientName ?? 'Client'),
       billedToEmail: String((sow as any).clientEmail ?? ''),
       billedToAddress: (sow as any).clientAddress ?? undefined,
-      customerCategory: (job as any).customerCategory ?? undefined,
+      // The category the lines were BILLED under, not the one the job carries
+      // today. Every figure on this invoice comes from the frozen version, and
+      // `deriveInputs` stores the category alongside them — `jobBillingFingerprint`
+      // already treats it as part of the billing identity. Stamping the live job's
+      // category instead made a re-categorised job reprint an old invoice with the
+      // wrong header and the wrong payment instructions.
+      //
+      // The job is the fallback rather than an error because a version-less SOW
+      // legitimately has no frozen category to read; falling back is only
+      // misleading once a version exists.
+      customerCategory: active?.inputs?.customerCategory ?? (job as any).customerCategory ?? undefined,
       sowVersionNumber: sowVersionNumber ?? undefined,
       billingWarnings: billingWarnings.length > 0 ? billingWarnings : undefined,
       createdAt: new Date()

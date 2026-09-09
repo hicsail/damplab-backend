@@ -110,3 +110,52 @@ export function assertSowContractWritable(activeStatus: string | null | undefine
   const reason = sowEditBlockedReason(activeStatus);
   if (reason) throw new ForbiddenException(reason);
 }
+
+/**
+ * What an invoice bills against: a countersigned Statement of Work, and nothing
+ * else.
+ *
+ * Lives here rather than in the invoice service because this file already owns
+ * "what state is this document in" (`sowEditBlockedReason`), and the two rules are
+ * neighbours — one says when a SOW may be *changed*, this one when it may be
+ * *billed*.
+ *
+ * `FINAL` is countersigned by both parties, set by `SowVersionService.finalize`.
+ * `SENT` and `SIGNED` are not enough: the customer has not agreed, or has agreed
+ * while the lab has not. With no version in force at all there is nothing to bill
+ * against — invoicing then fell back to the SOW's *live* billing core, which the
+ * workflow sync rewrites, so the figure billed was one no document ever stated.
+ *
+ * Four refusals rather than one, because a reader told a SOW "has not been
+ * countersigned" when they countersigned it themselves will conclude the software
+ * lost their signature.
+ *
+ * A note on the `everCountersigned` branch: it is **defensive, not a live case**.
+ * A countersigned SOW cannot be withdrawn (`withdrawFromCustomer` accepts only a
+ * SENT document) and cannot be amended (`assertSowContractWritable` refuses FINAL),
+ * so cancelling is its one exit — and that makes a CANCELLED row *active* rather
+ * than zeroing the pointer, landing on the branch above. It is kept because the
+ * cost is one boolean and the failure it guards against is telling someone their
+ * countersignature never happened. `test/integration/invoice-countersign-gate.spec.ts`
+ * pins which of these are reachable, so a future transition that does zero the
+ * pointer after a countersignature lands here rather than on the wrong message.
+ */
+export function invoiceBlockedReason(activeStatus: string | null | undefined, history: { hasAnyVersion: boolean; everCountersigned: boolean }): string | null {
+  if (activeStatus === 'FINAL') return null;
+
+  if (activeStatus === 'CANCELLED') {
+    return 'This Statement of Work has been cancelled, so there is nothing to invoice against. Issue a new one first.';
+  }
+  if (activeStatus === 'SENT' || activeStatus === 'SIGNED') {
+    return 'This Statement of Work has not been countersigned yet. Countersign it before invoicing, so the invoice bills the figures both parties agreed.';
+  }
+
+  // No version in force. Which of the two ways that happens changes the answer.
+  if (history.everCountersigned) {
+    return 'This Statement of Work was countersigned but has since been withdrawn, so no version is in force. Send and countersign it again before invoicing.';
+  }
+  if (!history.hasAnyVersion) {
+    return 'This Statement of Work predates document versioning and has no version to bill against. It needs the one-off SOW migration before it can be countersigned or invoiced.';
+  }
+  return 'This Statement of Work has not been sent to the customer or countersigned. Invoicing bills the figures they agreed to, so there is nothing to bill against yet.';
+}

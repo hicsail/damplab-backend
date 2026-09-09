@@ -26,6 +26,28 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     }
     const multiValueParamIds = getMultiValueParamIds(service.parameters);
     const formData = normalizeFormDataToArray(value.formData, multiValueParamIds);
+    // Prices from the **requesting user's** Keycloak identity, which is right at
+    // checkout (the customer is the requester) and wrong whenever staff act on a
+    // customer's job — a technician adding a node would stamp it at the staff tier.
+    //
+    // Deliberately left as-is rather than resolved through the Admin API, for two
+    // reasons. The requester is still the wrong identity even when resolved
+    // perfectly, so it would buy accuracy for a question nobody should be asking;
+    // and it would cost a Keycloak round trip per node on every canvas edit.
+    //
+    // What makes that acceptable is that **`job.customerCategory` is the authority**
+    // and `node.price` is only a fallback: `SOWService.transformServices` reprices
+    // every line from the catalog against the job's category, and reaches for the
+    // stored node price solely when the catalog can price the service at all
+    // (see the `fallbackLineCost` path in `calculateServiceCostBreakdown`).
+    //
+    // Two specs pin that, at two levels: `pricing/node-price-fallback.spec.ts`
+    // pins the boundary itself — the catalog wins, the stored figure is reached
+    // only when the catalog can say nothing — and
+    // `test/integration/sow-customer-category.spec.ts` pins that the SOW actually
+    // reprices through it end to end. `job-version.dto.ts` carries the same note.
+    //
+    // Revisit only if a case appears where `node.price` is billed directly.
     const roles: string[] = this.request?.user?.realm_access?.roles ?? [];
     const groups: string[] = this.request?.user?.groups ?? [];
     const category: CustomerCategory | undefined = deriveCustomerCategory([...roles, ...groups]);

@@ -14,6 +14,10 @@ import { User } from '../auth/user.interface';
 const staff = { realm_access: { roles: ['damplab-staff'] }, email: 'tech@bu.edu' } as unknown as User;
 
 interface HarnessOptions {
+  /** Lifecycle status of the version in force. FINAL unless a test is about the gate. */
+  activeStatus?: string | null;
+  /** The SOW's version history, which the gate reads to tell "withdrawn" from "never issued". */
+  versionHistory?: any[];
   /** What the job currently prices these lines at — deliberately different from the document. */
   liveServices?: any[];
   livePricing?: any;
@@ -23,6 +27,8 @@ interface HarnessOptions {
   activeVersionNumber?: number;
   /** Invoices already generated for this job, which the double-billing check reads. */
   existingInvoices?: any[];
+  /** What the job says today — deliberately separable from what the version froze. */
+  jobCustomerCategory?: string;
 }
 
 function harness(opts: HarnessOptions = {}): { service: InvoiceService; created: any[] } {
@@ -43,10 +49,18 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
     }
   };
 
-  const jobService: any = { findById: async () => ({ _id: 'job-1', jobId: '04217', name: 'Test job' }) };
+  const jobService: any = { findById: async () => ({ _id: 'job-1', jobId: '04217', name: 'Test job', customerCategory: opts.jobCustomerCategory }) };
 
+  // FINAL by default: an invoice bills a countersigned SOW, so that is the shape
+  // every test here starts from unless it is specifically about the gate.
   const activeVersion = (): any =>
-    opts.activeInputs === null ? null : { versionNumber: opts.activeVersionNumber ?? 1000, inputs: opts.activeInputs ?? { services: [{ serviceId: 's1', name: 'PCR', cost: 350 }], adjustments: [] } };
+    opts.activeInputs === null
+      ? null
+      : {
+          versionNumber: opts.activeVersionNumber ?? 1000,
+          status: opts.activeStatus ?? 'FINAL',
+          inputs: opts.activeInputs ?? { services: [{ serviceId: 's1', name: 'PCR', cost: 350 }], adjustments: [] }
+        };
   const liveServices = (): any[] => opts.liveServices ?? [{ serviceId: 's1', name: 'PCR', cost: 420 }];
 
   const sowService: any = {
@@ -61,10 +75,98 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
     billableServiceLines: async (): Promise<any[]> => activeVersion()?.inputs?.services ?? liveServices()
   };
 
-  const sowVersionService: any = { getActiveVersion: async () => activeVersion() };
+  const sowVersionService: any = {
+    getActiveVersion: async () => activeVersion(),
+    // Defaults to "the active version is the only one", which is what makes a
+    // version-less SOW read as legacy rather than as withdrawn.
+    listVersions: async (): Promise<any[]> => opts.versionHistory ?? [activeVersion()].filter(Boolean)
+  };
 
   return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService), created };
 }
+
+describe('an invoice bills a countersigned SOW, or nothing', () => {
+  it('refuses a SOW that has been sent but not countersigned', async () => {
+    const { service, created } = harness({ activeStatus: 'SENT' });
+
+    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/not been countersigned yet/i);
+    expect(created).toEqual([]);
+  });
+
+  it('refuses a SOW the customer has signed but the lab has not', async () => {
+    const { service } = harness({ activeStatus: 'SIGNED' });
+
+    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/not been countersigned yet/i);
+  });
+
+  it('refuses a cancelled SOW', async () => {
+    const { service } = harness({ activeStatus: 'CANCELLED' });
+
+    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/cancelled/i);
+  });
+
+  it('says "withdrawn" for a SOW that was countersigned and then taken back', async () => {
+    // Withdrawing zeroes activeVersionNumber, which looks identical to never
+    // having issued anything — and staff who countersigned it will say so.
+    const { service } = harness({
+      activeInputs: null,
+      versionHistory: [{ versionNumber: 1001, status: 'FINAL' }]
+    });
+
+    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/withdrawn/i);
+  });
+
+  it('lets a countersigned SOW through unchanged', async () => {
+    const { service, created } = harness();
+
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+
+    expect(created).toHaveLength(1);
+    expect(created[0].sowVersionNumber).toBe(1000);
+  });
+});
+
+describe('the category an invoice states', () => {
+  it('records the category the lines were billed under, not the job’s current one', async () => {
+    const { service, created } = harness({
+      activeInputs: { services: [{ serviceId: 's1', name: 'PCR', cost: 350 }], adjustments: [], customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC' }
+    });
+
+    // The harness job carries no category at all; the version does. Re-categorising
+    // a job must not rewrite what an already-issued invoice says it charged.
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+
+    expect(created[0].customerCategory).toBe('EXTERNAL_CUSTOMER_ACADEMIC');
+  });
+
+  it('prefers the frozen category even when the job now says something else', async () => {
+    const { service, created } = harness({
+      activeInputs: { services: [{ serviceId: 's1', name: 'PCR', cost: 350 }], adjustments: [], customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC' },
+      jobCustomerCategory: 'INTERNAL_CUSTOMERS'
+    });
+
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+
+    // INTERNAL vs EXTERNAL is not cosmetic: it drives the invoice header and the
+    // payment instructions, so this is what stops a re-categorised job telling an
+    // external customer to file an internal ISR.
+    expect(created[0].customerCategory).toBe('EXTERNAL_CUSTOMER_ACADEMIC');
+  });
+
+  it('falls back to the job for a version issued before the category was recorded', async () => {
+    // `deriveInputs` stores the category now, but versions written before it did
+    // carry none — and those are countersigned documents that must stay
+    // invoiceable, so the job is read rather than the invoice refused.
+    const { service, created } = harness({
+      activeInputs: { services: [{ serviceId: 's1', name: 'PCR', cost: 350 }], adjustments: [] },
+      jobCustomerCategory: 'INTERNAL_CUSTOMERS'
+    });
+
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+
+    expect(created[0].customerCategory).toBe('INTERNAL_CUSTOMERS');
+  });
+});
 
 describe('invoice billing source', () => {
   it('bills the signed figure, not the job’s current one', async () => {
@@ -116,13 +218,14 @@ describe('invoice billing source', () => {
     expect(created[0].totalCost).toBe(270);
   });
 
-  it('falls back to the billing core for a legacy SOW that has no version at all', async () => {
-    const { service, created } = harness({ activeInputs: null });
+  it('refuses a legacy SOW with no version at all, rather than billing the live core', async () => {
+    // This used to invoice happily off `sow.services` — $420 and a $100 discount
+    // the customer never saw, from a billing core the workflow sync rewrites. The
+    // countersign gate is what stops it; the numbers above are what it was billing.
+    const { service, created } = harness({ activeInputs: null, versionHistory: [] });
 
-    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
-
-    expect(created[0].services[0].cost).toBe(420);
-    expect(created[0].adjustments[0]).toMatchObject({ type: 'DISCOUNT', appliedAmount: -100 });
+    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/predates document versioning/i);
+    expect(created).toEqual([]);
   });
 
   it('refuses a non-staff caller', async () => {
@@ -356,16 +459,17 @@ describe('the itemised breakdown behind a parameter-priced line', () => {
   });
 });
 
-describe('two invoices with no issued version to anchor them', () => {
-  it('warns instead of comparing positions in a billing core that gets rewritten', async () => {
-    // With no version in force, both invoices bill the live core — which every
-    // workflow sync rewrites — so position 0 is not the same line twice.
+describe('an earlier invoice with no issued version to anchor it', () => {
+  it('warns instead of comparing positions against a billing core that gets rewritten', async () => {
+    // The countersign gate means THIS invoice always has a version in force. An
+    // invoice generated before that gate may not, and its positions were taken
+    // from the live core — which every workflow sync rewrites — so position 0 is
+    // not the same line twice. That case stays reachable and must still warn.
     const { service, created } = harness({
-      activeInputs: null,
-      existingInvoices: [{ _id: 'inv-1', invoiceNumber: '04217-001', services: [{ serviceId: 's1', sourceIndex: 0 }] }]
+      existingInvoices: [{ _id: 'inv-1', invoiceNumber: '04217-001', sowVersionNumber: null, services: [{ serviceId: 's1', sourceIndex: 0 }] }]
     });
     await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
     expect(created[0].billingWarnings).toEqual([expect.stringMatching(/live figures rather than an issued version/i)]);
-    expect(created[0].sowVersionNumber).toBeUndefined();
+    expect(created[0].sowVersionNumber).toBe(1000);
   });
 });

@@ -54,6 +54,12 @@ export class SOWPricingAdjustmentInput {
 }
 
 @InputType()
+/**
+ * @deprecated Accepted and ignored. See `SOWDiscount` in sow.model.ts — the field
+ * has never affected any total, and as of this release nothing persists a new
+ * value. Kept for one release so existing callers do not start failing validation;
+ * deleted with the field itself.
+ */
 export class SOWDiscountInput {
   @Field(() => Float, { description: 'Discount amount' })
   amount: number;
@@ -73,7 +79,7 @@ export class SOWPricingInput {
   @Field(() => Float, { description: 'Total cost after adjustments', nullable: true })
   totalCost?: number;
 
-  @Field(() => SOWDiscountInput, { description: 'Discount applied to the pricing', nullable: true })
+  @Field(() => SOWDiscountInput, { deprecationReason: 'Accepted and ignored; never applied to any total. Use adjustments with type DISCOUNT.', description: 'DEPRECATED — ignored.', nullable: true })
   discount?: SOWDiscountInput;
 }
 

@@ -157,3 +157,78 @@ stop `npm run start:dev` from compiling. Because the raw driver bypasses Mongoos
 validation, once the tree compiles it is worth running `services` and
 `inventoryItems` through local GraphiQL after the first real import — a malformed
 `rateType` enum or `dimension` subdocument would only surface there.
+
+---
+
+# Job graph sync (`jobs-export.mjs` / `jobs-import.mjs`)
+
+The companion to the catalog pair, covering what `wipe-jobs.mjs` deletes.
+
+```bash
+STAGING_TOKEN='eyJ...' node tools/catalog-export.mjs   # catalog FIRST
+node tools/catalog-import.mjs
+STAGING_TOKEN='eyJ...' node tools/jobs-export.mjs
+node tools/jobs-import.mjs --dry-run
+node tools/jobs-import.mjs --own
+```
+
+**Order matters.** Workflow nodes reference services by ObjectId, so a job export
+only lines up with a catalog exported from the *same* deployment. The import ends
+with an integrity report that says whether every node resolved.
+
+**`--own`** rewrites each job's `sub` to the local dev identity (`dev`, matching
+`AuthRolesGuard.devUser()`). Without it the jobs belong to staging Keycloak
+subjects: fine as an administrator, but a client-tier walkthrough shows an empty
+dashboard, because `jobsForViewer` scopes to the caller server-side.
+
+## This export contains real customer PII
+
+`sub`, `email`, `clientEmail`, `clientDisplayName`, `institute`, signature names,
+and free-text notes that may describe real research. The file is unencrypted;
+`/*-export.json` is gitignored, but that is the only guard.
+
+## What cannot be transferred
+
+Not a limitation of the scripts — the schema exposes no way to read these:
+
+| Collection | Why |
+|---|---|
+| `job_review_operations` | no resolver at all |
+| `job_feed_status` | no resolver at all |
+| `notifications` | only `myNotifications`, scoped to the caller |
+| `usagesows` / `usageinvoices` | `usageSows(ownerSub)` needs a per-owner fan-out over subjects the export cannot enumerate |
+| S3 attachment **bodies** | only presigned per-request URLs; metadata does come over |
+
+`jobs-import.mjs` **clears these but never repopulates them**, and says so in its
+output. Four job fields are also unexposed and therefore lost:
+`editAccessRequestedAt`, `lastReviewOperationId` (Job), `isStaged` (SowVersion).
+
+**Workflow edge `_id`s cannot round-trip** — `WorkflowEdge` exposes only the
+ReactFlow-side `id` string. The import mints fresh `_id`s and builds
+`workflows.edges` from those same values, so the pair stays consistent. Nothing
+else references an edge by `_id`.
+
+## Reference types are not uniform — do not "tidy" them
+
+Verified against live documents; getting these wrong fails silently, because a
+string never matches an `ObjectId` query and vice versa:
+
+| Collection | Shape |
+|---|---|
+| `job_versions` | `jobId` **string** (a documented "string mirror, for querying") + `job` ObjectId |
+| `sows` | `jobId` **string** + `job` ObjectId |
+| `sow_versions` | `sowId` **string** + `sow` ObjectId |
+| `invoices` | `jobId` **string** + `job` ObjectId |
+| `activity_events` | `jobId` **string** |
+| `comments` | `jobId` **ObjectId** — the exception |
+| `workflows` | `nodes`/`edges` ObjectId arrays; **no** `job` field |
+| `workflownodes` | `service` ObjectId; **no** `workflow`/`job` fields |
+
+## What was verified
+
+Round-tripped local → export shape → scratch database, then compared every
+document field-by-field against the source: **all ten collections match on every
+persisted field and type**, and every reference resolves — `workflow.nodes`,
+`workflow.edges`, `job.workflows`, edge `source`/`target` → nodes, plus the
+string-keyed `job_versions`, `sows`, `sow_versions` lookups. `--own` verified to
+rewrite `sub`. All five export queries validate against the live staging schema.

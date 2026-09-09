@@ -74,6 +74,13 @@ describe('invoicing a job that uses one service twice', () => {
     await F.saveSowVersion(ctx, 'staff', sow.id, fresh.currentVersion, { note: 'Filled in' });
     await F.sendSowToCustomer(ctx, 'staff', sow.id);
 
+    // Signed and countersigned, because invoicing now requires a FINAL version in
+    // force. These tests are about which service *lines* an invoice covers, not
+    // about that gate — see invoice-countersign-gate.spec.ts for the gate itself.
+    const sent = await F.readSow(ctx, 'staff', sow.id);
+    await F.signSow(ctx, 'customer', sow.id, F.signatureFor(sent.activeVersion, 'Cara Client'));
+    await F.finalizeSow(ctx, 'staff', sow.id, 'Tess Technician');
+
     const billable = await billableServices(sow.id);
     return { jobId: job.id, sowId: sow.id, billable };
   }

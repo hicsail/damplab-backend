@@ -6,8 +6,8 @@ import mongoose from 'mongoose';
  * Run this BEFORE deploying that gate. `createForJob` is about to refuse any job
  * whose SOW has no `FINAL` (countersigned) version in force. That is the right
  * rule going forward, but it is retroactive: every SOW already sitting in another
- * state stops being invoiceable the moment it ships, and some of them can never
- * reach `FINAL` at all.
+ * state stops being invoiceable the moment it ships, and some of them cannot reach
+ * `FINAL` without a migration first.
  *
  * The three buckets need three different answers, which is why they are counted
  * separately rather than as one number:
@@ -22,8 +22,14 @@ import mongoose from 'mongoose';
  *     remember countersigning it, so the refusal has to say *withdrawn*, not "not
  *     countersigned".
  *   - `legacyUnversioned` — no `sow_versions` rows at all. These predate SOW
- *     versioning and have no path to FINAL, so the gate closes them permanently.
- *     **This is the bucket that decides whether the gate can ship as written.**
+ *     versioning, and staff cannot put them right by hand: `SowEditorModal` holds
+ *     no fields for a SOW whose `currentVersion` is null, so the save it produces
+ *     recomposes the structure without the inputs behind it and the send gate
+ *     refuses the result. **Run `npm run migrate:sows` before this gate ships** —
+ *     it gives each one a version 1 built with the same field calculator the
+ *     server uses, after which the ordinary send/sign/countersign flow works. It
+ *     is idempotent and has a `--dry` mode.
+ *     `test/integration/legacy-unversioned-sow.spec.ts` pins all of that.
  *
  * Each is cross-cut by whether the job already has a standing invoice, because a
  * job that has been part-invoiced and can no longer be invoiced again is a
@@ -149,12 +155,12 @@ async function main(): Promise<void> {
     console.warn('Jobs the countersign gate would block:');
     describe('never countersigned (staff can countersign)', report.neverCountersigned);
     describe('countersigned then withdrawn or cancelled (refusal wording matters)', report.countersignedThenWithdrawn);
-    describe('LEGACY, no versions — can never reach FINAL', report.legacyUnversioned);
+    describe('LEGACY, no versions — run `npm run migrate:sows` before the gate ships', report.legacyUnversioned);
 
     if (report.legacyUnversioned.length > 0) {
       console.warn('');
       console.warn(
-        `${report.legacyUnversioned.length} SOW(s) can never satisfy the gate. Decide before shipping: a creation-date cutoff, a one-off backfill, or accept that those jobs are closed to further invoicing. This is a business call.`
+        `${report.legacyUnversioned.length} SOW(s) predate versioning and cannot satisfy the gate as they stand. Run \`npm run migrate:sows -- --dry\` and then apply it — that backfill is idempotent and is what makes them countersignable. Only if it cannot fix them is a cutoff date or an exemption a business call.`
       );
     }
     const stranded = alreadyInvoiced(report);

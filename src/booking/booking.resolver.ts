@@ -50,8 +50,28 @@ export class BookingResolver {
       cleaned.ownerEmail = undefined;
       cleaned.ownerName = undefined;
       cleaned.ownerInstitution = undefined;
+      // And the pricing tier with them. `resolveOwnerCategory` honours an explicit
+      // category ahead of any lookup, so without this a client could post
+      // `customerCategory: 'INTERNAL_CUSTOMERS'` on their own booking and be billed
+      // at the internal rate — exactly the leak `pricing-visibility.ts` exists to
+      // prevent. Dropped rather than rejected: it is not a field the booking UI
+      // sends, so a refusal would be a worse error than simply resolving the tier
+      // from Keycloak as usual.
+      //
+      // Staff keep the override, which is its legitimate use: booking for a
+      // customer whose Keycloak group has not been set yet.
+      cleaned.customerCategory = undefined;
     }
-    return this.bookingService.create(cleaned, { sub: user?.sub, email: user?.email, name: this.displayName(user) });
+    // The caller's claims ride along so that booking for yourself — the ordinary
+    // case — resolves its pricing category straight from the token, with no
+    // Keycloak Admin API round trip. An owner override falls back to that API.
+    return this.bookingService.create(cleaned, {
+      sub: user?.sub,
+      email: user?.email,
+      name: this.displayName(user),
+      realm_access: user?.realm_access,
+      groups: user?.groups
+    });
   }
 
   /** The current user's own bookings. */

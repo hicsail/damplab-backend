@@ -201,6 +201,11 @@ export async function withdrawSowFromCustomer(ctx: TestApp, actor: ActorName, so
   return data.withdrawSowFromCustomer;
 }
 
+export async function cancelSow(ctx: TestApp, actor: ActorName, sowId: string, note: string): Promise<any> {
+  const data = await gql(ctx, actor, `mutation ($sowId: ID!, $note: String) { cancelSow(sowId: $sowId, note: $note) { versionNumber status } }`, { sowId, note });
+  return data.cancelSow;
+}
+
 export async function sowVersions(ctx: TestApp, actor: ActorName, sowId: string): Promise<any[]> {
   const data = await gql(ctx, actor, `query ($sowId: ID!) { sowVersions(sowId: $sowId) { versionNumber status note visibleToCustomer createdByName } }`, { sowId });
   return data.sowVersions;

@@ -45,8 +45,11 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
   };
 
   const jobService: any = { findById: async () => ({ _id: 'job-1', jobId: '04217', name: 'Test job' }) };
+  // FINAL, because invoicing now requires a countersigned SOW and these tests are
+  // about voiding rather than about that gate.
   const version = {
     versionNumber: opts.activeVersionNumber ?? 1000,
+    status: 'FINAL',
     inputs: {
       services: [
         { serviceId: 's1', name: 'PCR', cost: 350 },
@@ -60,7 +63,7 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
     findByJobId: async () => ({ _id: 'sow-1', services: version.inputs.services, pricing: { baseCost: 470, adjustments: [], totalCost: 470 } }),
     billableServiceLines: async (): Promise<any[]> => version.inputs.services
   };
-  const sowVersionService: any = { getActiveVersion: async () => version };
+  const sowVersionService: any = { getActiveVersion: async () => version, listVersions: async (): Promise<any[]> => [version] };
 
   return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService), created, existing };
 }

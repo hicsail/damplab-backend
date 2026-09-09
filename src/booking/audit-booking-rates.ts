@@ -2,13 +2,19 @@ import mongoose from 'mongoose';
 import { resolveCategoryPrice } from '../pricing/service-pricing.util';
 
 /**
- * Read-only audit: which bookings change price when `resolveRate` is replaced by
- * the shared `resolveCategoryPrice` chain.
+ * Read-only audit: which existing bookings were priced by the chain that has since
+ * been replaced.
  *
- * Run this BEFORE deploying that change. `BookingService.resolveRate` is a second
- * copy of the resolution `service-pricing.util.ts` documents as THE chain. On the
- * four named categories the two agree. They diverge in exactly two places, and
- * both only bite a booking whose `customerCategory` is absent:
+ * `BookingService.resolveRate` **has now been deleted** in favour of the shared
+ * `resolveCategoryPrice`, and the customer category is resolved at booking creation
+ * so the uncategorised path is rare rather than routine. This audit is therefore
+ * retrospective: `rateSnapshot` is written once and never revisited, so every
+ * booking made before that change still carries whatever the old chain gave it.
+ *
+ * `resolveRate` was a second copy of the resolution `service-pricing.util.ts`
+ * documents as THE chain. On the four named categories the two agreed. They
+ * diverged in exactly two places, and both only bite a booking whose
+ * `customerCategory` is absent:
  *
  *   - **the uncategorised fallback.** `resolveRate` returns
  *     `legacy ?? internal ?? external`, handing an *internal* rate to a caller
@@ -21,10 +27,10 @@ import { resolveCategoryPrice } from '../pricing/service-pricing.util';
  *
  *   - `repriced` — the rate the new chain gives differs from the one the old chain
  *     gives against today's catalog. These are the bookings whose price moves.
- *   - `uncostable` — the new chain resolves nothing at all. Under today's code
- *     these bill at **$0** through `UsageBillingService.toLineItem`
- *     (`cost: round2(b.cost ?? 0)`), silently; under the fix, `generateBilling`
- *     refuses them. Either way the fix is to give the owner a pricing group.
+ *   - `uncostable` — the new chain resolves nothing at all. These used to bill at
+ *     **$0** through `UsageBillingService.toLineItem` (`cost: round2(b.cost ?? 0)`),
+ *     silently; `generateBilling` now refuses them outright. The remedy is to give
+ *     the owner a pricing group and re-book, since `rateSnapshot` is never revisited.
  *
  * Both lists flag `alreadyBilled`, because `rateSnapshot` is written once at
  * creation and a billed booking cannot be re-rated retroactively.
@@ -45,7 +51,13 @@ import { resolveCategoryPrice } from '../pricing/service-pricing.util';
  * Writes nothing, ever. There is no --dry because there is no apply.
  */
 
-/** The chain being replaced, reproduced here so the audit can diff the two. */
+/**
+ * The replaced chain, reproduced here so the audit can diff old against new.
+ *
+ * Deliberately a copy rather than an import: the original is gone, and this has to
+ * keep describing what those stored `rateSnapshot` values came from however the
+ * live chain evolves.
+ */
 function legacyResolveRate(pricing: any, category?: string): number | undefined {
   if (!pricing || typeof pricing !== 'object') return undefined;
   const num = (v: unknown): number | undefined => {
@@ -175,7 +187,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify(report, null, 2));
 
     if (report.repriced.length === 0 && report.uncostable.length === 0) {
-      console.log('No booking changes price. Replacing resolveRate is safe to deploy as-is.');
+      console.log('No existing booking was priced differently by the old chain. Nothing to correct.');
       return;
     }
 
@@ -185,7 +197,7 @@ async function main(): Promise<void> {
 
     if (report.uncostable.length > 0) {
       console.warn('');
-      console.warn('Give those owners a Keycloak pricing group before deploying, or those bookings cannot be billed at all.');
+      console.warn('Give those owners a Keycloak pricing group and re-book, or record those charges manually — generateBilling refuses them rather than billing $0.');
     }
     // Non-zero exit so a CI or SSM caller cannot mistake this for a clean run.
     process.exitCode = 1;
