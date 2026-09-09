@@ -75,7 +75,7 @@ const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
  * of days on both sides of the wire and on both sides of a DST boundary, and the
  * frontend twin parses the same way.
  */
-function dateOnlyToUtcMs(value: unknown): number | undefined {
+export function dateOnlyToUtcMs(value: unknown): number | undefined {
   if (typeof value !== 'string') return undefined;
   const m = DATE_ONLY_RE.exec(value.trim());
   if (!m) return undefined;
