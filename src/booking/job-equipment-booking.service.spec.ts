@@ -280,4 +280,23 @@ describe('JobEquipmentBookingService.assertMayCancel', () => {
     const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
     await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'nobody@bu.edu' }) as any)).rejects.toThrow('You are not authorized to cancel this booking.');
   });
+
+  /**
+   * The one eligible class the five tests above never touch: a caller who is not
+   * the job creator, not the booking's creator, not a listed booker and holds no
+   * staff permission — eligible solely because `job.clientEmail` names them. Case-
+   * and whitespace-insensitively, per `matchesClientEmail`, so this also pins the
+   * argument order (`matchesClientEmail(job.clientEmail, actor.email)`): swapped,
+   * this still "matches" only by accident and only when the two strings are equal,
+   * which they deliberately are not here.
+   */
+  it('lets a caller whose only claim is a client-email match cancel', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.assertMayCancel(booking, user({ sub: 'client-caller', email: '  Client@BU.edu  ' }) as any)).resolves.toBeUndefined();
+  });
+
+  it('refuses a caller whose email is close to, but does not match, the client email', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    await expect(service.assertMayCancel(booking, user({ sub: 'client-caller', email: 'client@bu.edu.evil.com' }) as any)).rejects.toThrow('You are not authorized to cancel this booking.');
+  });
 });
