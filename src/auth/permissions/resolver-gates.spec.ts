@@ -135,6 +135,7 @@ const GATES: Row[] = [
   // is checked inside JobEquipmentBookingService.
   [BookingResolver, 'createJobEquipmentBooking', Permission.InventoryBook],
   [BookingResolver, 'updateJobEquipmentBooking', Permission.InventoryBook],
+  [BookingResolver, 'setJobBookingBlock', Permission.BillingView],
 
   // /edit
   [DampLabServicesResolver, 'createService', Permission.CatalogEditorWrite],

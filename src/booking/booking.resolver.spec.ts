@@ -16,7 +16,7 @@ describe('BookingResolver.cancelBooking', () => {
     const bookingService: any = { findById: jest.fn(async () => booking), cancel };
     const assertMayCancel = jest.fn(async () => undefined);
     const jobEquipmentBookingService: any = { assertMayCancel };
-    const resolver = new BookingResolver(bookingService, jobEquipmentBookingService);
+    const resolver = new BookingResolver(bookingService, jobEquipmentBookingService, undefined as any);
     return { resolver, cancel, assertMayCancel };
   };
 

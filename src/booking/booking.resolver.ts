@@ -12,11 +12,13 @@ import { User } from '../auth/user.interface';
 import { JobEquipmentBookingService } from './job-equipment-booking.service';
 import { JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
+import { Job } from '../job/job.model';
+import { JobService } from '../job/job.service';
 
 @Resolver(() => Booking)
 @UseGuards(AuthRolesGuard)
 export class BookingResolver {
-  constructor(private readonly bookingService: BookingService, private readonly jobEquipmentBookingService: JobEquipmentBookingService) {}
+  constructor(private readonly bookingService: BookingService, private readonly jobEquipmentBookingService: JobEquipmentBookingService, private readonly jobService: JobService) {}
 
   /**
    * "May set another user's details on a booking, and may cancel anyone's."
@@ -166,5 +168,26 @@ export class BookingResolver {
       throw new ForbiddenException('You can only cancel your own bookings.');
     }
     return this.bookingService.cancel(id);
+  }
+
+  /**
+   * Pause or resume equipment booking on a job.
+   *
+   * Lives on the booking resolver rather than the job one because it is a booking
+   * control that happens to be stored on the job — the panel that shows it is this
+   * module's. `billing:view` (Administrator-only), because a pause is the lever
+   * the lab pulls over money, not a scheduling adjustment.
+   */
+  @Mutation(() => Job)
+  @RequirePermission(Permission.BillingView)
+  async setJobBookingBlock(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @Args('blocked', { type: () => Boolean }) blocked: boolean,
+    @Args('reason', { type: () => String, nullable: true }) reason: string | null,
+    @CurrentUser() user: User
+  ): Promise<Job> {
+    const job = await this.jobService.setBookingBlock(jobId, blocked, reason ?? undefined, this.displayName(user));
+    if (!job) throw new NotFoundException('Job not found.');
+    return job;
   }
 }
