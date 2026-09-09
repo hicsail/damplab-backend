@@ -51,6 +51,67 @@ export { CustomerCategory };
  */
 export const RUN_COUNT_PARAM_ID = '__runCount';
 
+/**
+ * Ids of the five reserved equipment-use parameters. Like the run count these are
+ * injected into formData client-side and never stored in service.parameters, so they
+ * are read straight from formData. Must stay in sync with the constants of the same
+ * names in damplab-ui/src/utils/servicePricing.ts.
+ */
+export const EQUIPMENT_START_PARAM_ID = '__equipStart';
+export const EQUIPMENT_END_PARAM_ID = '__equipEnd';
+export const EQUIPMENT_OPEN_END_PARAM_ID = '__equipOpenEnd';
+export const EQUIPMENT_HOURS_PER_WEEK_PARAM_ID = '__equipHoursPerWeek';
+export const EQUIPMENT_BOOKERS_PARAM_ID = '__equipBookers';
+
+/** The five, in the order the sidebar and the documents show them. */
+export const EQUIPMENT_PARAM_IDS: readonly string[] = [EQUIPMENT_START_PARAM_ID, EQUIPMENT_END_PARAM_ID, EQUIPMENT_OPEN_END_PARAM_ID, EQUIPMENT_HOURS_PER_WEEK_PARAM_ID, EQUIPMENT_BOOKERS_PARAM_ID];
+
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A `YYYY-MM-DD` string as UTC midnight in ms, or undefined.
+ *
+ * UTC deliberately: the difference between two of these has to be a whole number
+ * of days on both sides of the wire and on both sides of a DST boundary, and the
+ * frontend twin parses the same way.
+ */
+function dateOnlyToUtcMs(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const m = DATE_ONLY_RE.exec(value.trim());
+  if (!m) return undefined;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
+ * Whole weeks from start to end, any partial week rounded up, never below one.
+ * Undefined when either date is missing or malformed, or the end precedes the
+ * start — the submission validator blocks those, the pricer must not throw on them.
+ */
+export function equipmentWeeks(start: unknown, end: unknown): number | undefined {
+  const s = dateOnlyToUtcMs(start);
+  const e = dateOnlyToUtcMs(end);
+  if (s === undefined || e === undefined) return undefined;
+  const days = Math.round((e - s) / 86400000);
+  if (days < 0) return undefined;
+  return Math.max(1, Math.ceil(days / 7));
+}
+
+/**
+ * The estimate multiplier for an equipment-use operation: projected hours per week
+ * times the number of weeks in the window. Undefined when the operation is not an
+ * equipment one, or its window/hours are incomplete or nonsensical.
+ */
+export function equipmentFactor(rawFormData: unknown): number | undefined {
+  const formData = normalizeFormDataToArray(rawFormData, new Set());
+  const byId = new Map(formData.map((entry) => [entry.id, entry.value]));
+  const weeks = equipmentWeeks(byId.get(EQUIPMENT_START_PARAM_ID), byId.get(EQUIPMENT_END_PARAM_ID));
+  if (weeks === undefined) return undefined;
+  const hours = resolveQty(byId.get(EQUIPMENT_HOURS_PER_WEEK_PARAM_ID));
+  if (hours === undefined || !(hours > 0)) return undefined;
+  return hours * weeks;
+}
+
 function normalizePrice(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
@@ -134,6 +195,11 @@ function getMultiplier(parameters: unknown, rawFormData: unknown): number {
   // service, so it is absent from service.parameters and the loop below cannot see it.
   const runCountQty = resolveQty(formDataMap.get(RUN_COUNT_PARAM_ID));
   if (runCountQty !== undefined) multiplier *= runCountQty;
+
+  // Equipment use, also read straight from formData. Stacks with the run count:
+  // 2 runs of a 40-hour booking bills 80 hours.
+  const equipmentQty = equipmentFactor(rawFormData);
+  if (equipmentQty !== undefined) multiplier *= equipmentQty;
 
   // Any further multiplier parameters the service declares for itself. The run count
   // is skipped here so a service that also declares it is not counted twice.

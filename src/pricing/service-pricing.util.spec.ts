@@ -1,5 +1,18 @@
 import { DampLabService, ServicePricingMode } from '../services/models/damplab-service.model';
-import { calculateServiceCost, calculateServiceCostBreakdown, CustomerCategory, extractRunCount, RUN_COUNT_PARAM_ID } from './service-pricing.util';
+import {
+  calculateServiceCost,
+  calculateServiceCostBreakdown,
+  CustomerCategory,
+  EQUIPMENT_BOOKERS_PARAM_ID,
+  EQUIPMENT_END_PARAM_ID,
+  EQUIPMENT_HOURS_PER_WEEK_PARAM_ID,
+  EQUIPMENT_OPEN_END_PARAM_ID,
+  EQUIPMENT_START_PARAM_ID,
+  equipmentFactor,
+  equipmentWeeks,
+  extractRunCount,
+  RUN_COUNT_PARAM_ID
+} from './service-pricing.util';
 
 /**
  * The universal run count is injected into formData client-side under a synthetic
@@ -219,5 +232,84 @@ describe('calculateServiceCostBreakdown — a parameter-priced line with no valu
       parameters: [{ id: 'kit', name: 'Kit', type: 'dropdown', options: [{ id: 'free', name: 'Free', price: 0 }] }]
     } as unknown as DampLabService;
     expect(calculateServiceCostBreakdown(freeOption, [{ id: 'kit', value: 'free' }], 500)).toEqual({ unitCost: 0, multiplier: 1, cost: 0 });
+  });
+});
+
+/**
+ * THE shared table. damplab-ui/src/utils/servicePricing.equipment.test.ts holds a
+ * byte-identical copy; the two implementations must agree case for case.
+ */
+const EQUIPMENT_FACTOR_CASES: Array<[string, string | undefined, string | undefined, unknown, number | undefined]> = [
+  ['28 days is 4 weeks', '2026-01-01', '2026-01-29', 10, 40],
+  ['29 days rounds up to 5 weeks', '2026-01-01', '2026-01-30', 10, 50],
+  ['a same-day window is one week', '2026-01-01', '2026-01-01', 10, 10],
+  ['7 days is exactly one week', '2026-01-01', '2026-01-08', 1, 1],
+  ['8 days rounds up to 2 weeks', '2026-01-01', '2026-01-09', 2, 4],
+  ['a missing end date has no factor', '2026-01-01', undefined, 10, undefined],
+  ['a missing start date has no factor', undefined, '2026-01-29', 10, undefined],
+  ['an end before the start has no factor', '2026-01-29', '2026-01-01', 10, undefined],
+  ['a malformed date has no factor', '2026-01-01', 'next tuesday', 10, undefined],
+  ['zero hours per week has no factor', '2026-01-01', '2026-01-29', 0, undefined],
+  ['non-numeric hours per week has no factor', '2026-01-01', '2026-01-29', 'abc', undefined],
+  ['hours per week sent as a string still counts', '2026-01-01', '2026-01-29', '10', 40]
+];
+
+const equipmentFormData = (start?: string, end?: string, hours?: unknown): Array<{ id: string; value: unknown }> => [
+  ...(start === undefined ? [] : [{ id: EQUIPMENT_START_PARAM_ID, value: start }]),
+  ...(end === undefined ? [] : [{ id: EQUIPMENT_END_PARAM_ID, value: end }]),
+  ...(hours === undefined ? [] : [{ id: EQUIPMENT_HOURS_PER_WEEK_PARAM_ID, value: hours }]),
+  { id: EQUIPMENT_OPEN_END_PARAM_ID, value: false },
+  { id: EQUIPMENT_BOOKERS_PARAM_ID, value: [] }
+];
+
+describe('equipmentWeeks', () => {
+  it('counts whole weeks, rounding any partial week up, with one week as the floor', () => {
+    expect(equipmentWeeks('2026-01-01', '2026-01-29')).toBe(4);
+    expect(equipmentWeeks('2026-01-01', '2026-01-30')).toBe(5);
+    expect(equipmentWeeks('2026-01-01', '2026-01-01')).toBe(1);
+  });
+
+  it('is undefined rather than throwing on a window it cannot read', () => {
+    expect(equipmentWeeks(undefined, '2026-01-29')).toBeUndefined();
+    expect(equipmentWeeks('2026-01-29', '2026-01-01')).toBeUndefined();
+    expect(equipmentWeeks('2026-01-01', '')).toBeUndefined();
+  });
+
+  it('does not shift across a DST boundary', () => {
+    // 2026-03-08 is the US spring-forward. Parsed as local dates this window
+    // is 27.96 days and would round to 4 weeks either way; parsed as UTC it
+    // is exactly 28. The assertion pins the UTC reading.
+    expect(equipmentWeeks('2026-02-22', '2026-03-22')).toBe(4);
+  });
+});
+
+describe('equipmentFactor', () => {
+  it.each(EQUIPMENT_FACTOR_CASES)('%s', (_label, start, end, hours, expected) => {
+    expect(equipmentFactor(equipmentFormData(start, end, hours))).toBe(expected);
+  });
+
+  it('is undefined when none of the reserved entries are present', () => {
+    expect(equipmentFactor([{ id: 'vol', value: 5 }])).toBeUndefined();
+    expect(equipmentFactor(undefined)).toBeUndefined();
+  });
+});
+
+describe('calculateServiceCostBreakdown — equipment estimate', () => {
+  it('prices 10 hrs/wk at $40/hr over 28 days as $1,600', () => {
+    const b = calculateServiceCostBreakdown(service({ price: 40 }), equipmentFormData('2026-01-01', '2026-01-29', 10));
+    expect(b.unitCost).toBe(40);
+    expect(b.multiplier).toBe(40);
+    expect(b.cost).toBe(1600);
+  });
+
+  it('stacks the run count on top of the equipment factor', () => {
+    const formData = [...equipmentFormData('2026-01-01', '2026-01-29', 10), { id: RUN_COUNT_PARAM_ID, value: 2 }];
+    expect(calculateServiceCostBreakdown(service({ price: 40 }), formData).multiplier).toBe(80);
+  });
+
+  it('leaves the price alone rather than throwing when the window is unusable', () => {
+    // The submission validator blocks an incomplete window; the pricer must not.
+    expect(calculateServiceCost(service({ price: 40 }), equipmentFormData('2026-01-01', undefined, 10))).toBe(40);
+    expect(calculateServiceCost(service({ price: 40 }), equipmentFormData('2026-01-29', '2026-01-01', 10))).toBe(40);
   });
 });
