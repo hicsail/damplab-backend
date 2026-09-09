@@ -64,6 +64,35 @@ export class BookingService {
     return item.type === 'CONSUMABLE' ? BookingKind.QUANTITY : BookingKind.TIMED;
   }
 
+  /**
+   * Parse and validate a booking's time window — the same exception/message
+   * every caller relied on before this was pulled out. Kept separate from the
+   * availability check below so each method can place the item guards (deleted/
+   * bookable) between the two, matching each method's own pre-existing order.
+   */
+  private assertValidWindow(startTime: Date | string | number | null | undefined, endTime: Date | string | number | null | undefined): { start: Date; end: Date } {
+    const start = startTime ? new Date(startTime) : null;
+    const end = endTime ? new Date(endTime) : null;
+    if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
+      throw new BadRequestException('Start and end time are required to book this item.');
+    }
+    if (end.getTime() <= start.getTime()) throw new BadRequestException('End time must be after start time.');
+    return { start, end };
+  }
+
+  /**
+   * Check the shared availability pool for conflicts on a validated window —
+   * walk-up bookings, lab-monitor operation holds and other jobs' bookings all
+   * conflict here. `excludeBookingId` lets a booking being moved ignore its own
+   * current slot.
+   */
+  private async assertAvailable(itemId: string, start: Date, end: Date, excludeBookingId?: string): Promise<void> {
+    const conflicts = await this.availability.findItemConflicts({ itemIds: [itemId], start, end, excludeBookingId });
+    if (conflicts.length > 0) {
+      throw new BadRequestException(`That item is unavailable for the selected time (${conflicts.map((c) => c.label).join('; ')}).`);
+    }
+  }
+
   async create(input: CreateBookingInput, actor: ActorIdentity): Promise<Booking> {
     const item: any = await this.inventoryService.find(input.inventoryItemId);
     if (!item) throw new NotFoundException('Inventory item not found.');
@@ -101,19 +130,8 @@ export class BookingService {
     };
 
     if (kind === BookingKind.TIMED) {
-      const start = input.startTime ? new Date(input.startTime) : null;
-      const end = input.endTime ? new Date(input.endTime) : null;
-      if (!start || !end || isNaN(start.getTime()) || isNaN(end.getTime())) {
-        throw new BadRequestException('Start and end time are required to book this item.');
-      }
-      if (end.getTime() <= start.getTime()) throw new BadRequestException('End time must be after start time.');
-
-      // Shared availability pool: conflicts with other bookings AND with operation holds.
-      const conflicts = await this.availability.findItemConflicts({ itemIds: [item.id], start, end });
-      if (conflicts.length > 0) {
-        const detail = conflicts.map((c) => c.label).join('; ');
-        throw new BadRequestException(`That item is unavailable for the selected time (${detail}).`);
-      }
+      const { start, end } = this.assertValidWindow(input.startTime, input.endTime);
+      await this.assertAvailable(item.id, start, end);
 
       base.startTime = start;
       base.endTime = end;
@@ -128,6 +146,78 @@ export class BookingService {
     }
 
     return this.model.create(base);
+  }
+
+  /**
+   * A booking made from a job page against one of its equipment-use operations.
+   *
+   * Separate from `create` rather than a branch inside it, because almost every
+   * input differs: the owner is the JOB (the billed party), never the actor; the
+   * rate is the OPERATION's per-category service price, never the item's hourly
+   * rate; and the notes default names the job. What it shares — the availability
+   * pool and the cost arithmetic — it shares by calling the same collaborators.
+   */
+  async createForJob(params: { job: any; nodeId: string; nodeLabel: string; service: any; item: any; startTime: Date; endTime: Date; notes?: string; actor: ActorIdentity }): Promise<Booking> {
+    const { job, item, service, actor } = params;
+    const { start, end } = this.assertValidWindow(params.startTime, params.endTime);
+    if (item.isDeleted) throw new BadRequestException('That inventory item is no longer available.');
+    if (!item.bookable) throw new BadRequestException('That inventory item is not bookable.');
+    await this.assertAvailable(String(item.id), start, end);
+
+    const rate = resolveCategoryPrice(service, job.customerCategory as CustomerCategory | undefined);
+    const hours = (end.getTime() - start.getTime()) / 3_600_000;
+    // Legacy jobs carry no display id; the database id is still a stable handle.
+    const jobDisplayId = job.jobId || String(job._id);
+
+    return this.model.create({
+      inventoryItem: item.id,
+      inventoryName: item.name,
+      inventoryType: item.type,
+      ownerSub: job.sub,
+      ownerEmail: job.email,
+      ownerName: job.clientDisplayName || job.username,
+      ownerInstitution: job.institute,
+      customerCategory: job.customerCategory,
+      createdBySub: actor.sub,
+      createdByName: actor.name,
+      jobId: String(job._id),
+      nodeId: params.nodeId,
+      serviceId: String(service._id ?? service.id),
+      kind: BookingKind.TIMED,
+      status: BookingStatus.RESERVED,
+      billingStatus: BookingBillingStatus.UNBILLED,
+      startTime: start,
+      endTime: end,
+      rateSnapshot: rate ?? undefined,
+      cost: rate != null ? round2(hours * rate) : undefined,
+      notes: params.notes?.trim() || `Job #${jobDisplayId} · ${params.nodeLabel}`
+    });
+  }
+
+  /**
+   * Move or re-note a job-scoped booking. Walk-up bookings are deliberately not
+   * reachable here — they keep their cancel-and-rebook flow until someone decides
+   * otherwise.
+   */
+  async updateForJob(id: string, changes: { startTime: Date; endTime: Date; notes?: string }): Promise<Booking> {
+    const existing = await this.model.findById(id).exec();
+    if (!existing) throw new NotFoundException('Booking not found.');
+    if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
+    if (existing.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException('Cannot change a booking that has already been billed.');
+
+    const { start, end } = this.assertValidWindow(changes.startTime, changes.endTime);
+    await this.assertAvailable(String(existing.inventoryItem), start, end, id);
+
+    const hours = (end.getTime() - start.getTime()) / 3_600_000;
+    const set: Record<string, unknown> = {
+      startTime: start,
+      endTime: end,
+      cost: existing.rateSnapshot != null ? round2(hours * existing.rateSnapshot) : existing.cost
+    };
+    const notes = changes.notes?.trim();
+    if (notes) set.notes = notes;
+
+    return (await this.model.findByIdAndUpdate(id, { $set: set }, { new: true }).exec())!;
   }
 
   /** Confirm actual usage (seeded from the booking) and recompute cost. Required before billing. */
@@ -172,6 +262,14 @@ export class BookingService {
 
   async findByOwner(ownerSub: string): Promise<Booking[]> {
     return this.model.find({ ownerSub }).sort({ startTime: -1, usedOn: -1, createdAt: -1 }).exec();
+  }
+
+  /** A job's live bookings — cancelled ones are history, not schedule. */
+  async findByJob(jobId: string): Promise<Booking[]> {
+    return this.model
+      .find({ jobId, status: { $ne: BookingStatus.CANCELLED } })
+      .sort({ startTime: 1 })
+      .exec();
   }
 
   async findAll(filter: BookingFilter = {}): Promise<Booking[]> {

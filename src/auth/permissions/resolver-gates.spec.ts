@@ -138,6 +138,12 @@ const GATES: Row[] = [
   // `damplab-staff` check inside InvoiceService, and migrating it is separate work.
   [InvoiceResolver, 'voidInvoice', Permission.BillingWrite],
 
+  // Job-scoped equipment booking. `inventory:book` is the tier; being on the job
+  // is checked inside JobEquipmentBookingService.
+  [BookingResolver, 'createJobEquipmentBooking', Permission.InventoryBook],
+  [BookingResolver, 'updateJobEquipmentBooking', Permission.InventoryBook],
+  [BookingResolver, 'setJobBookingBlock', Permission.BillingView],
+
   // /edit
   [DampLabServicesResolver, 'createService', Permission.CatalogEditorWrite],
   [DampLabServicesResolver, 'updateService', Permission.CatalogEditorWrite],
@@ -206,6 +212,19 @@ describe('Phase 2b widening — the gate on each operation', () => {
     const equipmentUser = permissionsForRoles([Role.ClientUnassistedEquipmentUser]);
     expect(equipmentUser.has(Permission.BenchUse)).toBe(true);
     expect(equipmentUser.has(Permission.ProtocolLibraryRead)).toBe(false);
+  });
+
+  /**
+   * Also deliberately undecorated. `jobEquipmentBooking` is the client's own job
+   * page: a customer with no inventory permission must still load it and read
+   * "Booking opens once the Statement of Work is signed by both parties." The
+   * scope is enforced inside the resolver, which answers HIDDEN and nothing else
+   * to anyone who is not the job's owner, a listed booker, or staff. Gating it on
+   * inventory:book would 403 every ordinary client on page load.
+   */
+  it('leaves the job equipment-booking query ungated, with the scope enforced inside', () => {
+    expect(permissionOn(BookingResolver, 'jobEquipmentBooking')).toBeUndefined();
+    expect(rolesOn(BookingResolver, 'jobEquipmentBooking')).toBeUndefined();
   });
 
   it('leaves no @Roles behind on any of them', () => {

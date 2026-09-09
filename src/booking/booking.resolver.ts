@@ -9,11 +9,16 @@ import { Permission } from '../auth/permissions/permission.enum';
 import { hasPermission } from '../auth/permissions/permissions';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
+import { JobEquipmentBookingService } from './job-equipment-booking.service';
+import { JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
+import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
+import { Job } from '../job/job.model';
+import { JobService } from '../job/job.service';
 
 @Resolver(() => Booking)
 @UseGuards(AuthRolesGuard)
 export class BookingResolver {
-  constructor(private readonly bookingService: BookingService) {}
+  constructor(private readonly bookingService: BookingService, private readonly jobEquipmentBookingService: JobEquipmentBookingService, private readonly jobService: JobService) {}
 
   /**
    * "May set another user's details on a booking, and may cancel anyone's."
@@ -74,6 +79,31 @@ export class BookingResolver {
     });
   }
 
+  /**
+   * Book equipment against a job's equipment-use operation.
+   *
+   * Two gates, both real: `inventory:book` is the lab's equipment-user tier, and
+   * the access check inside decides whether THIS caller may book THIS job's THIS
+   * operation. Neither implies the other — holding the role does not put you on
+   * someone else's job.
+   */
+  @Mutation(() => Booking)
+  @RequirePermission(Permission.InventoryBook)
+  async createJobEquipmentBooking(@Args('input', { type: () => CreateJobEquipmentBookingInput }) input: CreateJobEquipmentBookingInput, @CurrentUser() user: User): Promise<Booking> {
+    return this.jobEquipmentBookingService.create(input, user);
+  }
+
+  /** Move or re-note a job-scoped booking. Refused once it has been billed. */
+  @Mutation(() => Booking)
+  @RequirePermission(Permission.InventoryBook)
+  async updateJobEquipmentBooking(
+    @Args('id', { type: () => ID }) id: string,
+    @Args('input', { type: () => UpdateJobEquipmentBookingInput }) input: UpdateJobEquipmentBookingInput,
+    @CurrentUser() user: User
+  ): Promise<Booking> {
+    return this.jobEquipmentBookingService.update(id, input, user);
+  }
+
   /** The current user's own bookings. */
   @Query(() => [Booking], { description: 'Bookings owned by the current user.' })
   async myBookings(@CurrentUser() user: User): Promise<Booking[]> {
@@ -96,6 +126,21 @@ export class BookingResolver {
     @Args('inventoryItemId', { type: () => ID, nullable: true }) inventoryItemId?: string
   ): Promise<Booking[]> {
     return this.bookingService.findAll({ from, to, inventoryItemId });
+  }
+
+  /**
+   * The job page's equipment-booking panel, in one round trip.
+   *
+   * Deliberately carries NO `@RequirePermission`, exactly like `ownJobById`: an
+   * ordinary client with no inventory permission at all must be able to load their
+   * own job page and be told why booking is closed. The scope is enforced inside —
+   * a caller who is neither the job's owner, nor a listed booker, nor staff gets
+   * `HIDDEN` and no data whatsoever. See `resolver-gates.spec.ts`, which asserts
+   * the absence so a later "tidy this up" cannot silently 403 every client.
+   */
+  @Query(() => JobEquipmentBookingView, { description: "A job's equipment-use operations, its bookings, and whether the caller may book." })
+  async jobEquipmentBooking(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<JobEquipmentBookingView> {
+    return this.jobEquipmentBookingService.view(jobId, user);
   }
 
   /** Confirmed-but-unbilled usage for a user — candidates for a usage SOW/invoice. */
@@ -128,15 +173,41 @@ export class BookingResolver {
   /**
    * Cancel a booking. Owner only, unless the caller may manage others' bookings.
    * The ownership check is the real gate — an equipment user reaching the lab-wide
-   * calendar must not be able to cancel someone else's slot.
+   * calendar must not be able to cancel someone else's slot. A job-scoped booking
+   * goes through the wider job-aware gate instead, below.
    */
   @Mutation(() => Booking)
   async cancelBooking(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Booking> {
-    const booking = await this.bookingService.findById(id);
+    const booking: any = await this.bookingService.findById(id);
     if (!booking) throw new NotFoundException('Booking not found.');
-    if (!this.canManageOthersBookings(user) && booking.ownerSub !== user?.sub) {
+    if (booking.jobId) {
+      // A job-scoped booking's owner is the job, not the person who made it, so
+      // the walk-up owner check below would lock out every listed booker.
+      await this.jobEquipmentBookingService.assertMayCancel(booking, user);
+    } else if (!this.canManageOthersBookings(user) && booking.ownerSub !== user?.sub) {
       throw new ForbiddenException('You can only cancel your own bookings.');
     }
     return this.bookingService.cancel(id);
+  }
+
+  /**
+   * Pause or resume equipment booking on a job.
+   *
+   * Lives on the booking resolver rather than the job one because it is a booking
+   * control that happens to be stored on the job — the panel that shows it is this
+   * module's. `billing:view` (Administrator-only), because a pause is the lever
+   * the lab pulls over money, not a scheduling adjustment.
+   */
+  @Mutation(() => Job)
+  @RequirePermission(Permission.BillingView)
+  async setJobBookingBlock(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @Args('blocked', { type: () => Boolean }) blocked: boolean,
+    @Args('reason', { type: () => String, nullable: true }) reason: string | null,
+    @CurrentUser() user: User
+  ): Promise<Job> {
+    const job = await this.jobService.setBookingBlock(jobId, blocked, reason ?? undefined, this.displayName(user));
+    if (!job) throw new NotFoundException('Job not found.');
+    return job;
   }
 }

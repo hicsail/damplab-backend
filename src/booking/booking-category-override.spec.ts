@@ -27,7 +27,7 @@ function harness(): { resolver: BookingResolver; seen: any[] } {
       return { id: 'booking-1' };
     }
   };
-  return { resolver: new BookingResolver(bookingService), seen };
+  return { resolver: new BookingResolver(bookingService, undefined as any, undefined as any), seen };
 }
 
 const input = (overrides: Record<string, unknown> = {}): any => ({
