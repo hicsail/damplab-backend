@@ -9,6 +9,7 @@ import {
   EQUIPMENT_OPEN_END_PARAM_ID,
   EQUIPMENT_START_PARAM_ID,
   equipmentFactor,
+  equipmentLineDescription,
   equipmentWeeks,
   extractRunCount,
   RUN_COUNT_PARAM_ID
@@ -311,5 +312,35 @@ describe('calculateServiceCostBreakdown — equipment estimate', () => {
     // The submission validator blocks an incomplete window; the pricer must not.
     expect(calculateServiceCost(service({ price: 40 }), equipmentFormData('2026-01-01', undefined, 10))).toBe(40);
     expect(calculateServiceCost(service({ price: 40 }), equipmentFormData('2026-01-29', '2026-01-01', 10))).toBe(40);
+  });
+});
+
+describe('equipmentLineDescription', () => {
+  it('states the estimate basis and that actual hours are what bill', () => {
+    expect(equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10))).toBe('Plate reader time — 10 hrs/wk x 4 wks (estimate; billed on actual hours)');
+  });
+
+  it('is idempotent, because the workflow sync re-sends the description it last wrote', () => {
+    const once = equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10));
+    expect(equipmentLineDescription(once, equipmentFormData('2026-01-01', '2026-01-29', 10))).toBe(once);
+  });
+
+  it('rewrites a stale suffix rather than stacking a second one', () => {
+    const stale = equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10));
+    expect(equipmentLineDescription(stale, equipmentFormData('2026-01-01', '2026-01-30', 10))).toBe('Plate reader time — 10 hrs/wk x 5 wks (estimate; billed on actual hours)');
+  });
+
+  it('drops the suffix when a line stops being an equipment line', () => {
+    const withSuffix = equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10));
+    expect(equipmentLineDescription(withSuffix, [{ id: 'vol', value: 5 }])).toBe('Plate reader time');
+  });
+
+  it('leaves an ordinary line completely alone', () => {
+    expect(equipmentLineDescription('Gibson Assembly', [{ id: RUN_COUNT_PARAM_ID, value: 3 }])).toBe('Gibson Assembly');
+    expect(equipmentLineDescription(undefined, [])).toBe('');
+  });
+
+  it('says nothing about an incomplete window, which the pricer also ignores', () => {
+    expect(equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', undefined, 10))).toBe('Plate reader time');
   });
 });

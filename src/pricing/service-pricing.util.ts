@@ -112,6 +112,33 @@ export function equipmentFactor(rawFormData: unknown): number | undefined {
   return hours * weeks;
 }
 
+/** Everything this helper appends, so it can also take it back off. */
+const EQUIPMENT_DESCRIPTION_SUFFIX_RE = / — \d+(?:\.\d+)? hrs\/wk x \d+ wks \(estimate; billed on actual hours\)$/;
+
+/**
+ * The SOW/invoice line description for an operation, with the equipment estimate
+ * spelled out on it.
+ *
+ * SOWService stores no formData and this run adds no schema, so the description is
+ * the only place the hours-and-weeks basis can survive onto the document. It is
+ * rewritten rather than appended on every call because collectSowServiceInputs
+ * re-sends the description it last wrote on every workflow sync — appending would
+ * grow a new suffix each time.
+ */
+export function equipmentLineDescription(description: string | undefined, rawFormData: unknown): string {
+  const base = (description ?? '').replace(EQUIPMENT_DESCRIPTION_SUFFIX_RE, '');
+  const factor = equipmentFactor(rawFormData);
+  if (factor === undefined) return base;
+
+  const formData = normalizeFormDataToArray(rawFormData, new Set());
+  const byId = new Map(formData.map((entry) => [entry.id, entry.value]));
+  const weeks = equipmentWeeks(byId.get(EQUIPMENT_START_PARAM_ID), byId.get(EQUIPMENT_END_PARAM_ID));
+  const hours = resolveQty(byId.get(EQUIPMENT_HOURS_PER_WEEK_PARAM_ID));
+  if (weeks === undefined || hours === undefined) return base;
+
+  return `${base} — ${hours} hrs/wk x ${weeks} wks (estimate; billed on actual hours)`;
+}
+
 function normalizePrice(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string' && value.trim() !== '') {
