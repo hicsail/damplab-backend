@@ -454,6 +454,8 @@ export const SOWSchema = SchemaFactory.createForClass(SOW);
 
 // Create indexes
 SOWSchema.index({ jobId: 1 });
-SOWSchema.index({ sowNumber: 1 });
+// No `sowNumber` index here: `@Prop({ unique: true })` on the field already
+// declares one, and declaring it twice built a second, redundant, non-unique
+// index and made Mongoose warn on every boot.
 SOWSchema.index({ status: 1 });
 SOWSchema.index({ createdAt: 1 });
