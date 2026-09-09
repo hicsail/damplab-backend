@@ -7,7 +7,7 @@ import { UpdateSOWInput } from './dto/update-sow.input';
 import { JobService } from '../job/job.service';
 import { Job } from '../job/job.model';
 import { DampLabServices } from '../services/damplab-services.services';
-import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
+import { calculateServiceCostBreakdown, equipmentLineDescription, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
 import { SowVersionInputs } from './sow-version.model';
 import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-field-calculator';
@@ -187,7 +187,7 @@ export class SOWService {
           _id: service.id,
           serviceId: service.id,
           name: service.name,
-          description: service.description,
+          description: equipmentLineDescription(service.description, service.formData),
           cost,
           unitCost,
           multiplier,
