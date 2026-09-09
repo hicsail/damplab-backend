@@ -213,7 +213,8 @@ export class BookingService {
       endTime: end,
       rateSnapshot: rate ?? undefined,
       cost: rate != null ? round2(hours * rate) : undefined,
-      notes: params.notes?.trim() || `Job #${jobDisplayId} · ${params.nodeLabel}`
+      notes: params.notes?.trim() || `Job #${jobDisplayId} · ${params.nodeLabel}`,
+      history: [{ at: new Date(), action: 'CREATED', bySub: actor.sub, byName: actor.name }]
     });
   }
 
@@ -222,10 +223,13 @@ export class BookingService {
    * reachable here — they keep their cancel-and-rebook flow until someone decides
    * otherwise.
    */
-  async updateForJob(id: string, changes: { startTime: Date; endTime: Date; notes?: string }): Promise<Booking> {
+  async updateForJob(id: string, changes: { startTime: Date; endTime: Date; notes?: string; reason?: string }, actor: ActorIdentity = {}): Promise<Booking> {
+    const reason = changes.reason?.trim();
+    if (!reason) throw new BadRequestException('A reason is required to change a booking.');
     const existing = await this.model.findById(id).exec();
     if (!existing) throw new NotFoundException('Booking not found.');
     if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
+    if (existing.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot change a cancelled booking.');
     if (existing.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException('Cannot change a booking that has already been billed.');
 
     const { start, end } = this.assertValidWindow(changes.startTime, changes.endTime);
@@ -240,7 +244,18 @@ export class BookingService {
     const notes = changes.notes?.trim();
     if (notes) set.notes = notes;
 
-    return (await this.model.findByIdAndUpdate(id, { $set: set }, { new: true }).exec())!;
+    // The trail keeps what the slot WAS; the document keeps what it is now.
+    const entry = {
+      at: new Date(),
+      action: 'UPDATED',
+      bySub: actor.sub,
+      byName: actor.name,
+      reason,
+      previousStartTime: existing.startTime,
+      previousEndTime: existing.endTime,
+      previousNotes: existing.notes
+    };
+    return (await this.model.findByIdAndUpdate(id, { $set: set, $push: { history: entry } }, { new: true }).exec())!;
   }
 
   /** Confirm actual usage (seeded from the booking) and recompute cost. Required before billing. */
@@ -272,11 +287,12 @@ export class BookingService {
     return (await this.model.findByIdAndUpdate(id, { $set: update }, { new: true }).exec())!;
   }
 
-  async cancel(id: string): Promise<Booking> {
+  async cancel(id: string, actor: ActorIdentity = {}): Promise<Booking> {
     const b = await this.model.findById(id).exec();
     if (!b) throw new NotFoundException('Booking not found.');
     if (b.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException('Cannot cancel a booking that has already been billed.');
-    return (await this.model.findByIdAndUpdate(id, { $set: { status: BookingStatus.CANCELLED } }, { new: true }).exec())!;
+    const entry = { at: new Date(), action: 'CANCELLED', bySub: actor.sub, byName: actor.name };
+    return (await this.model.findByIdAndUpdate(id, { $set: { status: BookingStatus.CANCELLED }, $push: { history: entry } }, { new: true }).exec())!;
   }
 
   async findById(id: string): Promise<Booking | null> {
@@ -287,12 +303,13 @@ export class BookingService {
     return this.model.find({ ownerSub }).sort({ startTime: -1, usedOn: -1, createdAt: -1 }).exec();
   }
 
-  /** A job's live bookings — cancelled ones are history, not schedule. */
+  /**
+   * Every booking ever made on a job, cancelled ones included: the job page is the
+   * record. Callers that schedule (the calendar, the busy-slot overlap) filter
+   * CANCELLED out themselves.
+   */
   async findByJob(jobId: string): Promise<Booking[]> {
-    return this.model
-      .find({ jobId, status: { $ne: BookingStatus.CANCELLED } })
-      .sort({ startTime: 1 })
-      .exec();
+    return this.model.find({ jobId }).sort({ startTime: 1 }).exec();
   }
 
   async findAll(filter: BookingFilter = {}): Promise<Booking[]> {

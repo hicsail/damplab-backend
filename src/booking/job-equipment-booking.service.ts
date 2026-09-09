@@ -189,7 +189,11 @@ export class JobEquipmentBookingService {
     if (!existing) throw new NotFoundException('Booking not found.');
     if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
     await this.authorize(String(existing.jobId), String(existing.nodeId), user);
-    return this.bookings.updateForJob(id, { startTime: input.startTime, endTime: input.endTime, notes: input.notes });
+    return this.bookings.updateForJob(
+      id,
+      { startTime: input.startTime, endTime: input.endTime, notes: input.notes, reason: input.reason },
+      { sub: user?.sub, email: user?.email, name: user?.preferred_username || user?.email }
+    );
   }
 
   async view(jobId: string, user: User): Promise<JobEquipmentBookingView> {
@@ -200,10 +204,12 @@ export class JobEquipmentBookingService {
     const verdict = await this.verdict(job, user, operations);
     const access = { status: verdict.status, canBook: verdict.canBook, canBlock: verdict.canBlock, reason: verdict.reason };
 
-    // Anything short of OPEN gets the status and nothing else. A locked panel that
-    // still listed the operations, the items and the bookers would leak most of
-    // what the panel is for.
-    if (verdict.status !== JobBookingAccessStatus.OPEN) {
+    // A stranger gets the status and nothing else. Anyone on the job — paused,
+    // waiting on the SOW, or without the booking permission — still sees the
+    // operations and the bookings already in place: a pause stops NEW bookings,
+    // and the job page is the record of the existing ones. `bookableNodeIds` is
+    // empty for every non-OPEN verdict, so nothing below offers to book.
+    if (verdict.status === JobBookingAccessStatus.HIDDEN) {
       return { access, operations: [], bookings: [] };
     }
 

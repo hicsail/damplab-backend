@@ -31,4 +31,7 @@ export class UpdateJobEquipmentBookingInput {
 
   @Field({ nullable: true })
   notes?: string;
+
+  @Field({ nullable: true, description: 'Why the booking is changing. Required; recorded in the booking’s history.' })
+  reason?: string;
 }

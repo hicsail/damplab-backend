@@ -187,7 +187,7 @@ export class BookingResolver {
     } else if (!this.canManageOthersBookings(user) && booking.ownerSub !== user?.sub) {
       throw new ForbiddenException('You can only cancel your own bookings.');
     }
-    return this.bookingService.cancel(id);
+    return this.bookingService.cancel(id, { sub: user?.sub, name: this.displayName(user) });
   }
 
   /**

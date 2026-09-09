@@ -82,11 +82,18 @@ describe('JobEquipmentBookingService.loadOperations', () => {
 });
 
 describe('JobEquipmentBookingService.view', () => {
-  it('returns SOW_NOT_SIGNED and no operations while the SOW is only SENT', async () => {
+  it('returns SOW_NOT_SIGNED, with the operations read-only and the bookings in place, while the SOW is only SENT', async () => {
     const view = await build({ sowStatus: 'SENT' }).view('job-1', bookerUser());
     expect(view.access.status).toBe(JobBookingAccessStatus.SOW_NOT_SIGNED);
-    expect(view.operations).toEqual([]);
-    expect(view.bookings).toEqual([]);
+    expect(view.operations.map((op) => [op.nodeId, op.canBook])).toEqual([['node-a', false]]);
+    expect(view.bookings.map((b: any) => b._id)).toEqual(['bk-1']);
+  });
+
+  it('keeps listing the bookings while the lab has paused the job', async () => {
+    const view = await build({ sowStatus: 'SIGNED', job: { ...job, bookingBlocked: true, bookingBlockedReason: 'Maintenance' } }).view('job-1', bookerUser());
+    expect(view.access.status).toBe(JobBookingAccessStatus.BLOCKED);
+    expect(view.operations[0].canBook).toBe(false);
+    expect(view.bookings.map((b: any) => b._id)).toEqual(['bk-1']);
   });
 
   /**
@@ -298,5 +305,60 @@ describe('JobEquipmentBookingService.assertMayCancel', () => {
   it('refuses a caller whose email is close to, but does not match, the client email', async () => {
     const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
     await expect(service.assertMayCancel(booking, user({ sub: 'client-caller', email: 'client@bu.edu.evil.com' }) as any)).rejects.toThrow('You are not authorized to cancel this booking.');
+  });
+});
+
+describe('BookingService.updateForJob history', () => {
+  const existing = {
+    _id: 'bk-1',
+    jobId: 'job-1',
+    inventoryItem: 'item-timed',
+    status: 'RESERVED',
+    billingStatus: 'UNBILLED',
+    startTime: new Date('2026-01-06T10:00:00Z'),
+    endTime: new Date('2026-01-06T12:00:00Z'),
+    notes: 'Job #04217 · Bioanalyzer time',
+    rateSnapshot: 40
+  };
+  const buildService = (): { svc: BookingService; updates: any[] } => {
+    const updates: any[] = [];
+    const model = {
+      findById: () => ({ exec: async () => existing }),
+      findByIdAndUpdate: (_id: string, update: any) => {
+        updates.push(update);
+        return { exec: async () => ({ ...existing, ...update.$set }) };
+      }
+    };
+    const svc = new BookingService(model as any, {} as any, { findItemConflicts: async () => [] } as any, {} as any);
+    return { svc, updates };
+  };
+  const move = { startTime: new Date('2026-01-07T10:00:00Z'), endTime: new Date('2026-01-07T11:00:00Z') };
+
+  it('refuses a change without a reason', async () => {
+    const { svc } = buildService();
+    await expect(svc.updateForJob('bk-1', { ...move, reason: '  ' })).rejects.toThrow('A reason is required to change a booking.');
+  });
+
+  it('records who moved it, from what, and why', async () => {
+    const { svc, updates } = buildService();
+    await svc.updateForJob('bk-1', { ...move, reason: 'Sample arrives a day late' }, { sub: 'booker-sub', name: 'Booker' });
+    expect(updates).toHaveLength(1);
+    expect(updates[0].$push.history).toMatchObject({
+      action: 'UPDATED',
+      bySub: 'booker-sub',
+      byName: 'Booker',
+      reason: 'Sample arrives a day late',
+      previousStartTime: existing.startTime,
+      previousEndTime: existing.endTime,
+      previousNotes: existing.notes
+    });
+    expect(updates[0].$set.cost).toBe(40);
+  });
+
+  it('records a cancellation', async () => {
+    const { svc, updates } = buildService();
+    await svc.cancel('bk-1', { sub: 'booker-sub', name: 'Booker' });
+    expect(updates[0].$set.status).toBe('CANCELLED');
+    expect(updates[0].$push.history).toMatchObject({ action: 'CANCELLED', bySub: 'booker-sub', byName: 'Booker' });
   });
 });

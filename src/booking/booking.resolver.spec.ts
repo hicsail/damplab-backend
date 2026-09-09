@@ -29,7 +29,7 @@ describe('BookingResolver.cancelBooking', () => {
       await resolver.cancelBooking('bk-1', stranger);
 
       expect(assertMayCancel).toHaveBeenCalledWith(booking, stranger);
-      expect(cancel).toHaveBeenCalledWith('bk-1');
+      expect(cancel).toHaveBeenCalledWith('bk-1', expect.anything());
     });
 
     it('never calls cancel when assertMayCancel refuses', async () => {
@@ -66,7 +66,7 @@ describe('BookingResolver.cancelBooking', () => {
 
       await resolver.cancelBooking('bk-2', owner);
 
-      expect(cancel).toHaveBeenCalledWith('bk-2');
+      expect(cancel).toHaveBeenCalledWith('bk-2', expect.anything());
     });
 
     it('allows staff holding inventory:write to cancel someone else’s walk-up booking', async () => {
@@ -74,7 +74,7 @@ describe('BookingResolver.cancelBooking', () => {
 
       await resolver.cancelBooking('bk-2', staff);
 
-      expect(cancel).toHaveBeenCalledWith('bk-2');
+      expect(cancel).toHaveBeenCalledWith('bk-2', expect.anything());
     });
   });
 });
