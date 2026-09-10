@@ -14,6 +14,7 @@ import { invoiceBlockedReason } from '../sow/sow-access';
 import { SOWStatus } from '../sow/sow.model';
 import { JobEquipmentBalanceService } from '../job-payment/job-equipment-balance.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
+import { appliedAdjustmentsTotal, prorateAdjustments, prorationFactorFor } from '../sow/prorate-adjustments';
 
 function pad3(n: number): string {
   return String(n).padStart(3, '0');
@@ -187,43 +188,19 @@ export class InvoiceService {
 
     const subtotal = round2(selected.reduce((sum, s) => sum + (Number(s.cost) || 0), 0));
 
-    // Carry the SOW's pricing adjustments onto the invoice.
-    //
-    // Adjustments are fixed dollar amounts against the WHOLE job, but this
-    // invoice may cover only some of its services, and a job can legitimately be
-    // billed across several invoices. Applying the full amount to each would
-    // credit a discount more than once, so prorate by this invoice's share of the
-    // SOW base cost. Every invoice for a job then sums to the SOW total,
-    // independent of how the services were split up or the order of generation.
-    //
-    // Base cost is recomputed from the SOW's own line items rather than trusting
-    // the stored pricing.baseCost, so the ratio can't be skewed by a stale value.
+    // Carry the SOW's pricing adjustments onto the invoice. Base cost is
+    // recomputed from the SOW's own line items rather than trusting the stored
+    // pricing.baseCost, so the ratio can't be skewed by a stale value. See
+    // prorationFactorFor for why the proration happens at all.
     const sowBaseCost = round2(sowServices.reduce((sum: number, s: any) => sum + (Number(s.cost) || 0), 0));
-    const prorationFactor = sowBaseCost > 0 ? Math.min(1, subtotal / sowBaseCost) : 0;
+    const prorationFactor = prorationFactorFor(subtotal, sowBaseCost);
 
     // Same rule as the service lines: the adjustments that were in force with
     // the customer, not whatever the document holds today.
     const rawAdjustments: any[] = active?.inputs?.adjustments ?? (Array.isArray((sow as any).pricing?.adjustments) ? (sow as any).pricing.adjustments : []);
-    const adjustments = rawAdjustments.map((adj: any) => {
-      const type = String(adj?.type ?? '');
-      const amount = Number(adj?.amount) || 0;
-      // Sign matches SOWService.calculateAdjustmentsTotal: DISCOUNT subtracts,
-      // ADDITIONAL_COST adds, SPECIAL_TERM is a note with no monetary effect.
-      const signed = type === 'DISCOUNT' ? -amount : type === 'ADDITIONAL_COST' ? amount : 0;
-      return {
-        type,
-        description: String(adj?.description ?? ''),
-        reason: adj?.reason ? String(adj.reason) : undefined,
-        amount,
-        appliedAmount: round2(signed * prorationFactor),
-        // 4dp, not 2: rounding the factor to cents would show two different
-        // partials as an identical "0.5", and a genuine 0.997 would round to 1
-        // and read as a full-job invoice.
-        prorationFactor: Math.round(prorationFactor * 10000) / 10000
-      };
-    });
+    const adjustments = prorateAdjustments(rawAdjustments, prorationFactor);
 
-    const adjustmentsTotal = round2(adjustments.reduce((sum: number, a: any) => sum + a.appliedAmount, 0));
+    const adjustmentsTotal = appliedAdjustmentsTotal(adjustments);
     // Never invoice a negative amount — an over-large discount floors at zero.
     const totalCost = round2(Math.max(0, subtotal + adjustmentsTotal));
 
