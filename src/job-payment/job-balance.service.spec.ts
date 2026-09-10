@@ -223,6 +223,47 @@ describe('chargeBreakdown', () => {
     expect(breakdown.prorationFactor).toBe(0.4);
     expect(breakdown.adjustments[0].appliedAmount).toBe(-40);
   });
+
+  const EQUIP = 'Plate reader — 10 hrs/wk x 4 wks (estimate; billed on actual hours)';
+
+  it('prorates against the contracted subtotal, not the whole SOW', async () => {
+    const breakdown = await build([], {
+      sowLines: [
+        { description: '', cost: 350 },
+        { description: EQUIP, cost: 150 }
+      ],
+      charges: [charge({ kind: 'SERVICE_LINE', amount: 350, sourceIndex: 0 })],
+      adjustments: [{ type: 'DISCOUNT', amount: 100 }]
+    }).chargeBreakdown('job-1');
+    // Base 350 (not 500) → factor 1 → the whole discount applies.
+    expect(breakdown.prorationFactor).toBe(1);
+    expect(breakdown.adjustmentCharges).toBe(-100);
+  });
+
+  it('saturates the factor at one when a legacy equipment charge is still on the ledger', async () => {
+    const breakdown = await build([], {
+      sowLines: [
+        { description: '', cost: 350 },
+        { description: EQUIP, cost: 150 }
+      ],
+      // The legacy equipment release this run stops making: serviceCharges
+      // 500 over a base of 350.
+      charges: [charge({ kind: 'SERVICE_LINE', amount: 350, sourceIndex: 0 }), charge({ _id: 'c2', kind: 'SERVICE_LINE', amount: 150, sourceIndex: 1 })],
+      adjustments: [{ type: 'DISCOUNT', amount: 100 }]
+    }).chargeBreakdown('job-1');
+    expect(breakdown.prorationFactor).toBe(1);
+    expect(breakdown.adjustmentCharges).toBe(-100);
+  });
+
+  it('applies nothing when the contracted subtotal is zero — an equipment-only job', async () => {
+    const breakdown = await build([], {
+      sowLines: [{ description: EQUIP, cost: 45 }],
+      charges: [charge({ kind: 'SERVICE_LINE', amount: 45, sourceIndex: 0 })],
+      adjustments: [{ type: 'DISCOUNT', amount: 100 }]
+    }).chargeBreakdown('job-1');
+    expect(breakdown.prorationFactor).toBe(0);
+    expect(breakdown.adjustmentCharges).toBe(0);
+  });
 });
 
 describe('the total and the balance', () => {

@@ -9,6 +9,7 @@ import { SOWService } from '../sow/sow.service';
 import { SowVersionService } from '../sow/sow-version.service';
 import { SOWStatus } from '../sow/sow.model';
 import { ProratedAdjustment, appliedAdjustmentsTotal, prorateAdjustments, prorationFactorFor } from '../sow/prorate-adjustments';
+import { splitContractedLines, sumLineCosts } from '../pricing/service-pricing.util';
 
 function round2(n: number): number {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -113,7 +114,11 @@ export class JobBalanceService {
     // rewrites — a figure no document ever stated.
     if (sow && active?.status === SOWStatus.FINAL) {
       const lines = await this.sowService.billableServiceLines(sow);
-      const sowServicesSubtotal = round2(lines.reduce((sum: number, s: any) => sum + (Number(s.cost) || 0), 0));
+      // Contracted only, matching the SOW's own baseCost. Equipment lines are
+      // estimates the lab never bills as a fixed figure, so prorating a discount
+      // against them would apply a fraction of it and leave the rest unapplied on
+      // every statement.
+      const sowServicesSubtotal = sumLineCosts(splitContractedLines(lines as any).contracted);
       prorationFactor = prorationFactorFor(serviceCharges, sowServicesSubtotal);
       adjustments = prorateAdjustments(active.inputs?.adjustments ?? [], prorationFactor);
     }
