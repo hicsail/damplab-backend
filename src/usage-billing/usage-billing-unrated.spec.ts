@@ -72,3 +72,35 @@ describe('generateBilling refuses a booking that has no rate', () => {
     await expect(service.generateBilling({ ownerSub: 'sub-1', bookingIds: ['bk-1'] } as any, 'tech@bu.edu')).resolves.toBeDefined();
   });
 });
+
+/**
+ * `generateBilling` re-fetches bookings by id via `BookingService.getByIds`, which
+ * has no `jobId` filter — the picker and owner list are filtered, but a job-scoped
+ * booking id reaching this mutation by any other path would otherwise be billed
+ * here too, double-billing the same hours to both the job and the walk-up owner.
+ */
+describe('generateBilling refuses a job-scoped booking', () => {
+  it('names the item and points at the job invoice, creating nothing', async () => {
+    const created: any[] = [];
+    const bookingService: any = {
+      getByIds: async (): Promise<any[]> => [booking({ jobId: 'job-1' })],
+      markBilled: async (): Promise<void> => {
+        created.push('markBilled-called');
+      }
+    };
+    const model = (): any => ({
+      create: async (doc: any): Promise<any> => {
+        created.push(doc);
+        return { ...doc, _id: 'new' };
+      },
+      countDocuments: () => ({ exec: async (): Promise<number> => 0 }),
+      findOne: () => ({ sort: () => ({ exec: async (): Promise<any> => null }), exec: async (): Promise<any> => null })
+    });
+    const service = new UsageBillingService(model(), model(), bookingService);
+
+    await expect(service.generateBilling({ ownerSub: 'sub-1', bookingIds: ['bk-1'] } as any, 'tech@bu.edu')).rejects.toThrow(
+      `"Bioanalyzer" is booked against a job and is billed through that job's equipment invoices.`
+    );
+    expect(created).toEqual([]);
+  });
+});

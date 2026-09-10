@@ -55,6 +55,16 @@ export class UsageBillingService {
       if (b.status === BookingStatus.CANCELLED) throw new BadRequestException('A selected booking is cancelled.');
       if (!b.usageConfirmed) throw new BadRequestException(`Usage for "${b.inventoryName}" must be confirmed before billing.`);
       if (b.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException(`"${b.inventoryName}" has already been billed.`);
+      // The picker and the "pick a user" list already exclude job-scoped bookings
+      // (`jobId: null` in `BookingService.findBillableForOwner`/`getBillableOwners`),
+      // but `bookingIds` here is client-supplied and re-fetched by id alone
+      // (`getByIds`, no `jobId` filter) — so this is the actual enforcement point.
+      // A job-scoped booking is billed to the JOB through an equipment invoice on
+      // its own page; billing it here too would double-bill the same hours to two
+      // different parties.
+      if (b.jobId) {
+        throw new BadRequestException(`"${b.inventoryName}" is booked against a job and is billed through that job's equipment invoices.`);
+      }
       // A booking whose rate never resolved has no cost, and `toLineItem` reads
       // `b.cost ?? 0` — so without this it was billed at **$0, silently**. That
       // happens when the owner is in no Keycloak pricing group, or was booked while
