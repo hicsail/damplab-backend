@@ -7,7 +7,7 @@ import { UpdateSOWInput } from './dto/update-sow.input';
 import { JobService } from '../job/job.service';
 import { Job } from '../job/job.model';
 import { DampLabServices } from '../services/damplab-services.services';
-import { calculateServiceCostBreakdown, equipmentLineDescription, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
+import { calculateServiceCostBreakdown, equipmentLineDescription, extractRunCount, splitContractedLines, sumLineCosts, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
 import { SowVersionInputs } from './sow-version.model';
 import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-field-calculator';
@@ -199,8 +199,19 @@ export class SOWService {
     );
   }
 
+  /**
+   * What the document contracts for. Equipment-use lines are excluded: their
+   * figure is an estimate the lab does not bill, so including it here would put
+   * an hours-times-weeks projection into the customer's total and then charge
+   * the actual hours on top of it.
+   */
   private calculateBaseCost(services: SOW['services']): number {
-    return services.reduce((sum, service) => sum + (service.cost ?? 0), 0);
+    return sumLineCosts(splitContractedLines(services).contracted);
+  }
+
+  /** The other half of the same split, stated on the document but in no total. */
+  private calculateEstimatedEquipmentCost(services: SOW['services']): number {
+    return sumLineCosts(splitContractedLines(services).equipment);
   }
 
   private calculateAdjustmentsTotal(adjustments: SOW['pricing']['adjustments']): number {
@@ -463,8 +474,11 @@ export class SOWService {
 
     const baseCost = this.calculateBaseCost(services);
     const totalCost = this.calculateTotalCost(baseCost, adjustments);
+    const estimatedEquipmentCost = this.calculateEstimatedEquipmentCost(services);
 
-    const updated = await this.sowModel.findByIdAndUpdate(sowId, { $set: { pricing: { ...(sow.pricing ?? {}), baseCost, adjustments, totalCost }, updatedAt: new Date() } }, { new: true }).exec();
+    const updated = await this.sowModel
+      .findByIdAndUpdate(sowId, { $set: { pricing: { ...(sow.pricing ?? {}), baseCost, adjustments, totalCost, estimatedEquipmentCost }, updatedAt: new Date() } }, { new: true })
+      .exec();
 
     if (!updated) throw new NotFoundException(`SOW with ID ${sowId} not found`);
     return updated;
@@ -640,6 +654,7 @@ export class SOWService {
     const adjustments = this.transformPricingAdjustments(createSOWInput.pricing.adjustments ?? []);
     const baseCost = this.calculateBaseCost(services);
     const totalCost = this.calculateTotalCost(baseCost, adjustments);
+    const estimatedEquipmentCost = this.calculateEstimatedEquipmentCost(services);
     this.validatePricingConsistency(createSOWInput.pricing, baseCost, totalCost);
 
     // Create SOW document
@@ -666,7 +681,8 @@ export class SOWService {
       pricing: {
         baseCost,
         adjustments,
-        totalCost
+        totalCost,
+        estimatedEquipmentCost
       },
       terms: createSOWInput.terms,
       additionalInformation: createSOWInput.additionalInformation,
@@ -767,6 +783,7 @@ export class SOWService {
         baseCost,
         adjustments,
         totalCost,
+        estimatedEquipmentCost: this.calculateEstimatedEquipmentCost(services),
         discount: sow.pricing.discount
       };
     }

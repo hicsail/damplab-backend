@@ -78,7 +78,9 @@ describe('SOWPricing.discount deprecation — create', () => {
 
     // A new SOW must not acquire a field that has never affected a total.
     expect(created[0].pricing.discount).toBeUndefined();
-    expect(created[0].pricing).toEqual({ baseCost: 1000, adjustments: [], totalCost: 1000 });
+    // estimatedEquipmentCost 0 is Task 2's addition: the single catalog line here
+    // is not an equipment-use line, so nothing is estimated.
+    expect(created[0].pricing).toEqual({ baseCost: 1000, adjustments: [], totalCost: 1000, estimatedEquipmentCost: 0 });
   });
 });
 

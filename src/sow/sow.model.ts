@@ -240,6 +240,14 @@ export class SOWPricing {
   @Field(() => Float, { description: 'Base cost before adjustments' })
   baseCost: number;
 
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description:
+      'Σ cost over equipment-use lines. Information, never money: these are projections, and the lab bills the hours actually booked through the job’s bookings instead. Deliberately NOT part of baseCost or totalCost. Absent on documents written before the split.'
+  })
+  estimatedEquipmentCost?: number;
+
   @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
   @Field(() => [SOWPricingAdjustment], { description: 'List of pricing adjustments' })
   adjustments: SOWPricingAdjustment[];
