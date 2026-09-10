@@ -1,4 +1,4 @@
-import { Field, InputType, ID, Int } from '@nestjs/graphql';
+import { Field, InputType, ID, Int, Float } from '@nestjs/graphql';
 
 /**
  * One SOW service line to release onto the statement now.
@@ -15,6 +15,27 @@ export class ReleaseServiceLineInput {
 
   @Field(() => ID, { description: 'The serviceId expected at that position. The request is refused if it no longer matches.' })
   serviceId: string;
+}
+
+@InputType({ description: 'Request a deposit instead of releasing service lines.' })
+export class InvoiceDepositInput {
+  @Field(() => Float, { description: 'How much to ask for. Must be greater than zero.' })
+  amount: number;
+
+  @Field({ nullable: true, description: 'What the deposit is called on the statement. Defaults to "Deposit".' })
+  label?: string;
+}
+
+@InputType({ description: 'An ad-hoc line to bill on this statement. A negative amount is a discount.' })
+export class InvoiceCustomLineInput {
+  @Field({ description: 'What the line is for. Required.' })
+  label: string;
+
+  @Field(() => Float, { description: 'Signed: negative for a discount. May not be zero.' })
+  amount: number;
+
+  @Field({ nullable: true, description: 'Free text printed under the label.' })
+  note?: string;
 }
 
 @InputType({ description: "Issue a job's statement of account, releasing zero or more SOW service lines onto it" })
@@ -34,4 +55,16 @@ export class CreateInvoiceInput {
 
   @Field({ nullable: true, description: 'When payment is due. Defaults to the issue date plus 30 days when omitted.' })
   dueDate?: Date;
+
+  @Field(() => InvoiceDepositInput, {
+    nullable: true,
+    description: 'Issue this statement as a deposit request. Incompatible with releaseServiceLines and customLines.'
+  })
+  deposit?: InvoiceDepositInput;
+
+  @Field(() => [InvoiceCustomLineInput], {
+    nullable: true,
+    description: 'Ad-hoc lines to add to the ledger and bill on this statement. Each becomes a CUSTOM charge.'
+  })
+  customLines?: InvoiceCustomLineInput[];
 }
