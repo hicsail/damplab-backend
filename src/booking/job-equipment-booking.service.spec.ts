@@ -82,15 +82,20 @@ describe('JobEquipmentBookingService.loadOperations', () => {
 });
 
 describe('JobEquipmentBookingService.view', () => {
-  it('returns SOW_NOT_SIGNED, with the operations read-only and the bookings in place, while the SOW is only SENT', async () => {
-    const view = await build({ sowStatus: 'SENT' }).view('job-1', bookerUser());
+  it('returns SOW_NOT_SIGNED while the SOW is signed but not yet countersigned', async () => {
+    const view = await build({ sowStatus: 'SIGNED' }).view('job-1', bookerUser());
     expect(view.access.status).toBe(JobBookingAccessStatus.SOW_NOT_SIGNED);
     expect(view.operations.map((op) => [op.nodeId, op.canBook])).toEqual([['node-a', false]]);
     expect(view.bookings.map((b: any) => b._id)).toEqual(['bk-1']);
   });
 
+  it('still refuses while the SOW has only been sent', async () => {
+    const view = await build({ sowStatus: 'SENT' }).view('job-1', bookerUser());
+    expect(view.access.status).toBe(JobBookingAccessStatus.SOW_NOT_SIGNED);
+  });
+
   it('keeps listing the bookings while the lab has paused the job', async () => {
-    const view = await build({ sowStatus: 'SIGNED', job: { ...job, bookingBlocked: true, bookingBlockedReason: 'Maintenance' } }).view('job-1', bookerUser());
+    const view = await build({ sowStatus: 'FINAL', job: { ...job, bookingBlocked: true, bookingBlockedReason: 'Maintenance' } }).view('job-1', bookerUser());
     expect(view.access.status).toBe(JobBookingAccessStatus.BLOCKED);
     expect(view.operations[0].canBook).toBe(false);
     expect(view.bookings.map((b: any) => b._id)).toEqual(['bk-1']);
@@ -118,7 +123,7 @@ describe('JobEquipmentBookingService.view', () => {
   });
 
   it('gives jobs:view-all staff the same status, read-only', async () => {
-    const view = await build({ sowStatus: 'SIGNED' }).view('job-1', user({ sub: 'tech', email: 'tech@bu.edu', realm_access: { roles: ['damplab-staff'] } }));
+    const view = await build({ sowStatus: 'FINAL' }).view('job-1', user({ sub: 'tech', email: 'tech@bu.edu', realm_access: { roles: ['damplab-staff'] } }));
     expect(view.access.status).toBe(JobBookingAccessStatus.OPEN);
     expect(view.access.canBook).toBe(false);
     expect(view.operations[0].canBook).toBe(false);
@@ -163,7 +168,7 @@ describe('JobEquipmentBookingService.create', () => {
   const input = { jobId: 'job-1', nodeId: 'node-a', inventoryItemId: 'item-timed', ...slot };
 
   it('hands the booking service the job, the operation and the schedulable item', async () => {
-    const { service, written } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service, written } = buildWithWriter({ sowStatus: 'FINAL' });
     await service.create(input as any, bookerUser() as any);
     expect(written[0]).toMatchObject({ nodeId: 'node-a', nodeLabel: 'Bioanalyzer time' });
     expect(written[0].job._id).toBe('job-1');
@@ -178,17 +183,17 @@ describe('JobEquipmentBookingService.create', () => {
 
   it('refuses with the lab wording while booking is paused', async () => {
     const paused = { ...job, bookingBlocked: true, bookingBlockedReason: 'unpaid invoice' };
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED', job: paused });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL', job: paused });
     await expect(service.create(input as any, bookerUser() as any)).rejects.toThrow('Booking on this job is paused by the lab.');
   });
 
   it('refuses a consumable, which is bookable but not schedulable here', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.create({ ...input, inventoryItemId: 'item-consumable' } as any, bookerUser() as any)).rejects.toThrow(BadRequestException);
   });
 
   it('refuses an operation that is not on this job', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.create({ ...input, nodeId: 'node-zzz' } as any, bookerUser() as any)).rejects.toThrow('That operation is not on this job.');
   });
 });
@@ -264,27 +269,27 @@ describe('JobEquipmentBookingService.assertMayCancel', () => {
   const booking = { _id: 'bk-1', jobId: 'job-1', nodeId: 'node-a', ownerSub: 'creator-sub', createdBySub: 'booker-sub' };
 
   it('lets the job creator cancel', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.assertMayCancel(booking, user({ sub: 'creator-sub', email: 'creator@bu.edu' }) as any)).resolves.toBeUndefined();
   });
 
   it('lets a listed booker of that operation cancel', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'BOOKER@bu.edu' }) as any)).resolves.toBeUndefined();
   });
 
   it('lets whoever made the booking cancel it', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.assertMayCancel(booking, user({ sub: 'booker-sub', email: 'someone@bu.edu' }) as any)).resolves.toBeUndefined();
   });
 
   it('lets jobs:view-all staff cancel', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'tech@bu.edu', realm_access: { roles: ['damplab-staff'] } }) as any)).resolves.toBeUndefined();
   });
 
   it('refuses anyone else', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'nobody@bu.edu' }) as any)).rejects.toThrow('You are not authorized to cancel this booking.');
   });
 
@@ -298,12 +303,12 @@ describe('JobEquipmentBookingService.assertMayCancel', () => {
    * which they deliberately are not here.
    */
   it('lets a caller whose only claim is a client-email match cancel', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.assertMayCancel(booking, user({ sub: 'client-caller', email: '  Client@BU.edu  ' }) as any)).resolves.toBeUndefined();
   });
 
   it('refuses a caller whose email is close to, but does not match, the client email', async () => {
-    const { service } = buildWithWriter({ sowStatus: 'SIGNED' });
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
     await expect(service.assertMayCancel(booking, user({ sub: 'client-caller', email: 'client@bu.edu.evil.com' }) as any)).rejects.toThrow('You are not authorized to cancel this booking.');
   });
 });
@@ -324,7 +329,7 @@ describe('BookingService.updateForJob history', () => {
     const updates: any[] = [];
     const model = {
       findById: () => ({ exec: async () => existing }),
-      findByIdAndUpdate: (_id: string, update: any) => {
+      findByIdAndUpdate: (_id: string, update: any): { exec: () => Promise<any> } => {
         updates.push(update);
         return { exec: async () => ({ ...existing, ...update.$set }) };
       }

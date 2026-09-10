@@ -30,11 +30,17 @@ export interface LoadedOperation {
 }
 
 /**
- * A SOW counts as signed at SIGNED and stays signed at FINAL. Countersigning must
- * not close booking the moment the paperwork completes — see
- * SOWService.findSignedJobIds, which draws the same line for the lab boards.
+ * Booking opens at FINAL — countersigned — and at nothing earlier.
+ *
+ * SIGNED means the client has signed and the lab has not; time booked then is
+ * time booked against a document the lab has not committed to, and the
+ * refusal the customer reads ("signed by both parties") already says FINAL.
+ *
+ * Deliberately NOT the same line SOWService.findSignedJobIds draws: that one
+ * decides what appears on the lab monitor boards, where work in flight must
+ * stay visible from the moment the client signs.
  */
-const SIGNED_STATUSES = new Set(['SIGNED', 'FINAL']);
+const BOOKABLE_SOW_STATUS = 'FINAL';
 
 /**
  * Whether a bookable item can be reserved as a time slot from the job calendar.
@@ -71,7 +77,7 @@ export class JobEquipmentBookingService {
 
   async isSowSigned(jobId: string): Promise<boolean> {
     const sow = await this.sowService.findByJobId(jobId);
-    return !!sow && SIGNED_STATUSES.has(String((sow as any).status));
+    return !!sow && String((sow as any).status) === BOOKABLE_SOW_STATUS;
   }
 
   /**
