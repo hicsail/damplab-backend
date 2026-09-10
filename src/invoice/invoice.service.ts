@@ -12,6 +12,8 @@ import { Role } from '../auth/roles/roles.enum';
 import { selectServiceLines } from './select-service-lines';
 import { invoiceBlockedReason } from '../sow/sow-access';
 import { SOWStatus } from '../sow/sow.model';
+import { JobEquipmentBalanceService } from '../job-payment/job-equipment-balance.service';
+import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 
 function pad3(n: number): string {
   return String(n).padStart(3, '0');
@@ -28,7 +30,9 @@ export class InvoiceService {
     @InjectModel(Invoice.name) private readonly invoiceModel: Model<InvoiceDocument>,
     private readonly jobService: JobService,
     private readonly sowService: SOWService,
-    private readonly sowVersionService: SowVersionService
+    private readonly sowVersionService: SowVersionService,
+    private readonly equipmentBalance: JobEquipmentBalanceService,
+    private readonly notificationDispatch: NotificationDispatchService
   ) {}
 
   async findByJobId(jobId: string): Promise<Invoice[]> {
@@ -223,14 +227,8 @@ export class InvoiceService {
     // Never invoice a negative amount — an over-large discount floors at zero.
     const totalCost = round2(Math.max(0, subtotal + adjustmentsTotal));
 
-    // Generate next invoice number per job: "<jobDisplayId>-<seq>"
-    // Every invoice, voided ones included — unlike countByJobId. A void releases an
-    // invoice's lines but never its number; counting only live ones here would hand
-    // a voided invoice's number to its own replacement.
-    const existingCount = await this.invoiceModel.countDocuments({ jobId: input.jobId }).exec();
-    const seq = existingCount + 1;
     const jobDisplayId = String((job as any).jobId ?? job._id);
-    const invoiceNumber = `${jobDisplayId}-${pad3(seq)}`;
+    const invoiceNumber = await this.nextInvoiceNumber(String((job as any)._id), jobDisplayId);
 
     const createdBy = user.email || user.preferred_username || 'unknown';
 
@@ -286,6 +284,114 @@ export class InvoiceService {
       createdAt: new Date()
     });
 
+    this.announceInvoice(invoice, totalCost, user);
+    return invoice;
+  }
+
+  /**
+   * The next number in the job's `<jobDisplayId>-NNN` series.
+   *
+   * Counts EVERY invoice on the job, voided ones and both kinds included: a
+   * void releases an invoice's lines but never its number, and the two kinds
+   * deliberately share one series so a customer sees one sequence of documents.
+   */
+  private async nextInvoiceNumber(jobId: string, jobDisplayId: string): Promise<string> {
+    const existingCount = await this.invoiceModel.countDocuments({ jobId }).exec();
+    return `${jobDisplayId}-${pad3(existingCount + 1)}`;
+  }
+
+  /**
+   * Tell the job owner an invoice exists and what it asks for. Both kinds, one
+   * event: the customer's question is "what do I owe", not "which generator ran".
+   * Fire-and-forget — NotificationDispatchService never throws.
+   */
+  private announceInvoice(invoice: any, amountDue: number, user: User): void {
+    this.notificationDispatch.dispatch({
+      eventType: 'INVOICE_ISSUED',
+      title: `Invoice ${invoice.invoiceNumber} issued`,
+      message: `Invoice ${invoice.invoiceNumber} for job "${invoice.jobName || invoice.jobDisplayId}" has been issued. Amount due: $${Number(amountDue || 0).toFixed(2)}.`,
+      jobId: String(invoice.jobId),
+      actorSub: user.sub,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined
+    });
+  }
+
+  /**
+   * A running statement of the job's equipment use.
+   *
+   * Not incremental: every equipment invoice lists every confirmed booking on
+   * the job to date and states charges, payments and the balance. Two
+   * consecutive invoices may list the same hours — what changes is the balance,
+   * which is the figure the customer acts on. That is why there is no
+   * "already billed" guard here and why voiding one releases nothing: an
+   * equipment invoice claims no lines.
+   */
+  async createEquipmentInvoice(jobId: string, user: User): Promise<Invoice> {
+    const job: any = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+
+    // One message for "no SOW" and "not countersigned": from the lab's point of
+    // view they are the same fact, and the action that clears both is the same.
+    const countersigned = 'Cannot generate an equipment invoice until the Statement of Work is countersigned.';
+    const sow: any = await this.sowService.findByJobId(jobId);
+    if (!sow) throw new BadRequestException(countersigned);
+    const active = await this.sowVersionService.getActiveVersion(String(sow._id));
+    if (active?.status !== SOWStatus.FINAL) throw new BadRequestException(countersigned);
+
+    const key = String(job._id);
+    const balance = await this.equipmentBalance.balance(key);
+    if (!(balance.chargesToDate > 0 || balance.paymentsToDate > 0)) {
+      throw new BadRequestException('Nothing to invoice yet: no confirmed equipment usage on this job.');
+    }
+
+    // Lines and money come from the same service, so a statement can never list
+    // one set of bookings and total another.
+    const bookings = await this.equipmentBalance.confirmedBookings(key);
+    const equipmentLines = bookings.map((booking: any) => ({
+      bookingId: String(booking._id),
+      itemName: String(booking.inventoryName ?? 'Equipment'),
+      operationLabel: booking.notes ? String(booking.notes) : undefined,
+      startTime: booking.startTime ?? undefined,
+      endTime: booking.endTime ?? undefined,
+      actualHours: booking.actualHours == null ? undefined : Number(booking.actualHours),
+      rate: booking.rateSnapshot == null ? undefined : Number(booking.rateSnapshot),
+      cost: Number(booking.cost) || 0,
+      confirmedAt: booking.usageConfirmedAt ?? undefined
+    }));
+
+    const jobDisplayId = String(job.jobId ?? job._id);
+    const invoiceNumber = await this.nextInvoiceNumber(key, jobDisplayId);
+
+    const invoice = await this.invoiceModel.create({
+      job: job._id,
+      jobId: key,
+      jobDisplayId,
+      jobName: job.name ?? '',
+      invoiceNumber,
+      kind: InvoiceKind.EQUIPMENT,
+      invoiceDate: new Date(),
+      createdBy: user.email || user.preferred_username || 'unknown',
+      services: [],
+      adjustments: [],
+      equipmentLines,
+      subtotal: balance.chargesToDate,
+      paymentsToDate: balance.paymentsToDate,
+      balanceDue: balance.balanceDue,
+      // What is payable NOW, which for a running statement is the balance and
+      // not the charges — the customer must not be asked twice for what they
+      // have already paid.
+      totalCost: balance.balanceDue,
+      billedToName: String(sow.clientName ?? 'Client'),
+      billedToEmail: String(sow.clientEmail ?? ''),
+      billedToAddress: sow.clientAddress ?? undefined,
+      customerCategory: active?.inputs?.customerCategory ?? job.customerCategory ?? undefined,
+      sowVersionNumber: active?.versionNumber ?? undefined,
+      createdAt: new Date()
+    });
+
+    this.announceInvoice(invoice, balance.balanceDue, user);
     return invoice;
   }
 

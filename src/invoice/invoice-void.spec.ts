@@ -65,7 +65,10 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
   };
   const sowVersionService: any = { getActiveVersion: async () => version, listVersions: async (): Promise<any[]> => [version] };
 
-  return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService), created, existing };
+  const balances: any = { balance: async () => ({ jobId: 'job-1', chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 0, unconfirmedBookings: 0 }), confirmedBookings: async () => [] };
+  const dispatch: any = { dispatch: () => undefined };
+
+  return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService, balances, dispatch), created, existing };
 }
 
 /** An invoice as `createForJob` writes one, reduced to what the guard reads. */

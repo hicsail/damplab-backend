@@ -82,7 +82,10 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
     listVersions: async (): Promise<any[]> => opts.versionHistory ?? [activeVersion()].filter(Boolean)
   };
 
-  return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService), created };
+  const balances: any = { balance: async () => ({ jobId: 'job-1', chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 0, unconfirmedBookings: 0 }), confirmedBookings: async () => [] };
+  const dispatch: any = { dispatch: () => undefined };
+
+  return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService, balances, dispatch), created };
 }
 
 describe('an invoice bills a countersigned SOW, or nothing', () => {

@@ -53,6 +53,16 @@ export class InvoiceResolver {
     return this.invoiceService.voidInvoice(invoiceId, reason, user);
   }
 
+  /**
+   * Gated on `billing:write` — unlike `createInvoice`, which still hand-rolls a
+   * `damplab-staff` check inside InvoiceService. Do not add a `@Roles` beside it.
+   */
+  @Mutation(() => Invoice, { description: 'Generate a running equipment invoice for a job: every confirmed booking to date, the payments received, and the balance due.' })
+  @RequirePermission(Permission.BillingWrite)
+  async createEquipmentInvoice(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Invoice> {
+    return this.invoiceService.createEquipmentInvoice(jobId, user);
+  }
+
   @ResolveField(() => Job, { description: 'Job this invoice is associated with' })
   async job(@Parent() invoice: Invoice): Promise<Job | null> {
     return this.jobService.findById((invoice as any).jobId);
