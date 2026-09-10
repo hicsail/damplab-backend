@@ -244,6 +244,10 @@ export class SowVersionInputs {
   baseCost: number;
 
   @Prop({ required: true, default: 0 })
+  @Field(() => Float, { description: 'Σ cost over equipment-use lines, frozen with the rest. Stated on the document; in no total.' })
+  estimatedEquipmentCost: number;
+
+  @Prop({ required: true, default: 0 })
   @Field(() => Float)
   totalCost: number;
 
