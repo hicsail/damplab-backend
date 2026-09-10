@@ -20,6 +20,7 @@ export const CHARGE_MESSAGES = {
   labelRequired: 'A label is required for a charge.',
   amountZero: 'A charge amount cannot be zero.',
   depositNotPositive: 'A deposit must be greater than zero.',
+  depositAfterRelease: 'A deposit cannot be requested once service lines have been released.',
   reasonRequired: 'A reason is required to void a charge.',
   alreadyVoided: 'That charge has already been voided.'
 } as const;

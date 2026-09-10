@@ -108,10 +108,20 @@ export class InvoiceService {
     // is refused here rather than from inside the write loop.
     const deposit = input.deposit ?? null;
     const customLines = input.customLines ?? [];
+    // Fetched here, before the deposit gate, so a deposit can be checked
+    // against the ledger's current SERVICE_LINE charges before anything is
+    // written — and reused below for the release loop's liveIndexes, so the
+    // ledger is read once, not twice.
+    const live = await this.charges.liveByJobId(key);
     if (deposit) {
       if ((input.releaseServiceLines ?? []).length > 0) throw new BadRequestException(DEPOSIT_WITH_RELEASE);
       if (customLines.length > 0) throw new BadRequestException(DEPOSIT_WITH_CUSTOM);
       if (!(round2(deposit.amount) > 0)) throw new BadRequestException(CHARGE_MESSAGES.depositNotPositive);
+      // A deposit already dropped by chargeBreakdown once a service line is
+      // live (see JobBalanceService.chargeBreakdown's depositsDropped) would
+      // otherwise land on the ledger with no statement to show it and no way
+      // to undo it — a released service line never un-releases.
+      if (live.some((c: any) => String(c.kind) === 'SERVICE_LINE')) throw new BadRequestException(CHARGE_MESSAGES.depositAfterRelease);
     }
     for (const line of customLines) {
       if (!String(line.label ?? '').trim()) throw new BadRequestException(CHARGE_MESSAGES.labelRequired);
@@ -125,7 +135,6 @@ export class InvoiceService {
 
     // Release, before the balance is computed: the statement states what the
     // ledger holds AFTER this release, not before it.
-    const live = await this.charges.liveByJobId(key);
     const liveIndexes = new Set<number>(live.filter((c: any) => String(c.kind) === 'SERVICE_LINE' && typeof c.sourceIndex === 'number').map((c: any) => Number(c.sourceIndex)));
     const toRelease: Array<{ serviceId: string; label: string; amount: number; sowVersionNumber?: number; sourceIndex: number }> = [];
     for (const selection of input.releaseServiceLines ?? []) {

@@ -367,6 +367,13 @@ describe('deposit mode', () => {
       'A deposit request cannot carry other lines.'
     );
   });
+
+  it('refuses a deposit once service lines have been released', async () => {
+    const { service, added, created } = harness({ liveCharges: [{ kind: 'SERVICE_LINE', sourceIndex: 0, amount: 350 }] });
+    await expect(service.createForJob({ jobId: 'job-1', deposit: { amount: 500 } } as any, staff)).rejects.toThrow('A deposit cannot be requested once service lines have been released.');
+    expect(added).toHaveLength(0);
+    expect(created).toHaveLength(0);
+  });
 });
 
 describe('custom lines', () => {
