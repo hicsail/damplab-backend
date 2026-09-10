@@ -20,7 +20,9 @@ registerEnumType(InvoiceKind, { name: 'InvoiceKind', description: 'What an invoi
  * agree about a `.lean()` row and a projected one too.
  *
  * Anything unrecognised also reads as SOW — the safe direction, since EQUIPMENT
- * and STATEMENT are what exempts an invoice from the double-billing guard.
+ * is what exempts an invoice from the double-billing guard (see
+ * `InvoiceService.createForJob`'s prior-invoice scan). STATEMENT is not wired
+ * into that guard yet — this task only prepares the model.
  */
 export function invoiceKindOf(invoice: { kind?: string | null } | null | undefined): InvoiceKind {
   const stored = String(invoice?.kind ?? '');

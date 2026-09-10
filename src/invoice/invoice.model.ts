@@ -247,7 +247,9 @@ export class Invoice {
   adjustments: InvoiceAdjustment[];
 
   @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
-  @Field(() => [EquipmentInvoiceLine], { description: 'Confirmed equipment bookings billed on this invoice. Empty on a SOW invoice.' })
+  @Field(() => [EquipmentInvoiceLine], {
+    description: 'Confirmed equipment bookings billed on this invoice. Populated on EQUIPMENT and STATEMENT invoices; empty on a SOW invoice.'
+  })
   equipmentLines: EquipmentInvoiceLine[];
 
   @Prop({ required: false })
