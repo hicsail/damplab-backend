@@ -243,9 +243,12 @@ export class SowVersionInputs {
   @Field(() => Float)
   baseCost: number;
 
-  @Prop({ required: true, default: 0 })
-  @Field(() => Float, { description: 'Σ cost over equipment-use lines, frozen with the rest. Stated on the document; in no total.' })
-  estimatedEquipmentCost: number;
+  // Optional, not required: every version frozen before the equipment-estimate
+  // split has no value here, and a non-null field nulled the whole sowByJobId
+  // query for those SOWs. Readers treat an absent value as 0.
+  @Prop({ default: 0 })
+  @Field(() => Float, { nullable: true, description: 'Σ cost over equipment-use lines, frozen with the rest. Stated on the document; in no total. Absent on versions written before the split.' })
+  estimatedEquipmentCost?: number;
 
   @Prop({ required: true, default: 0 })
   @Field(() => Float)
