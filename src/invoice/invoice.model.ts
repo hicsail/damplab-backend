@@ -272,7 +272,9 @@ export class Invoice {
   customLines: InvoiceCustomLine[];
 
   @Prop({ required: true })
-  @Field(() => Float, { description: 'Amount payable: subtotal plus the applied adjustments.' })
+  @Field(() => Float, {
+    description: 'Amount payable now. On a STATEMENT, the balance due (charges to date minus payments to date). On older invoice kinds, the subtotal plus the applied adjustments.'
+  })
   totalCost: number;
 
   // Billing snapshot (copied from SOW at creation time)

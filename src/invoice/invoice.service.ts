@@ -120,7 +120,14 @@ export class InvoiceService {
     if (toRelease.length > 0) await this.charges.createServiceLineCharges(key, toRelease, user);
 
     const breakdown = await this.balances.chargeBreakdown(key);
-    if (breakdown.chargesToDate <= 0 && breakdown.paymentsToDate <= 0) {
+    // The empty-statement refusal only applies when this call released
+    // nothing new. A SERVICE_LINE charge was just committed above (and cannot
+    // be rolled back through this service), so a zero-priced release with
+    // nothing else on the job must still be allowed through: refusing here
+    // would write the row, then permanently refuse to state it — retrying is
+    // a no-op because the position is already live. A $0 statement documents
+    // the release instead.
+    if (toRelease.length === 0 && breakdown.chargesToDate <= 0 && breakdown.paymentsToDate <= 0) {
       // Hours confirmed against an operation whose service has no price sum to
       // nothing — say that, not "nothing to invoice", or the lab looks for a
       // booking to confirm that is already confirmed.

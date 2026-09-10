@@ -141,6 +141,26 @@ describe('the gates, in order', () => {
     await service.createForJob({ jobId: 'job-1' } as any, staff);
     expect(created[0].balanceDue).toBe(-200);
   });
+
+  it('still refuses "nothing to invoice" when every listed position is already live and the job has zero charges and payments', async () => {
+    // A call that releases nothing new must not bypass the refusal just
+    // because it listed a position — only an actual new release does.
+    const { service } = harness({
+      liveCharges: [{ kind: 'SERVICE_LINE', sourceIndex: 0 }],
+      breakdown: { ...defaultBreakdown({}), chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 0 }
+    });
+    await expect(service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow('Nothing to invoice yet.');
+  });
+
+  it('still names the missing rate when every listed position is already live and hours are confirmed but sum to nothing', async () => {
+    const { service } = harness({
+      liveCharges: [{ kind: 'SERVICE_LINE', sourceIndex: 0 }],
+      breakdown: { ...defaultBreakdown({}), chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 3 }
+    });
+    await expect(service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(
+      "Confirmed usage on this job has no rate. Set a price for the operation's service and confirm the usage again."
+    );
+  });
 });
 
 describe('releasing service lines', () => {
@@ -210,6 +230,48 @@ describe('releasing service lines', () => {
     await service.createForJob({ jobId: 'job-1', releaseServiceLines: [] } as any, staff);
     expect(released).toEqual([]);
     expect(created).toHaveLength(1);
+  });
+
+  it('issues a $0 statement for a zero-priced release with nothing else on the job, instead of refusing after the charge is already committed', async () => {
+    // The SERVICE_LINE row is written before the balance gate runs and cannot
+    // be rolled back here. Refusing this statement would leave the row live
+    // and the job permanently un-issuable: retrying resends the same
+    // already-live position, so `toRelease` would be empty on every later
+    // attempt.
+    const { service, created, released } = harness({
+      billableLines: [{ serviceId: 's1', name: 'Free Consult', description: '', cost: 0, category: 'Consulting' }],
+      breakdown: {
+        ...defaultBreakdown({}),
+        serviceLines: [{ _id: 'c1', serviceId: 's1', label: 'Free Consult', amount: 0, sourceIndex: 0 }],
+        chargesToDate: 0,
+        paymentsToDate: 0,
+        balanceDue: 0,
+        confirmedHours: 0
+      }
+    });
+    await service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 0, serviceId: 's1' }] } as any, staff);
+    expect(released).toEqual([{ serviceId: 's1', label: 'Free Consult', amount: 0, sowVersionNumber: 1000, sourceIndex: 0 }]);
+    expect(created[0]).toMatchObject({ kind: 'STATEMENT', subtotal: 0, totalCost: 0, balanceDue: 0 });
+    expect(created[0].services.map((s: any) => s.serviceId)).toEqual(['s1']);
+  });
+
+  it('issues the statement when a release lands against a discount that cancels it to zero charges', async () => {
+    // Same shape, discount flavour: a −350 adjustment against a 350 release
+    // nets chargesToDate to 0, but a new line was still released this call.
+    const { service, created, released } = harness({
+      breakdown: {
+        ...defaultBreakdown({}),
+        serviceLines: [{ _id: 'c1', serviceId: 's1', label: 'PCR', amount: 350, sourceIndex: 0 }],
+        adjustments: [{ type: 'DISCOUNT', description: 'Full waiver', reason: undefined, amount: 350, appliedAmount: -350, prorationFactor: 1 }],
+        chargesToDate: 0,
+        paymentsToDate: 0,
+        balanceDue: 0,
+        confirmedHours: 0
+      }
+    });
+    await service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 0, serviceId: 's1' }] } as any, staff);
+    expect(released).toEqual([{ serviceId: 's1', label: 'PCR', amount: 350, sowVersionNumber: 1000, sourceIndex: 0 }]);
+    expect(created[0]).toMatchObject({ kind: 'STATEMENT', subtotal: 0, totalCost: 0, balanceDue: 0 });
   });
 });
 
