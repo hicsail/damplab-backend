@@ -1,6 +1,6 @@
 import { Field, Float, ID, InputType } from '@nestjs/graphql';
 
-@InputType({ description: 'Record a payment received against a job.' })
+@InputType({ description: 'Record a payment received against a job. Payments belong to the job, never to one invoice: every invoice version restates them.' })
 export class RecordJobPaymentInput {
   @Field(() => ID, { description: 'Job Mongo _id.' })
   jobId: string;
@@ -16,7 +16,4 @@ export class RecordJobPaymentInput {
 
   @Field({ nullable: true, description: 'Free-text note.' })
   note?: string;
-
-  @Field(() => ID, { nullable: true, description: 'The invoice this payment settles, if any. Must belong to the same job and be live (not voided).' })
-  invoiceId?: string;
 }

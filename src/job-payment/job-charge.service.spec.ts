@@ -87,9 +87,32 @@ describe('addCharge', () => {
     expect((charge as any).note).toBeUndefined();
   });
 
-  it('refuses a deposit once a service line has been released on the job', async () => {
-    const { service } = harness([{ _id: 'chg-1', jobId: 'job-1', kind: 'SERVICE_LINE', label: 'PCR', amount: 350, sourceIndex: 0 }]);
-    await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.DEPOSIT, label: 'Deposit', amount: 500 }, staff)).rejects.toThrow(CHARGE_MESSAGES.depositAfterRelease);
+  it('requires a due date on a deposit', async () => {
+    const { service } = harness();
+    await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.DEPOSIT, label: 'Deposit', amount: 500 }, staff)).rejects.toThrow(CHARGE_MESSAGES.depositDueDateRequired);
+  });
+
+  it('stores the deposit with its due date', async () => {
+    const { service } = harness();
+    const due = new Date('2026-10-01T12:00:00Z');
+    const charge: any = await service.addCharge({ jobId: 'job-1', kind: JobChargeKind.DEPOSIT, label: 'Deposit', amount: 500, dueDate: due }, staff);
+    expect(charge).toMatchObject({ kind: 'DEPOSIT', amount: 500, dueDate: due });
+  });
+
+  it('refuses a second deposit while one stands on the job', async () => {
+    const { service } = harness([{ _id: 'chg-1', jobId: 'job-1', kind: 'DEPOSIT', label: 'Deposit', amount: 300 }]);
+    await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.DEPOSIT, label: 'Deposit', amount: 500, dueDate: new Date() }, staff)).rejects.toThrow(CHARGE_MESSAGES.depositExists);
+  });
+
+  it('allows a new deposit once the old one is voided', async () => {
+    const { service } = harness([{ _id: 'chg-1', jobId: 'job-1', kind: 'DEPOSIT', label: 'Deposit', amount: 300, voidedAt: new Date() }]);
+    await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.DEPOSIT, label: 'Deposit', amount: 500, dueDate: new Date() }, staff)).resolves.toBeDefined();
+  });
+
+  it('never stores a due date on a custom line', async () => {
+    const { service } = harness();
+    const charge: any = await service.addCharge({ jobId: 'job-1', kind: JobChargeKind.CUSTOM, label: 'Courier', amount: 25, dueDate: new Date() }, staff);
+    expect(charge.dueDate).toBeUndefined();
   });
 
   it('refuses with the exact shared messages', async () => {
@@ -97,21 +120,6 @@ describe('addCharge', () => {
     await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.CUSTOM, label: '  ', amount: 5 } as any, staff)).rejects.toThrow(CHARGE_MESSAGES.labelRequired);
     await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.CUSTOM, label: 'x', amount: 0 } as any, staff)).rejects.toThrow(CHARGE_MESSAGES.amountZero);
     await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.DEPOSIT, label: 'x', amount: 0 } as any, staff)).rejects.toThrow(CHARGE_MESSAGES.depositNotPositive);
-  });
-});
-
-describe('createServiceLineCharges', () => {
-  it('writes one charge per row, carrying the position and the version', async () => {
-    const { service } = harness();
-    const created = await service.createServiceLineCharges('job-1', [{ serviceId: 's1', label: 'PCR', amount: 350, sowVersionNumber: 1000, sourceIndex: 0 }], staff);
-    expect(created).toHaveLength(1);
-    expect(created[0]).toMatchObject({ kind: 'SERVICE_LINE', serviceId: 's1', label: 'PCR', amount: 350, sowVersionNumber: 1000, sourceIndex: 0 });
-  });
-
-  it('writes nothing for an empty list rather than touching the collection', async () => {
-    const { service, rows } = harness();
-    await service.createServiceLineCharges('job-1', [], staff);
-    expect(rows).toHaveLength(0);
   });
 });
 

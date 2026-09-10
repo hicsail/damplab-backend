@@ -5,11 +5,12 @@ import { Field, Float, ID, Int, ObjectType, registerEnumType } from '@nestjs/gra
 /**
  * What a job charge is.
  *
- * `SERVICE_LINE` is written only by invoice generation, releasing one SOW
- * position at the cost that stood when it was released — see `JobChargeService`.
- * `CUSTOM` is a free-text line staff add by hand (a courier fee, a discount —
- * may be negative). `DEPOSIT` is money owed up front, before any service line
- * has been released.
+ * `CUSTOM` is a free-text line staff add by hand (a courier fee, or a discount —
+ * may be negative). `DEPOSIT` is money asked for up front, by its own due date:
+ * it is the first slice of the invoice total, never added to it, and at most one
+ * stands per job. `SERVICE_LINE` is legacy — the retired release-by-line
+ * invoicing wrote it, and nothing reads or writes it now; it stays in the enum
+ * so those rows still load.
  */
 export enum JobChargeKind {
   SERVICE_LINE = 'SERVICE_LINE',
@@ -20,14 +21,14 @@ export enum JobChargeKind {
 registerEnumType(JobChargeKind, { name: 'JobChargeKind', description: 'What a job charge is.' });
 
 /**
- * The whole charge ledger for a job: released SOW service lines, prorated
- * adjustments, confirmed equipment usage, custom lines and deposits, all as
- * one append-only record.
+ * The charges a job carries beyond its Statement of Work and its bookings:
+ * custom lines and the deposit, as one append-only record the job's invoice
+ * restates on every version.
  *
  * A ledger of its own rather than a field on the Job document, because the
  * job document is versioned and restorable — a billing ledger must never roll
  * back with it. A charge that turns out to be wrong is voided, never deleted,
- * so the running statement can always explain why the balance moved.
+ * so the invoice history can always explain why the total moved.
  */
 @Schema({ collection: 'jobcharges' })
 @ObjectType({ description: 'A charge against a job. Voided charges are kept and excluded from the balance.' })
@@ -44,31 +45,31 @@ export class JobCharge {
   kind: JobChargeKind;
 
   @Prop({ required: true })
-  @Field({ description: 'What the charge is for, shown on the statement.' })
+  @Field({ description: 'What the charge is for, shown on the invoice.' })
   label: string;
 
   @Prop({ required: false })
-  @Field({ nullable: true, description: 'Free text shown under the label on the statement. Absent on charges added without one.' })
+  @Field({ nullable: true, description: 'Free text shown under the label on the invoice. Absent on charges added without one.' })
   note?: string;
 
   @Prop({ required: true })
-  @Field(() => Float, { description: 'Amount of the charge. CUSTOM may be negative; SERVICE_LINE and DEPOSIT must be positive.' })
+  @Field(() => Float, { description: 'Amount of the charge. CUSTOM may be negative (a discount); DEPOSIT must be positive.' })
   amount: number;
 
   @Prop({ required: false })
-  @Field(() => ID, { nullable: true, description: 'The SOW service this line was released from. Set only on SERVICE_LINE charges.' })
+  @Field({ nullable: true, description: 'When a DEPOSIT is due. Set only on DEPOSIT charges.' })
+  dueDate?: Date;
+
+  @Prop({ required: false })
+  @Field(() => ID, { nullable: true, description: 'Legacy: the SOW service a SERVICE_LINE charge was released from.' })
   serviceId?: string;
 
   @Prop({ required: false })
-  @Field(() => Int, { nullable: true, description: "The SOW version's versionNumber this line was released at, kept for provenance only. Set only on SERVICE_LINE charges." })
+  @Field(() => Int, { nullable: true, description: 'Legacy: the SOW version a SERVICE_LINE charge was released at.' })
   sowVersionNumber?: number;
 
   @Prop({ required: false })
-  @Field(() => Int, {
-    nullable: true,
-    description:
-      "The line's position within the SOW's billable services. The release ledger is keyed on this, within the job, not on the version — a released line keeps the amount it was released at forever. Set only on SERVICE_LINE charges."
-  })
+  @Field(() => Int, { nullable: true, description: "Legacy: a SERVICE_LINE charge's position within the SOW's billable services." })
   sourceIndex?: number;
 
   @Prop({ required: true })

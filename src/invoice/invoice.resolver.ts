@@ -1,7 +1,7 @@
-import { Resolver, Query, Mutation, Args, ID, ResolveField, Parent } from '@nestjs/graphql';
+import { Resolver, Query, Mutation, Args, ID, Int, ResolveField, Parent } from '@nestjs/graphql';
 import { UseGuards, ForbiddenException } from '@nestjs/common';
 import { Invoice } from './invoice.model';
-import { InvoiceKind, invoiceKindOf } from './invoice-kind';
+import { InvoiceKind, InvoiceStatus, invoiceKindOf, invoiceStatusFromDocument, invoiceVersionOf, paidStatus } from './invoice-kind';
 import { InvoiceService } from './invoice.service';
 import { CreateInvoiceInput } from './dto/create-invoice.input';
 import { AuthRolesGuard } from '../auth/auth.guard';
@@ -12,13 +12,14 @@ import { JobService } from '../job/job.service';
 import { Role } from '../auth/roles/roles.enum';
 import { RequirePermission } from '../auth/permissions/permissions.decorator';
 import { Permission } from '../auth/permissions/permission.enum';
+import { JobPaymentService } from '../job-payment/job-payment.service';
 
 @Resolver(() => Invoice)
 @UseGuards(AuthRolesGuard)
 export class InvoiceResolver {
-  constructor(private readonly invoiceService: InvoiceService, private readonly jobService: JobService) {}
+  constructor(private readonly invoiceService: InvoiceService, private readonly jobService: JobService, private readonly payments: JobPaymentService) {}
 
-  @Query(() => [Invoice], { description: 'List invoices generated for a job. Staff can view any; clients can view their own.' })
+  @Query(() => [Invoice], { description: "A job's invoices, newest first: the current version and its history. Staff can view any; clients can view their own." })
   async invoicesByJobId(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Invoice[]> {
     const job = await this.jobService.findById(jobId);
     if (!job) return [];
@@ -33,16 +34,15 @@ export class InvoiceResolver {
     return this.invoiceService.findByJobId(jobId);
   }
 
-  @Mutation(() => Invoice, { description: 'Staff-only. Issue a statement of everything this job has been charged, less what it has paid.' })
+  @Mutation(() => Invoice, { description: "Staff-only. Issue a new version of the job's invoice, superseding the previous one." })
   async createInvoice(@Args('input', { type: () => CreateInvoiceInput }) input: CreateInvoiceInput, @CurrentUser() user: User): Promise<Invoice> {
     return this.invoiceService.createForJob(input, user);
   }
 
   /**
-   * Void an invoice, keeping the record. This changes nothing on the job's
-   * charge ledger — a statement's service lines live there, not on the
-   * invoice, and holding a line back is voiding its charge, a separate act on
-   * `JobChargeService`.
+   * Void the job's current invoice, keeping the record — for a job that was
+   * cancelled or changed. Nothing else moves: the job's charges and payments
+   * stay, and the next version restates them.
    *
    * Gated on `billing:write` rather than on the bare `damplab-staff` check
    * `createForJob` still hand-rolls: a void reverses a financial record, so it sits
@@ -50,7 +50,7 @@ export class InvoiceResolver {
    * evaluates both, and a leftover `@Roles` re-denies everyone the permission was
    * meant to admit.
    */
-  @Mutation(() => Invoice, { description: 'Void an invoice. The record is kept and renumbering never happens; this changes nothing on the charge ledger.' })
+  @Mutation(() => Invoice, { description: "Void the job's current invoice. The record is kept and renumbering never happens." })
   @RequirePermission(Permission.BillingWrite)
   async voidInvoice(@Args('invoiceId', { type: () => ID }) invoiceId: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<Invoice> {
     return this.invoiceService.voidInvoice(invoiceId, reason, user);
@@ -71,5 +71,25 @@ export class InvoiceResolver {
   @ResolveField(() => InvoiceKind, { description: 'What this invoice bills. Invoices written before equipment invoicing read as SOW.' })
   kind(@Parent() invoice: Invoice): InvoiceKind {
     return invoiceKindOf(invoice as any);
+  }
+
+  /**
+   * Derived, never stored: PAID has to follow payments recorded after the
+   * invoice was issued. Void and superseded are decided from the document, so
+   * only the current invoice costs a payments read.
+   */
+  @ResolveField(() => InvoiceStatus, {
+    description: 'ISSUED, PAID, SUPERSEDED or VOID. PAID only for the current invoice, once the payments recorded on the job cover its charges.'
+  })
+  async status(@Parent() invoice: Invoice): Promise<InvoiceStatus> {
+    const fromDocument = invoiceStatusFromDocument(invoice as any);
+    if (fromDocument) return fromDocument;
+    const paid = await this.payments.paymentsToDate(String((invoice as any).jobId));
+    return paidStatus(Number((invoice as any).subtotal) || 0, paid);
+  }
+
+  @ResolveField(() => Int, { nullable: true, description: "Which version of the job's invoice this is. Read off the invoice number on documents issued before versioning." })
+  versionNumber(@Parent() invoice: Invoice): number | null {
+    return invoiceVersionOf(invoice as any);
   }
 }

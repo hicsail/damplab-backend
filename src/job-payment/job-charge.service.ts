@@ -12,26 +12,48 @@ function round2(n: number): number {
 }
 
 /**
- * Charge refusal messages shared with InvoiceService, so a customer sees the
- * same wording whether the refusal came from adding a charge directly or from
- * generating a statement.
+ * Charge refusal messages shared with InvoiceService, so staff see the same
+ * wording whether the refusal came from adding a charge directly or from
+ * issuing an invoice.
  */
 export const CHARGE_MESSAGES = {
   labelRequired: 'A label is required for a charge.',
   amountZero: 'A charge amount cannot be zero.',
   depositNotPositive: 'A deposit must be greater than zero.',
-  depositAfterRelease: 'A deposit cannot be requested once service lines have been released.',
+  depositDueDateRequired: 'A deposit needs a due date.',
+  depositExists: 'This job already has a deposit. Void it before setting a new one.',
   reasonRequired: 'A reason is required to void a charge.',
   alreadyVoided: 'That charge has already been voided.'
 } as const;
+
+/**
+ * Why a charge input would be refused, or null when it is fine — everything
+ * that can be decided without reading the database.
+ *
+ * Exported so InvoiceService can check every line an invoice adds before it
+ * writes the first one: charges have no rollback, so a bad third line must not
+ * leave the first two on the job.
+ */
+export function chargeInputError(input: { kind: JobChargeKind | string; label?: string | null; amount?: number | null; dueDate?: Date | string | null }): string | null {
+  if (!String(input.label ?? '').trim()) return CHARGE_MESSAGES.labelRequired;
+  const amount = round2(input.amount as number);
+  if (input.kind === JobChargeKind.DEPOSIT) {
+    if (!(amount > 0)) return CHARGE_MESSAGES.depositNotPositive;
+    const due = input.dueDate ? new Date(input.dueDate) : null;
+    if (!due || Number.isNaN(due.getTime())) return CHARGE_MESSAGES.depositDueDateRequired;
+  } else if (input.kind === JobChargeKind.CUSTOM) {
+    if (amount === 0) return CHARGE_MESSAGES.amountZero;
+  }
+  return null;
+}
 
 @Injectable()
 export class JobChargeService {
   constructor(@InjectModel(JobCharge.name) private readonly model: Model<JobChargeDocument>, @Inject(forwardRef(() => JobService)) private readonly jobService: JobService) {}
 
   /**
-   * Every charge ever added to the job, voided ones included — the statement
-   * shows those struck through with their reason, because a balance that moved
+   * Every charge ever added to the job, voided ones included — the job page
+   * shows those struck through with their reason, because a total that moved
    * has to be explicable. Newest added first, matching the model's index on
    * { jobId: 1, addedAt: -1 }.
    */
@@ -39,34 +61,21 @@ export class JobChargeService {
     return this.model.find({ jobId }).sort({ addedAt: -1 }).exec();
   }
 
-  /** Live charges only — what the running balance is computed from. */
+  /** Live charges only — what the balance is computed from. */
   async liveByJobId(jobId: string): Promise<JobCharge[]> {
     return this.model.find({ jobId, voidedAt: null }).exec();
   }
 
   async addCharge(input: AddJobChargeInput, user: User): Promise<JobCharge> {
-    const label = String(input.label ?? '').trim();
-    if (!label) {
-      throw new BadRequestException(CHARGE_MESSAGES.labelRequired);
+    const refusal = chargeInputError(input);
+    if (refusal) {
+      throw new BadRequestException(refusal);
     }
 
-    const note = String(input.note ?? '').trim();
-
-    const amount = round2(input.amount);
-    if (input.kind === JobChargeKind.DEPOSIT) {
-      if (!(amount > 0)) {
-        throw new BadRequestException(CHARGE_MESSAGES.depositNotPositive);
-      }
-    } else if (input.kind === JobChargeKind.CUSTOM) {
-      if (amount === 0) {
-        throw new BadRequestException(CHARGE_MESSAGES.amountZero);
-      }
-    }
-
-    // SERVICE_LINE charges are written only by createServiceLineCharges, below,
-    // which invoice generation calls once it has decided what to release.
+    // SERVICE_LINE belongs to the retired release-by-line invoicing. Services
+    // come from the countersigned Statement of Work now, never from a charge.
     if (String(input.kind) === JobChargeKind.SERVICE_LINE) {
-      throw new BadRequestException('Service lines are released by generating an invoice, not added by hand.');
+      throw new BadRequestException('Service lines come from the Statement of Work, not from charges.');
     }
 
     const job: any = await this.jobService.findById(String(input.jobId));
@@ -74,69 +83,34 @@ export class JobChargeService {
       throw new NotFoundException(`Job with ID ${input.jobId} not found`);
     }
 
-    // A deposit is dropped by JobBalanceService.chargeBreakdown once any
-    // service line on the job is live (see depositsDropped there), so writing
-    // one past that point would land on the ledger with no statement to show
-    // it and no way to undo it — a released service line never un-releases.
-    // InvoiceService checks this up front, before its own release loop runs,
-    // for ordering; this is the same refusal for every other caller of
-    // addCharge, direct or not.
+    // One deposit per job: the invoice asks for "the deposit" by its own due
+    // date, and two would leave it unclear which date governs. Changing it is
+    // voiding the old one first, which keeps the reason on the record.
     if (input.kind === JobChargeKind.DEPOSIT) {
       const live = await this.liveByJobId(String(job._id));
-      if (live.some((c: any) => String(c.kind) === 'SERVICE_LINE')) {
-        throw new BadRequestException(CHARGE_MESSAGES.depositAfterRelease);
+      if (live.some((c: any) => String(c.kind) === JobChargeKind.DEPOSIT)) {
+        throw new BadRequestException(CHARGE_MESSAGES.depositExists);
       }
     }
 
+    const note = String(input.note ?? '').trim();
     return this.model.create({
       // String(job._id), not the argument: the same key Booking.jobId and
       // SOW.jobId use, so the balance query joins on one value.
       jobId: String(job._id),
       kind: input.kind,
-      label,
-      amount,
+      label: String(input.label).trim(),
+      amount: round2(input.amount),
       addedBy: user.email || user.preferred_username || 'unknown',
       addedAt: new Date(),
+      ...(input.kind === JobChargeKind.DEPOSIT ? { dueDate: new Date(input.dueDate as Date) } : {}),
       ...(note ? { note } : {})
     });
   }
 
   /**
-   * Writes one SERVICE_LINE charge per row. Called only by invoice generation,
-   * after it has already decided which positions are newly being released —
-   * this method does no release-ledger bookkeeping of its own. The "a position
-   * with a live SERVICE_LINE is a no-op, never a duplicate" rule lives with
-   * that caller, which needs the live set anyway to make that decision.
-   */
-  async createServiceLineCharges(
-    jobId: string,
-    rows: ReadonlyArray<{ serviceId: string; label: string; amount: number; sowVersionNumber?: number; sourceIndex: number }>,
-    user: User
-  ): Promise<JobCharge[]> {
-    if (rows.length === 0) {
-      return [];
-    }
-
-    const addedBy = user.email || user.preferred_username || 'unknown';
-    const addedAt = new Date();
-    return this.model.insertMany(
-      rows.map((row) => ({
-        jobId,
-        kind: JobChargeKind.SERVICE_LINE,
-        label: row.label,
-        amount: round2(row.amount),
-        serviceId: row.serviceId,
-        sowVersionNumber: row.sowVersionNumber,
-        sourceIndex: row.sourceIndex,
-        addedBy,
-        addedAt
-      }))
-    );
-  }
-
-  /**
    * Void, never delete: the ledger is the explanation for every move in the
-   * balance. Mirrors JobPaymentService.voidPayment exactly, including the
+   * total. Mirrors JobPaymentService.voidPayment exactly, including the
    * findOneAndUpdate({ _id, voidedAt: null }) conditional so two staff voiding
    * at once cannot overwrite each other's reason.
    */

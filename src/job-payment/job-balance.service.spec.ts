@@ -1,6 +1,5 @@
 import { JobBalanceService } from './job-balance.service';
 
-const hour = 3_600_000;
 const at = (iso: string): Date => new Date(iso);
 
 const booking = (over: any = {}): any => ({
@@ -18,6 +17,8 @@ const booking = (over: any = {}): any => ({
 
 const charge = (over: any = {}): any => ({ _id: 'chg-1', jobId: 'job-1', kind: 'CUSTOM', label: 'Courier', amount: 25, addedAt: at('2026-03-01T00:00:00Z'), ...over });
 
+const EQUIP = 'Plate reader — 10 hrs/wk x 4 wks (estimate; billed on actual hours)';
+
 const build = (bookings: any[], opts: { paid?: number; charges?: any[]; sowLines?: any[]; adjustments?: any[]; hasSow?: boolean; activeStatus?: string | null } = {}): JobBalanceService => {
   const status = opts.activeStatus === undefined ? 'FINAL' : opts.activeStatus;
   const active = status === null ? null : { versionNumber: 1000, status, inputs: { services: opts.sowLines, adjustments: opts.adjustments ?? [] } };
@@ -29,80 +30,71 @@ const build = (bookings: any[], opts: { paid?: number; charges?: any[]; sowLines
       findByJobId: async () => (opts.hasSow === false ? null : { _id: 'sow-1' }),
       billableServiceLines: async () =>
         opts.sowLines ?? [
-          { serviceId: 's1', cost: 400 },
-          { serviceId: 's2', cost: 600 }
+          { serviceId: 's1', name: 'PCR', description: '', cost: 400 },
+          { serviceId: 's2', name: 'Gel', description: '', cost: 600 }
         ]
     } as any,
     { getActiveVersion: async () => active } as any
   );
 };
 
+/** A job with no SOW, so a test about bookings or charges reads only those. */
+const noSow = { hasSow: false };
+
 describe('JobBalanceService.balance — equipment charges', () => {
   it('sums the stored cost of confirmed, non-cancelled bookings', async () => {
-    const result = await build([booking(), booking({ _id: 'bk-2', cost: 120 })]).balance('job-1');
+    const result = await build([booking(), booking({ _id: 'bk-2', cost: 120 })], noSow).balance('job-1');
     expect(result.equipmentCharges).toBe(200);
   });
 
   it('never recomputes cost from hours x rate — the stored figure is what confirmUsage wrote', async () => {
-    // rateSnapshot x actualHours would be 200; the stored cost is what counts.
-    const result = await build([booking({ actualHours: 5, rateSnapshot: 40, cost: 80 })]).balance('job-1');
+    const result = await build([booking({ actualHours: 5, rateSnapshot: 40, cost: 80 })], noSow).balance('job-1');
     expect(result.equipmentCharges).toBe(80);
   });
 
   it('ignores cancelled and unconfirmed bookings, and counts the unconfirmed ones', async () => {
-    const result = await build([
-      booking(),
-      booking({ _id: 'bk-2', status: 'CANCELLED', cost: 500 }),
-      booking({ _id: 'bk-3', usageConfirmed: false, cost: 300 }),
-      booking({ _id: 'bk-4', usageConfirmed: false, cost: 300 })
-    ]).balance('job-1');
+    const result = await build(
+      [booking(), booking({ _id: 'bk-2', status: 'CANCELLED', cost: 500 }), booking({ _id: 'bk-3', usageConfirmed: false, cost: 300 }), booking({ _id: 'bk-4', usageConfirmed: false, cost: 300 })],
+      noSow
+    ).balance('job-1');
     expect(result.equipmentCharges).toBe(80);
     expect(result.unconfirmedBookings).toBe(2);
   });
 
   it('does not count a cancelled booking as unconfirmed work outstanding', async () => {
-    const result = await build([booking({ status: 'CANCELLED', usageConfirmed: false })]).balance('job-1');
+    const result = await build([booking({ status: 'CANCELLED', usageConfirmed: false })], noSow).balance('job-1');
     expect(result.unconfirmedBookings).toBe(0);
   });
 
   it('falls back to the slot length when a confirmed booking carries no actualHours', async () => {
-    const result = await build([booking({ actualHours: undefined, startTime: at('2026-03-01T09:00:00Z'), endTime: at('2026-03-01T12:30:00Z') })]).balance('job-1');
+    const result = await build([booking({ actualHours: undefined, startTime: at('2026-03-01T09:00:00Z'), endTime: at('2026-03-01T12:30:00Z') })], noSow).balance('job-1');
     expect(result.confirmedHours).toBe(3.5);
   });
 
   it('sums confirmed hours across bookings', async () => {
-    const result = await build([booking(), booking({ _id: 'bk-2', actualHours: 1.25 })]).balance('job-1');
-    expect(result.confirmedHours).toBe(3.25);
-  });
-
-  it('subtracts payments and reports the balance due', async () => {
-    const result = await build([booking()], { paid: 30 }).balance('job-1');
-    expect(result).toMatchObject({ equipmentCharges: 80, paymentsToDate: 30, balanceDue: 50 });
-  });
-
-  it('reports a negative balance as a credit rather than flooring at zero', async () => {
-    const result = await build([booking()], { paid: 100 }).balance('job-1');
-    expect(result.balanceDue).toBe(-20);
+    const result = await build([booking(), booking({ _id: 'bk-2', actualHours: 1.5 })], noSow).balance('job-1');
+    expect(result.confirmedHours).toBe(3.5);
   });
 
   it('rounds every figure to cents', async () => {
-    const result = await build([booking({ cost: 10.005 }), booking({ _id: 'bk-2', cost: 0.001 })], { paid: 0.004 }).balance('job-1');
+    const result = await build([booking({ cost: 10.005 }), booking({ _id: 'bk-2', cost: 0.001 })], { ...noSow, paid: 0.004 }).balance('job-1');
     expect(result.equipmentCharges).toBe(10.01);
   });
 
   it('reports zeroes for a job with nothing on it', async () => {
-    const result = await build([]).balance('job-1');
+    const result = await build([], noSow).balance('job-1');
     expect(result).toEqual({
       jobId: 'job-1',
       serviceCharges: 0,
       adjustmentCharges: 0,
       equipmentCharges: 0,
       customCharges: 0,
-      depositCharges: 0,
-      depositsDropped: false,
       chargesToDate: 0,
       paymentsToDate: 0,
       balanceDue: 0,
+      depositAmount: null,
+      depositDueDate: null,
+      depositOutstanding: 0,
       confirmedHours: 0,
       unconfirmedBookings: 0
     });
@@ -121,165 +113,123 @@ describe('JobBalanceService.confirmedBookings', () => {
   });
 });
 
-describe('the charge ledger', () => {
-  it('sums live SERVICE_LINE charges into serviceCharges', async () => {
-    const result = await build([], { charges: [charge({ kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 }), charge({ _id: 'c2', kind: 'SERVICE_LINE', amount: 600, sourceIndex: 1 })] }).balance(
-      'job-1'
-    );
-    expect(result.serviceCharges).toBe(1000);
+describe('services and adjustments', () => {
+  it("bills the countersigned version's contracted lines in full, keeping their positions", async () => {
+    const breakdown = await build([]).chargeBreakdown('job-1');
+    expect(breakdown.serviceCharges).toBe(1000);
+    expect(breakdown.serviceLines.map((s) => s.sourceIndex)).toEqual([0, 1]);
+    expect(breakdown.sowVersionNumber).toBe(1000);
   });
 
-  it('lets a CUSTOM charge be negative', async () => {
-    const result = await build([], { charges: [charge({ amount: -30 })] }).balance('job-1');
-    expect(result.customCharges).toBe(-30);
-    expect(result.chargesToDate).toBe(-30);
-  });
-
-  it('prorates the SOW adjustments by the released share', async () => {
-    // 400 of a 1000 SOW released, a $100 discount → -$40 applied.
-    const result = await build([], {
-      charges: [charge({ kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 })],
-      adjustments: [{ type: 'DISCOUNT', description: 'Academic', amount: 100 }]
-    }).balance('job-1');
-    expect(result.adjustmentCharges).toBe(-40);
-    expect(result.chargesToDate).toBe(360);
-  });
-
-  it('applies no adjustment while nothing has been released', async () => {
-    const result = await build([], { adjustments: [{ type: 'DISCOUNT', description: 'Academic', amount: 100 }] }).balance('job-1');
-    expect(result.adjustmentCharges).toBe(0);
-  });
-
-  it('applies no adjustment when the job has no SOW at all', async () => {
-    const result = await build([], { hasSow: false, charges: [charge({ kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 })] }).balance('job-1');
-    expect(result.adjustmentCharges).toBe(0);
-    expect(result.serviceCharges).toBe(400);
-  });
-
-  it.each([['SENT'], ['SIGNED'], ['DRAFT'], ['CANCELLED'], [null]])('applies no adjustment when the version in force is %s rather than countersigned', async (activeStatus) => {
-    // A withdrawn SOW zeroes the pointer and getActiveVersion answers null. The
-    // live billing core is rewritten by every workflow sync, so prorating
-    // against it would bill a figure no document ever stated.
-    const result = await build([], {
-      activeStatus,
-      charges: [charge({ kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 })],
-      adjustments: [{ type: 'DISCOUNT', description: 'Academic', amount: 100 }]
-    }).balance('job-1');
-    expect(result.adjustmentCharges).toBe(0);
-    // The released lines still stand — a withdrawal does not un-charge them.
-    expect(result.serviceCharges).toBe(400);
-    expect(result.chargesToDate).toBe(400);
-  });
-
-  it('ignores voided charges — liveByJobId is what it reads', async () => {
-    const result = await build([], { charges: [] }).balance('job-1');
-    expect(result.serviceCharges).toBe(0);
-    expect(result.customCharges).toBe(0);
-  });
-});
-
-describe('the deposit drop-off', () => {
-  const deposit = charge({ _id: 'dep', kind: 'DEPOSIT', label: 'Deposit', amount: 500 });
-
-  it('counts a deposit while no service line is released', async () => {
-    const result = await build([], { charges: [deposit] }).balance('job-1');
-    expect(result.depositCharges).toBe(500);
-    expect(result.depositsDropped).toBe(false);
-    expect(result.chargesToDate).toBe(500);
-  });
-
-  it('drops it as soon as one is, and says that it did', async () => {
-    const result = await build([], { charges: [deposit, charge({ _id: 'sl', kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 })] }).balance('job-1');
-    expect(result.depositCharges).toBe(0);
-    expect(result.depositsDropped).toBe(true);
-    // The deposit leaves; the payment made against it stays in paymentsToDate.
-    expect(result.chargesToDate).toBe(400);
-  });
-
-  it('does not claim a drop-off on a job that has no deposits', async () => {
-    const result = await build([], { charges: [charge({ kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 })] }).balance('job-1');
-    expect(result.depositsDropped).toBe(false);
-  });
-
-  it('leaves depositLines empty on the breakdown when they are dropped', async () => {
-    const breakdown = await build([], { charges: [deposit, charge({ _id: 'sl', kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 })] }).chargeBreakdown('job-1');
-    expect(breakdown.depositLines).toEqual([]);
-  });
-});
-
-describe('chargeBreakdown', () => {
-  it('orders the released service lines by position, whatever order they were added in', async () => {
-    const breakdown = await build([], {
-      charges: [charge({ _id: 'b', kind: 'SERVICE_LINE', amount: 600, sourceIndex: 1 }), charge({ _id: 'a', kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 })]
-    }).chargeBreakdown('job-1');
-    expect(breakdown.serviceLines.map((c: any) => c._id)).toEqual(['a', 'b']);
-  });
-
-  it('carries the prorated adjustment rows an invoice writes, at the balance’s own factor', async () => {
-    const breakdown = await build([], {
-      charges: [charge({ kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 })],
-      adjustments: [{ type: 'DISCOUNT', description: 'Academic', amount: 100 }]
-    }).chargeBreakdown('job-1');
-    expect(breakdown.prorationFactor).toBe(0.4);
-    expect(breakdown.adjustments[0].appliedAmount).toBe(-40);
-  });
-
-  const EQUIP = 'Plate reader — 10 hrs/wk x 4 wks (estimate; billed on actual hours)';
-
-  it('prorates against the contracted subtotal, not the whole SOW', async () => {
+  it('leaves equipment estimates out — bookings bill those — without shifting positions', async () => {
     const breakdown = await build([], {
       sowLines: [
-        { description: '', cost: 350 },
-        { description: EQUIP, cost: 150 }
-      ],
-      charges: [charge({ kind: 'SERVICE_LINE', amount: 350, sourceIndex: 0 })],
-      adjustments: [{ type: 'DISCOUNT', amount: 100 }]
+        { serviceId: 's1', description: '', cost: 350 },
+        { serviceId: 's2', description: EQUIP, cost: 150 },
+        { serviceId: 's3', description: '', cost: 50 }
+      ]
     }).chargeBreakdown('job-1');
-    // Base 350 (not 500) → factor 1 → the whole discount applies.
-    expect(breakdown.prorationFactor).toBe(1);
-    expect(breakdown.adjustmentCharges).toBe(-100);
+    expect(breakdown.serviceCharges).toBe(400);
+    expect(breakdown.serviceLines.map((s) => s.sourceIndex)).toEqual([0, 2]);
   });
 
-  it('saturates the factor at one when a legacy equipment charge is still on the ledger', async () => {
+  it('applies the adjustments in full: discounts subtract, additional costs add, special terms are notes', async () => {
     const breakdown = await build([], {
-      sowLines: [
-        { description: '', cost: 350 },
-        { description: EQUIP, cost: 150 }
-      ],
-      // The legacy equipment release this run stops making: serviceCharges
-      // 500 over a base of 350.
-      charges: [charge({ kind: 'SERVICE_LINE', amount: 350, sourceIndex: 0 }), charge({ _id: 'c2', kind: 'SERVICE_LINE', amount: 150, sourceIndex: 1 })],
-      adjustments: [{ type: 'DISCOUNT', amount: 100 }]
+      adjustments: [
+        { type: 'DISCOUNT', description: 'Academic', amount: 100 },
+        { type: 'ADDITIONAL_COST', description: 'Rush', amount: 50 },
+        { type: 'SPECIAL_TERM', description: 'Samples returned', amount: 0 }
+      ]
     }).chargeBreakdown('job-1');
-    expect(breakdown.prorationFactor).toBe(1);
-    expect(breakdown.adjustmentCharges).toBe(-100);
+    expect(breakdown.adjustmentCharges).toBe(-50);
+    expect(breakdown.adjustments.map((a) => a.prorationFactor)).toEqual([1, 1, 1]);
+    expect(breakdown.chargesToDate).toBe(950);
   });
 
-  it('applies nothing when the contracted subtotal is zero — an equipment-only job', async () => {
-    const breakdown = await build([], {
-      sowLines: [{ description: EQUIP, cost: 45 }],
-      charges: [charge({ kind: 'SERVICE_LINE', amount: 45, sourceIndex: 0 })],
-      adjustments: [{ type: 'DISCOUNT', amount: 100 }]
-    }).chargeBreakdown('job-1');
-    expect(breakdown.prorationFactor).toBe(0);
+  it.each([['SENT'], ['SIGNED'], ['DRAFT'], ['CANCELLED'], [null]])('bills no services and no adjustments while the version in force is %s', async (activeStatus) => {
+    const breakdown = await build([], { activeStatus, adjustments: [{ type: 'DISCOUNT', amount: 100 }] }).chargeBreakdown('job-1');
+    expect(breakdown.serviceCharges).toBe(0);
     expect(breakdown.adjustmentCharges).toBe(0);
+    expect(breakdown.serviceLines).toEqual([]);
+  });
+
+  it('bills no services when the job has no SOW at all', async () => {
+    const result = await build([], noSow).balance('job-1');
+    expect(result.serviceCharges).toBe(0);
+  });
+
+  it('ignores legacy SERVICE_LINE charges — the SOW is the only source of services now', async () => {
+    const result = await build([], { charges: [charge({ kind: 'SERVICE_LINE', amount: 999, sourceIndex: 0 })] }).balance('job-1');
+    expect(result.serviceCharges).toBe(1000);
+    expect(result.chargesToDate).toBe(1000);
+  });
+});
+
+describe('custom lines', () => {
+  it('sums them, and lets one be a discount', async () => {
+    const result = await build([], { ...noSow, charges: [charge({ amount: 40 }), charge({ _id: 'c2', amount: -30 })] }).balance('job-1');
+    expect(result.customCharges).toBe(10);
+    expect(result.chargesToDate).toBe(10);
+  });
+
+  it('lists them in the order they were added', async () => {
+    const breakdown = await build([], {
+      ...noSow,
+      charges: [charge({ _id: 'late', addedAt: at('2026-03-05T00:00:00Z') }), charge({ _id: 'early', addedAt: at('2026-03-01T00:00:00Z') })]
+    }).chargeBreakdown('job-1');
+    expect(breakdown.customLines.map((c: any) => c._id)).toEqual(['early', 'late']);
+  });
+});
+
+describe('the deposit', () => {
+  const due = at('2026-04-01T12:00:00Z');
+  const deposit = (over: any = {}): any => charge({ _id: 'dep', kind: 'DEPOSIT', label: 'Deposit', amount: 300, dueDate: due, ...over });
+
+  it('is part of the total, never added to it', async () => {
+    const result = await build([], { charges: [deposit()] }).balance('job-1');
+    expect(result.chargesToDate).toBe(1000);
+    expect(result).toMatchObject({ depositAmount: 300, depositDueDate: due, depositOutstanding: 300 });
+  });
+
+  it('is paid down by the payments, and never goes below zero', async () => {
+    expect((await build([], { charges: [deposit()], paid: 100 }).balance('job-1')).depositOutstanding).toBe(200);
+    expect((await build([], { charges: [deposit()], paid: 400 }).balance('job-1')).depositOutstanding).toBe(0);
+  });
+
+  it('never asks for more than the whole balance', async () => {
+    const result = await build([], { sowLines: [{ serviceId: 's1', description: '', cost: 100 }], charges: [deposit()] }).balance('job-1');
+    expect(result.balanceDue).toBe(100);
+    expect(result.depositOutstanding).toBe(100);
+  });
+
+  it('reports none on a job without one', async () => {
+    const result = await build([]).balance('job-1');
+    expect(result).toMatchObject({ depositAmount: null, depositDueDate: null, depositOutstanding: 0 });
+  });
+
+  it('takes the newest when older data carries two', async () => {
+    const breakdown = await build([], {
+      charges: [deposit({ _id: 'old', amount: 100, addedAt: at('2026-02-01T00:00:00Z') }), deposit({ _id: 'new', amount: 250, addedAt: at('2026-03-01T00:00:00Z') })]
+    }).chargeBreakdown('job-1');
+    expect((breakdown.depositCharge as any)._id).toBe('new');
+    expect(breakdown.depositAmount).toBe(250);
   });
 });
 
 describe('the total and the balance', () => {
-  it('sums all five sources and subtracts the payments', async () => {
+  it('sums the four sources and subtracts the payments', async () => {
     const result = await build([booking()], {
       paid: 100,
-      charges: [charge({ kind: 'SERVICE_LINE', amount: 400, sourceIndex: 0 }), charge({ _id: 'c', amount: 25 })],
+      charges: [charge({ amount: 25 })],
       adjustments: [{ type: 'ADDITIONAL_COST', description: 'Rush', amount: 50 }]
     }).balance('job-1');
-    // 400 service + 20 adjustment (50 x 0.4) + 80 equipment + 25 custom + 0 deposit
-    expect(result.chargesToDate).toBe(525);
-    expect(result.balanceDue).toBe(425);
+    // 1000 services + 50 adjustment + 80 equipment + 25 custom
+    expect(result.chargesToDate).toBe(1155);
+    expect(result.balanceDue).toBe(1055);
   });
 
-  it('still reports a credit rather than flooring at zero', async () => {
-    const result = await build([], { paid: 200 }).balance('job-1');
+  it('reports a credit rather than flooring at zero', async () => {
+    const result = await build([], { ...noSow, paid: 200 }).balance('job-1');
     expect(result.balanceDue).toBe(-200);
   });
 });

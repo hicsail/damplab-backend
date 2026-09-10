@@ -5,10 +5,9 @@ const staff = { sub: 'tech-sub', email: 'tech@bu.edu', realm_access: { roles: ['
 
 const isLive = (row: any, filter: any): boolean => !Object.prototype.hasOwnProperty.call(filter, 'voidedAt') || row.voidedAt == null;
 
-function harness(opts: any[] | { rows?: any[]; job?: any; invoices?: any[] } = [], jobArg: any = { _id: 'job-1', jobId: '04217', name: 'Test job' }): { service: JobPaymentService; rows: any[] } {
+function harness(opts: any[] | { rows?: any[]; job?: any } = [], jobArg: any = { _id: 'job-1', jobId: '04217', name: 'Test job' }): { service: JobPaymentService; rows: any[] } {
   const isArray = Array.isArray(opts);
   const rows: any[] = isArray ? opts : opts.rows ?? [];
-  const invoices: any[] = isArray ? [] : opts.invoices ?? [];
   const job = isArray ? jobArg : opts.job ?? jobArg;
   const model: any = {
     find: (filter: any = {}) => ({
@@ -31,10 +30,7 @@ function harness(opts: any[] | { rows?: any[]; job?: any; invoices?: any[] } = [
     }
   };
   const jobService: any = { findById: async (id: string) => (id === 'job-1' ? job : null) };
-  const invoiceModel: any = {
-    findById: (id: string) => ({ exec: async (): Promise<any> => invoices.find((inv) => String(inv._id) === String(id)) ?? null })
-  };
-  return { service: new JobPaymentService(model, jobService, invoiceModel), rows };
+  return { service: new JobPaymentService(model, jobService), rows };
 }
 
 const input = (over: any = {}): any => ({ jobId: 'job-1', amount: 250, receivedOn: new Date('2026-03-01'), ...over });
@@ -125,35 +121,10 @@ describe('JobPaymentService reads', () => {
   });
 });
 
-describe('a payment that names an invoice', () => {
-  const liveInvoice = { _id: 'inv-1', jobId: 'job-1', invoiceNumber: '04217-002' };
-
-  it('snapshots the invoice number alongside the id', async () => {
-    const { service } = harness({ invoices: [liveInvoice] });
+describe('a payment belongs to the job', () => {
+  it('names no invoice, even when the caller sends one — every version restates the job’s payments', async () => {
+    const { service } = harness();
     const payment: any = await service.record({ jobId: 'job-1', amount: 100, receivedOn: new Date(), invoiceId: 'inv-1' } as any, staff);
-    expect(payment.invoiceId).toBe('inv-1');
-    // A snapshot, so a payment row still names its invoice without a second read.
-    expect(payment.invoiceNumber).toBe('04217-002');
-  });
-
-  it('refuses an invoice that belongs to another job', async () => {
-    const { service } = harness({ invoices: [{ ...liveInvoice, jobId: 'job-2' }] });
-    await expect(service.record({ jobId: 'job-1', amount: 100, receivedOn: new Date(), invoiceId: 'inv-1' } as any, staff)).rejects.toThrow('That invoice is not on this job.');
-  });
-
-  it('refuses an invoice that does not exist, in the same words', async () => {
-    const { service } = harness({ invoices: [] });
-    await expect(service.record({ jobId: 'job-1', amount: 100, receivedOn: new Date(), invoiceId: 'nope' } as any, staff)).rejects.toThrow('That invoice is not on this job.');
-  });
-
-  it('refuses a voided invoice', async () => {
-    const { service } = harness({ invoices: [{ ...liveInvoice, voidedAt: new Date() }] });
-    await expect(service.record({ jobId: 'job-1', amount: 100, receivedOn: new Date(), invoiceId: 'inv-1' } as any, staff)).rejects.toThrow('That invoice has been voided.');
-  });
-
-  it('records a payment that names no invoice exactly as before', async () => {
-    const { service } = harness({ invoices: [liveInvoice] });
-    const payment: any = await service.record({ jobId: 'job-1', amount: 100, receivedOn: new Date() } as any, staff);
     expect(payment.invoiceId).toBeUndefined();
     expect(payment.invoiceNumber).toBeUndefined();
   });

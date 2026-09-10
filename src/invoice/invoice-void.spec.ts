@@ -2,38 +2,32 @@ import { InvoiceService } from './invoice.service';
 import { User } from '../auth/user.interface';
 
 /**
- * Voiding an invoice.
+ * Voiding the job's current invoice.
  *
  * It keeps the document — numbering is derived from a count, so a delete would
- * recycle the number — and changes nothing else: a statement's service lines
- * live on the job's charge ledger, not on the invoice, so voiding the document
- * does not release them. Releasing them back onto the ledger is a separate act
- * (voiding the underlying JobCharge), which this file does not exercise.
+ * recycle the number — and changes nothing else: the job's charges and payments
+ * stay, and the next version restates them. A superseded invoice is refused:
+ * it is already not payable.
  */
 
 const staff = { realm_access: { roles: ['damplab-staff'] }, email: 'tech@bu.edu' } as unknown as User;
 
-interface HarnessOptions {
-  existingInvoices?: any[];
-}
+/** Honours the two "still stands" conditions the service filters on. */
+const matches = (inv: any, filter: any): boolean =>
+  ['voidedAt', 'supersededAt'].every((key) => !Object.prototype.hasOwnProperty.call(filter, key) || inv[key] == null) &&
+  (!Object.prototype.hasOwnProperty.call(filter, '_id') || typeof filter._id === 'object' || String(inv._id) === String(filter._id));
 
-function harness(opts: HarnessOptions = {}): { service: InvoiceService; created: any[]; existing: any[]; voidedCharges: any[]; releasedCharges: any[] } {
+function harness(existing: any[] = []): { service: InvoiceService; created: any[]; existing: any[] } {
   const created: any[] = [];
-  const existing = opts.existingInvoices ?? [];
-  const voidedCharges: any[] = [];
-  const releasedCharges: any[] = [];
-
-  const matchesVoidFilter = (inv: any, filter: any): boolean => !Object.prototype.hasOwnProperty.call(filter, 'voidedAt') || inv.voidedAt == null;
 
   const invoiceModel: any = {
     // Filter-aware, because the two counts differ deliberately: numbering counts
-    // every invoice, the jobs-list badge counts only the ones that still stand.
-    countDocuments: (filter: any = {}) => ({ exec: async (): Promise<number> => existing.filter((inv) => matchesVoidFilter(inv, filter)).length }),
-    find: (filter: any = {}) => ({ exec: async (): Promise<any[]> => existing.filter((inv) => matchesVoidFilter(inv, filter)) }),
+    // every invoice, the jobs-list badge counts only the one that stands.
+    countDocuments: (filter: any = {}) => ({ exec: async (): Promise<number> => existing.filter((inv) => matches(inv, filter)).length }),
     findById: (id: string) => ({ exec: async (): Promise<any> => existing.find((inv) => String(inv._id) === String(id)) ?? null }),
     findOneAndUpdate: (filter: any, update: any) => ({
       exec: async (): Promise<any> => {
-        const found = existing.find((inv) => String(inv._id) === String(filter._id) && matchesVoidFilter(inv, filter));
+        const found = existing.find((inv) => matches(inv, filter));
         if (!found) return null;
         Object.assign(found, update.$set);
         return found;
@@ -42,80 +36,44 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
     create: async (doc: any): Promise<any> => {
       created.push(doc);
       return doc;
-    }
+    },
+    updateMany: () => ({ exec: async (): Promise<any> => ({}) })
   };
 
   const jobService: any = { findById: async () => ({ _id: 'job-1', jobId: '04217', name: 'Test job' }) };
-  // FINAL, because invoicing now requires a countersigned SOW and these tests are
-  // about voiding rather than about that gate.
-  const version = {
-    versionNumber: 1000,
-    status: 'FINAL',
-    inputs: {
-      services: [
-        { serviceId: 's1', name: 'PCR', cost: 350 },
-        { serviceId: 's2', name: 'Gel', cost: 120 }
-      ],
-      adjustments: []
-    }
-  };
-
-  const sowService: any = {
-    findByJobId: async () => ({ _id: 'sow-1', clientName: 'Dr Client', clientEmail: 'client@bu.edu' }),
-    billableServiceLines: async (): Promise<any[]> => version.inputs.services
-  };
-  const sowVersionService: any = { getActiveVersion: async () => version, listVersions: async (): Promise<any[]> => [version] };
-
-  const charges: any = {
-    liveByJobId: async () => [],
-    createServiceLineCharges: async (jobId: string, rows: any[]) => {
-      releasedCharges.push(...rows);
-      return rows;
-    },
-    voidCharge: async (id: string, reason: string) => {
-      voidedCharges.push({ id, reason });
-      return { _id: id };
-    }
-  };
-
+  const sowService: any = { findByJobId: async () => ({ _id: 'sow-1', clientName: 'Dr Client', clientEmail: 'client@bu.edu' }) };
+  const sowVersionService: any = { getActiveVersion: async () => ({ versionNumber: 1000, status: 'FINAL', inputs: { adjustments: [] } }) };
+  const charges: any = { liveByJobId: async () => [], addCharge: async (input: any) => input };
   const balances: any = {
     chargeBreakdown: async () => ({
       jobId: 'job-1',
-      serviceLines: [],
-      customLines: [],
-      depositLines: [],
-      bookings: [],
-      adjustments: [],
-      prorationFactor: 1,
       chargesToDate: 350,
       paymentsToDate: 0,
       balanceDue: 350,
-      confirmedHours: 0,
-      unconfirmedBookings: 0
-    }),
-    confirmedBookings: async () => []
+      depositAmount: null,
+      depositDueDate: null,
+      depositOutstanding: 0,
+      serviceLines: [],
+      customLines: [],
+      depositCharge: null,
+      bookings: [],
+      adjustments: []
+    })
   };
   const dispatch: any = { dispatch: () => undefined };
 
-  return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService, charges, balances, dispatch), created, existing, voidedCharges, releasedCharges };
+  return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService, charges, balances, dispatch), created, existing };
 }
 
-/** An invoice as `createForJob` writes one, reduced to what void reads. */
-const priorInvoice = (overrides: any = {}): any => ({
-  _id: 'inv-1',
-  invoiceNumber: '04217-001',
-  sowVersionNumber: 1000,
-  services: [{ serviceId: 's1', name: 'PCR', sourceIndex: 0 }],
-  ...overrides
-});
+const current = (overrides: any = {}): any => ({ _id: 'inv-1', jobId: 'job-1', invoiceNumber: '04217-001', kind: 'STATEMENT', ...overrides });
 
 describe('voidInvoice', () => {
   it('records who voided it, when, and why', async () => {
-    const { service, existing } = harness({ existingInvoices: [priorInvoice()] });
+    const { service, existing } = harness([current()]);
 
-    const voided: any = await service.voidInvoice('inv-1', '  Billed the wrong customer  ', staff);
+    const voided: any = await service.voidInvoice('inv-1', '  Job was cancelled  ', staff);
 
-    expect(voided.voidReason).toBe('Billed the wrong customer');
+    expect(voided.voidReason).toBe('Job was cancelled');
     expect(voided.voidedBy).toBe('tech@bu.edu');
     expect(voided.voidedAt).toBeInstanceOf(Date);
     // The document itself stays — a delete would recycle its invoice number.
@@ -123,49 +81,49 @@ describe('voidInvoice', () => {
   });
 
   it('requires a reason', async () => {
-    const { service } = harness({ existingInvoices: [priorInvoice()] });
-
+    const { service } = harness([current()]);
     await expect(service.voidInvoice('inv-1', '   ', staff)).rejects.toThrow(/reason is required/i);
   });
 
   it('refuses an invoice that is already void rather than overwriting its reason', async () => {
-    const { service } = harness({ existingInvoices: [priorInvoice({ voidedAt: new Date(), voidedBy: 'first@bu.edu', voidReason: 'Original reason' })] });
-
+    const { service } = harness([current({ voidedAt: new Date(), voidedBy: 'first@bu.edu', voidReason: 'Original reason' })]);
     await expect(service.voidInvoice('inv-1', 'Second reason', staff)).rejects.toThrow(/already been voided/i);
   });
 
+  it('refuses a superseded invoice, naming the version that replaced it', async () => {
+    const { service, existing } = harness([current({ supersededAt: new Date(), supersededByNumber: '04217-002' })]);
+    await expect(service.voidInvoice('inv-1', 'Any reason', staff)).rejects.toThrow(/superseded by 04217-002/);
+    expect(existing[0].voidedAt).toBeUndefined();
+  });
+
   it('refuses an invoice that does not exist', async () => {
-    const { service } = harness({ existingInvoices: [] });
-
+    const { service } = harness([]);
     await expect(service.voidInvoice('nope', 'Any reason', staff)).rejects.toThrow(/not found/i);
-  });
-
-  it('stops counting a voided invoice as billing on the jobs list', async () => {
-    const { service } = harness({ existingInvoices: [priorInvoice()] });
-
-    expect(await service.countByJobId('job-1')).toBe(1);
-    await service.voidInvoice('inv-1', 'Billed the wrong customer', staff);
-    // "Has this job been billed yet" — and it has not.
-    expect(await service.countByJobId('job-1')).toBe(0);
-  });
-
-  it('keeps the voided invoice inside the numbering sequence', async () => {
-    const { service, created } = harness({ existingInvoices: [priorInvoice()] });
-
-    await service.voidInvoice('inv-1', 'Billed the wrong customer', staff);
-    await service.createForJob({ jobId: 'job-1', releaseServiceLines: [] } as any, staff);
-
-    // -002, not -001: voiding never frees a number, whether or not it releases
-    // any charge.
-    expect(created[0].invoiceNumber).toBe('04217-002');
   });
 });
 
-describe('voiding changes nothing on the charge ledger', () => {
-  it('leaves the released service lines exactly where they were', async () => {
-    const { service, voidedCharges } = harness({ existingInvoices: [priorInvoice()] });
-    await service.voidInvoice('inv-1', 'Billed the wrong customer', staff);
-    // Holding a line back is voiding its charge, which is a separate act.
-    expect(voidedCharges).toEqual([]);
+describe('what stands on the jobs list', () => {
+  it('stops counting a voided invoice', async () => {
+    const { service } = harness([current()]);
+    expect(await service.countByJobId('job-1')).toBe(1);
+    await service.voidInvoice('inv-1', 'Job was cancelled', staff);
+    expect(await service.countByJobId('job-1')).toBe(0);
+  });
+
+  it('counts only the current version, however many were issued before it', async () => {
+    const { service } = harness([
+      current({ _id: 'inv-1', supersededAt: new Date() }),
+      current({ _id: 'inv-2', invoiceNumber: '04217-002', supersededAt: new Date() }),
+      current({ _id: 'inv-3', invoiceNumber: '04217-003' })
+    ]);
+    expect(await service.countByJobId('job-1')).toBe(1);
+  });
+
+  it('keeps a voided invoice inside the numbering sequence', async () => {
+    const { service, created } = harness([current()]);
+    await service.voidInvoice('inv-1', 'Job was cancelled', staff);
+    await service.createForJob({ jobId: 'job-1' } as any, staff);
+    // -002, not -001: voiding never frees a number.
+    expect(created[0].invoiceNumber).toBe('04217-002');
   });
 });

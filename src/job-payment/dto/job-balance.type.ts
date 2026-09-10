@@ -1,31 +1,25 @@
 import { Field, Float, ID, Int, ObjectType } from '@nestjs/graphql';
 
-@ObjectType({ description: "A job's charges, payments and balance — the whole ledger a statement of account states." })
+@ObjectType({ description: "What a job has been charged, what it has paid, and the difference — the figures the job's invoice states." })
 export class JobBalance {
   @Field(() => ID)
   jobId: string;
 
-  @Field(() => Float, { description: 'Sum of live SERVICE_LINE charges — SOW positions released onto the job.' })
+  @Field(() => Float, {
+    description: "Σ the countersigned SOW's contracted service lines. Zero until the version in force is FINAL. Equipment-use estimates are never included — the job's confirmed bookings bill those."
+  })
   serviceCharges: number;
 
-  @Field(() => Float, {
-    description: "The SOW's pricing adjustments (discounts, additional costs), prorated by the released share of the FINAL version's services subtotal. Zero unless the active version is FINAL."
-  })
+  @Field(() => Float, { description: "The countersigned SOW's pricing adjustments: discounts negative, additional costs positive. Zero until the version in force is FINAL." })
   adjustmentCharges: number;
 
   @Field(() => Float, { description: 'Sum of the stored cost of every confirmed, non-cancelled booking on the job.' })
   equipmentCharges: number;
 
-  @Field(() => Float, { description: 'Sum of live CUSTOM charges — free-text lines staff add by hand, which may be negative.' })
+  @Field(() => Float, { description: 'Sum of live CUSTOM charges — lines staff add by hand, negative for a discount.' })
   customCharges: number;
 
-  @Field(() => Float, { description: 'Sum of live DEPOSIT charges. Zero once a service line has been released — see depositsDropped.' })
-  depositCharges: number;
-
-  @Field(() => Boolean, { description: 'True when deposits were charged but a service line has since been released, dropping them from the balance.' })
-  depositsDropped: boolean;
-
-  @Field(() => Float, { description: 'serviceCharges + adjustmentCharges + equipmentCharges + customCharges + depositCharges.' })
+  @Field(() => Float, { description: 'serviceCharges + adjustmentCharges + equipmentCharges + customCharges. A deposit is part of this total, never added to it.' })
   chargesToDate: number;
 
   @Field(() => Float, { description: 'Sum of the job’s payments that have not been voided.' })
@@ -34,9 +28,22 @@ export class JobBalance {
   @Field(() => Float, { description: 'chargesToDate minus paymentsToDate. Negative means the customer is in credit.' })
   balanceDue: number;
 
+  @Field(() => Float, { nullable: true, description: "The live DEPOSIT charge's amount, or null when the job has none." })
+  depositAmount: number | null;
+
+  // Explicit type: a `Date | null` union cannot be reflected, and the schema
+  // build fails at startup without it.
+  @Field(() => Date, { nullable: true, description: 'When the deposit is due, or null when the job has none.' })
+  depositDueDate: Date | null;
+
+  @Field(() => Float, {
+    description: 'What is still owed against the deposit: the deposit less payments, never below zero and never more than the balance due. Zero when there is no deposit.'
+  })
+  depositOutstanding: number;
+
   @Field(() => Float, { description: 'Confirmed hours behind equipmentCharges; the slot length where no actual hours were logged.' })
   confirmedHours: number;
 
-  @Field(() => Int, { description: 'Non-cancelled bookings whose usage has not been confirmed yet — work that is not on the statement.' })
+  @Field(() => Int, { description: 'Non-cancelled bookings whose usage has not been confirmed yet — work that is not on the invoice.' })
   unconfirmedBookings: number;
 }

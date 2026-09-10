@@ -1,32 +1,18 @@
-import { Field, InputType, ID, Int, Float } from '@nestjs/graphql';
+import { Field, InputType, ID, Float } from '@nestjs/graphql';
 
-/**
- * One SOW service line to release onto the statement now.
- *
- * Identified by position, because a job may use the same catalog service more
- * than once and `serviceId` therefore does not identify a line. `serviceId` is
- * carried alongside as a guard: it is what catches the billing source having
- * been re-synced between the release dialog being filled in and submitted.
- */
-@InputType({ description: 'A SOW service line to release onto the statement now, identified by its position in billableServices' })
-export class ReleaseServiceLineInput {
-  @Field(() => Int, { description: 'Zero-based position of the line in SOW.billableServices.' })
-  sourceIndex: number;
-
-  @Field(() => ID, { description: 'The serviceId expected at that position. The request is refused if it no longer matches.' })
-  serviceId: string;
-}
-
-@InputType({ description: 'Request a deposit instead of releasing service lines.' })
+@InputType({ description: "Set the job's deposit while issuing its invoice. Refused when the job already has one — void that first." })
 export class InvoiceDepositInput {
-  @Field(() => Float, { description: 'How much to ask for. Must be greater than zero.' })
+  @Field(() => Float, { description: 'How much to ask for up front. Must be greater than zero. Part of the invoice total, never added to it.' })
   amount: number;
 
-  @Field({ nullable: true, description: 'What the deposit is called on the statement. Defaults to "Deposit".' })
+  @Field({ nullable: true, description: 'What the deposit is called on the invoice. Defaults to "Deposit".' })
   label?: string;
+
+  @Field({ description: 'When the deposit is due.' })
+  dueDate: Date;
 }
 
-@InputType({ description: 'An ad-hoc line to bill on this statement. A negative amount is a discount.' })
+@InputType({ description: 'A charge or discount line to add to the job. A negative amount is a discount.' })
 export class InvoiceCustomLineInput {
   @Field({ description: 'What the line is for. Required.' })
   label: string;
@@ -38,34 +24,20 @@ export class InvoiceCustomLineInput {
   note?: string;
 }
 
-@InputType({ description: "Issue a job's statement of account, releasing zero or more SOW service lines onto it" })
+@InputType({ description: "Issue a new version of a job's invoice: everything the job has been charged, less what it has paid. Supersedes the previous version." })
 export class CreateInvoiceInput {
   @Field(() => ID, { description: 'Job Mongo _id' })
   jobId: string;
 
-  @Field(() => [ReleaseServiceLineInput], {
-    nullable: true,
-    description:
-      'The SOW service lines to release now, by position in SOW.billableServices. Names only lines newly ' +
-      'released with this call — lines already released by a prior statement are not repeated here. A line ' +
-      'at an already-released position is a no-op, not an error. An equipment-use position is refused, ' +
-      'not skipped: that figure is an estimate and the lab bills the hours actually booked. An empty (or ' +
-      'omitted) list is legitimate: it re-issues a statement of what is already on the ledger, releasing nothing new.'
-  })
-  releaseServiceLines?: ReleaseServiceLineInput[];
-
   @Field({ nullable: true, description: 'When payment is due. Defaults to the issue date plus 30 days when omitted.' })
   dueDate?: Date;
 
-  @Field(() => InvoiceDepositInput, {
-    nullable: true,
-    description: 'Issue this statement as a deposit request. Incompatible with releaseServiceLines and customLines.'
-  })
-  deposit?: InvoiceDepositInput;
-
   @Field(() => [InvoiceCustomLineInput], {
     nullable: true,
-    description: 'Ad-hoc lines to add to the ledger and bill on this statement. Each becomes a CUSTOM charge.'
+    description: 'New charge or discount lines to add to the job before issuing. Lines already on the job carry over onto every version automatically; removing one is voiding its charge.'
   })
   customLines?: InvoiceCustomLineInput[];
+
+  @Field(() => InvoiceDepositInput, { nullable: true, description: 'Set the job’s deposit before issuing. Refused when the job already has one.' })
+  deposit?: InvoiceDepositInput;
 }

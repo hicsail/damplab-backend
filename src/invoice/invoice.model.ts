@@ -191,6 +191,34 @@ export class InvoiceCustomLine {
   amount: number;
 }
 
+/**
+ * The deposit as an invoice states it. Part of the invoice's total, never added
+ * to it: it is the first slice of that total, asked for by its own due date.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'The deposit an invoice asks for, with its own due date (snapshot at issue). Part of the total, never added to it.' })
+export class InvoiceDeposit {
+  @Prop({ required: true })
+  @Field(() => ID, { description: 'The DEPOSIT JobCharge this states.' })
+  chargeId: string;
+
+  @Prop({ required: true })
+  @Field()
+  label: string;
+
+  @Prop({ required: true })
+  @Field(() => Float)
+  amount: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When the deposit is due.' })
+  dueDate?: Date;
+
+  @Prop({ required: true })
+  @Field(() => Float, { description: 'What was still owed against the deposit at issue: the deposit less payments, never below zero and never more than the balance due.' })
+  outstanding: number;
+}
+
 @Schema()
 @ObjectType({ description: 'Invoice generated for a job, optionally covering a subset of services' })
 export class Invoice {
@@ -216,6 +244,14 @@ export class Invoice {
   @Prop({ required: true, index: true })
   @Field({ description: 'Invoice number, unique per job (e.g., "04217-001")' })
   invoiceNumber: string;
+
+  /**
+   * Which version of the job's invoice this is — the same per-job count the
+   * number's `-NNN` suffix carries. Absent on documents issued before versioning;
+   * the `versionNumber` ResolveField reads those off that suffix.
+   */
+  @Prop({ required: false })
+  versionNumber?: number;
 
   /**
    * What this invoice bills. Absent on every invoice written before equipment
@@ -272,8 +308,12 @@ export class Invoice {
   dueDate?: Date;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
-  @Field(() => [InvoiceCustomLine], { description: 'Deposits and ad-hoc charges billed on this statement. Empty on SOW and EQUIPMENT documents.' })
+  @Field(() => [InvoiceCustomLine], { description: 'Custom charges and discounts on this invoice. Empty on SOW and EQUIPMENT documents.' })
   customLines: InvoiceCustomLine[];
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
+  @Field(() => InvoiceDeposit, { nullable: true, description: 'The deposit this invoice asks for, when the job has one.' })
+  deposit?: InvoiceDeposit;
 
   @Prop({ required: true })
   @Field(() => Float, {
@@ -331,10 +371,9 @@ export class Invoice {
    * deleting one hands its number straight to the next invoice and produces two
    * `04217-003`s. A void leaves the count intact.
    *
-   * Voiding changes nothing on the job's charge ledger: a statement's service
-   * lines live there, not on the invoice, so voiding the document does not
-   * release them. Holding a line back is voiding its underlying `JobCharge`, a
-   * separate act on `JobChargeService`.
+   * Voiding changes nothing else: the job's charges and payments stay as they
+   * are, and the next version restates them. Only the current invoice can be
+   * voided — a superseded one is already not payable.
    *
    * All three fields move together. `voidedAt` is the flag every reader tests.
    */
@@ -349,6 +388,19 @@ export class Invoice {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Why it was voided. Required when voiding.' })
   voidReason?: string;
+
+  /**
+   * Set on every earlier invoice when a newer version is issued: only one
+   * invoice per job stands at a time. A superseded invoice is history, not
+   * payable, and stays downloadable as the copy that was sent.
+   */
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When a newer version replaced this invoice. Absent on the current one.' })
+  supersededAt?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'The invoice number of the version that replaced this one.' })
+  supersededByNumber?: string;
 
   @Prop({ required: true, default: new Date() })
   @Field({ description: 'Date when the invoice record was created' })
