@@ -134,18 +134,16 @@ const GATES: Row[] = [
   [BookingResolver, 'confirmBookingUsage', Permission.BillingView],
   [BookingResolver, 'billableBookings', Permission.BillingView],
 
-  // Voiding an invoice reverses a financial record and releases its lines for
-  // re-invoicing, so it sits above `billing:view` and above generating one.
-  // `createInvoice` is deliberately absent from this table: it still hand-rolls a
-  // `damplab-staff` check inside InvoiceService, and migrating it is separate work.
+  // Voiding an invoice reverses a financial record, so it sits above
+  // `billing:view` and above generating one. `createInvoice` is deliberately
+  // absent from this table: it still hand-rolls a `damplab-staff` check inside
+  // InvoiceService, and migrating it is separate work.
   [InvoiceResolver, 'voidInvoice', Permission.BillingWrite],
 
   // Recording money in or out is a financial write, the same tier as voiding an
-  // invoice. `createEquipmentInvoice` is gated (unlike the older `createInvoice`,
-  // which still hand-rolls a damplab-staff check inside InvoiceService).
+  // invoice.
   [JobPaymentResolver, 'recordJobPayment', Permission.BillingWrite],
   [JobPaymentResolver, 'voidJobPayment', Permission.BillingWrite],
-  [InvoiceResolver, 'createEquipmentInvoice', Permission.BillingWrite],
 
   // Adding or voiding a charge moves the job's balance, the same tier as
   // recording a payment.

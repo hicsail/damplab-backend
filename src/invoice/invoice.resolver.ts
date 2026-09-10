@@ -33,13 +33,16 @@ export class InvoiceResolver {
     return this.invoiceService.findByJobId(jobId);
   }
 
-  @Mutation(() => Invoice, { description: 'Staff-only. Generate a new invoice for a job by selecting a subset of services from the job SOW.' })
+  @Mutation(() => Invoice, { description: 'Staff-only. Issue a statement of everything this job has been charged, less what it has paid.' })
   async createInvoice(@Args('input', { type: () => CreateInvoiceInput }) input: CreateInvoiceInput, @CurrentUser() user: User): Promise<Invoice> {
     return this.invoiceService.createForJob(input, user);
   }
 
   /**
-   * Void an invoice, keeping the record and releasing its service lines.
+   * Void an invoice, keeping the record. This changes nothing on the job's
+   * charge ledger — a statement's service lines live there, not on the
+   * invoice, and holding a line back is voiding its charge, a separate act on
+   * `JobChargeService`.
    *
    * Gated on `billing:write` rather than on the bare `damplab-staff` check
    * `createForJob` still hand-rolls: a void reverses a financial record, so it sits
@@ -47,20 +50,10 @@ export class InvoiceResolver {
    * evaluates both, and a leftover `@Roles` re-denies everyone the permission was
    * meant to admit.
    */
-  @Mutation(() => Invoice, { description: 'Void an invoice. The record is kept and renumbering never happens; its service lines become available to invoice again.' })
+  @Mutation(() => Invoice, { description: 'Void an invoice. The record is kept and renumbering never happens; this changes nothing on the charge ledger.' })
   @RequirePermission(Permission.BillingWrite)
   async voidInvoice(@Args('invoiceId', { type: () => ID }) invoiceId: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<Invoice> {
     return this.invoiceService.voidInvoice(invoiceId, reason, user);
-  }
-
-  /**
-   * Gated on `billing:write` — unlike `createInvoice`, which still hand-rolls a
-   * `damplab-staff` check inside InvoiceService. Do not add a `@Roles` beside it.
-   */
-  @Mutation(() => Invoice, { description: 'Generate a running equipment invoice for a job: every confirmed booking to date, the payments received, and the balance due.' })
-  @RequirePermission(Permission.BillingWrite)
-  async createEquipmentInvoice(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Invoice> {
-    return this.invoiceService.createEquipmentInvoice(jobId, user);
   }
 
   @ResolveField(() => Job, { description: 'Job this invoice is associated with' })

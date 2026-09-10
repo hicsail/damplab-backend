@@ -90,9 +90,9 @@ describe('invoicing a job that uses one service twice', () => {
     return data.sowById.billableServices;
   }
 
-  async function createInvoice(services: Array<{ index: number; serviceId: string }>, jobId: string): Promise<any> {
+  async function createInvoice(releaseServiceLines: Array<{ sourceIndex: number; serviceId: string }>, jobId: string): Promise<any> {
     const data = await gql(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id subtotal totalCost services { serviceId name cost } } }`, {
-      input: { jobId, services }
+      input: { jobId, releaseServiceLines }
     });
     return data.createInvoice;
   }
@@ -118,7 +118,7 @@ describe('invoicing a job that uses one service twice', () => {
     const { jobId, billable } = await jobWithTwoLines();
 
     const invoice = await createInvoice(
-      billable.map((s, index) => ({ index, serviceId: s.serviceId })),
+      billable.map((s, sourceIndex) => ({ sourceIndex, serviceId: s.serviceId })),
       jobId
     );
 
@@ -129,7 +129,7 @@ describe('invoicing a job that uses one service twice', () => {
   it('can bill only the second line, which sharing an id used to make impossible', async () => {
     const { jobId, billable } = await jobWithTwoLines();
 
-    const invoice = await createInvoice([{ index: 1, serviceId: billable[1].serviceId }], jobId);
+    const invoice = await createInvoice([{ sourceIndex: 1, serviceId: billable[1].serviceId }], jobId);
 
     expect(invoice.services).toHaveLength(1);
     expect(invoice.services[0].cost).toBe(250);
@@ -140,19 +140,8 @@ describe('invoicing a job that uses one service twice', () => {
     const { jobId, billable } = await jobWithTwoLines();
     const before = await invoiceCount();
 
-    expect(await createInvoiceError({ jobId, services: [{ index: 7, serviceId: billable[0].serviceId }] })).toMatch(/no longer part of this Statement of Work/);
-    expect(await createInvoiceError({ jobId, services: [{ index: 0, serviceId: 'not-the-service' }] })).toMatch(/changed while the invoice was being prepared/);
+    expect(await createInvoiceError({ jobId, releaseServiceLines: [{ sourceIndex: 7, serviceId: billable[0].serviceId }] })).toBe('Selected line is not on the Statement of Work.');
+    expect(await createInvoiceError({ jobId, releaseServiceLines: [{ sourceIndex: 0, serviceId: 'not-the-service' }] })).toBe('Selected line is not on the Statement of Work.');
     expect(await invoiceCount()).toBe(before);
-  });
-
-  it('still honours the deprecated id contract, one line per entry', async () => {
-    const { jobId, billable } = await jobWithTwoLines();
-
-    const data = await gql(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { subtotal services { cost } } }`, {
-      input: { jobId, serviceIds: [billable[0].serviceId, billable[1].serviceId] }
-    });
-
-    expect(data.createInvoice.services.map((s: any) => s.cost)).toEqual([100, 250]);
-    expect(data.createInvoice.subtotal).toBe(350);
   });
 });

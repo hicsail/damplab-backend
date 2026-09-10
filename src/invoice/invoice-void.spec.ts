@@ -4,23 +4,24 @@ import { User } from '../auth/user.interface';
 /**
  * Voiding an invoice.
  *
- * The double-billing guard added with `sourceIndex` made a mis-generated invoice
- * permanent: its lines could never be billed again, and the guard's own refusal
- * told staff to void the earlier invoice — an action that did not exist. Voiding
- * is that action. It keeps the document (numbering is derived from a count, so a
- * delete would recycle the number) and releases the lines.
+ * It keeps the document — numbering is derived from a count, so a delete would
+ * recycle the number — and changes nothing else: a statement's service lines
+ * live on the job's charge ledger, not on the invoice, so voiding the document
+ * does not release them. Releasing them back onto the ledger is a separate act
+ * (voiding the underlying JobCharge), which this file does not exercise.
  */
 
 const staff = { realm_access: { roles: ['damplab-staff'] }, email: 'tech@bu.edu' } as unknown as User;
 
 interface HarnessOptions {
   existingInvoices?: any[];
-  activeVersionNumber?: number;
 }
 
-function harness(opts: HarnessOptions = {}): { service: InvoiceService; created: any[]; existing: any[] } {
+function harness(opts: HarnessOptions = {}): { service: InvoiceService; created: any[]; existing: any[]; voidedCharges: any[]; releasedCharges: any[] } {
   const created: any[] = [];
   const existing = opts.existingInvoices ?? [];
+  const voidedCharges: any[] = [];
+  const releasedCharges: any[] = [];
 
   const matchesVoidFilter = (inv: any, filter: any): boolean => !Object.prototype.hasOwnProperty.call(filter, 'voidedAt') || inv.voidedAt == null;
 
@@ -48,7 +49,7 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
   // FINAL, because invoicing now requires a countersigned SOW and these tests are
   // about voiding rather than about that gate.
   const version = {
-    versionNumber: opts.activeVersionNumber ?? 1000,
+    versionNumber: 1000,
     status: 'FINAL',
     inputs: {
       services: [
@@ -60,18 +61,46 @@ function harness(opts: HarnessOptions = {}): { service: InvoiceService; created:
   };
 
   const sowService: any = {
-    findByJobId: async () => ({ _id: 'sow-1', services: version.inputs.services, pricing: { baseCost: 470, adjustments: [], totalCost: 470 } }),
+    findByJobId: async () => ({ _id: 'sow-1', clientName: 'Dr Client', clientEmail: 'client@bu.edu' }),
     billableServiceLines: async (): Promise<any[]> => version.inputs.services
   };
   const sowVersionService: any = { getActiveVersion: async () => version, listVersions: async (): Promise<any[]> => [version] };
 
-  const balances: any = { balance: async () => ({ jobId: 'job-1', chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 0, unconfirmedBookings: 0 }), confirmedBookings: async () => [] };
+  const charges: any = {
+    liveByJobId: async () => [],
+    createServiceLineCharges: async (jobId: string, rows: any[]) => {
+      releasedCharges.push(...rows);
+      return rows;
+    },
+    voidCharge: async (id: string, reason: string) => {
+      voidedCharges.push({ id, reason });
+      return { _id: id };
+    }
+  };
+
+  const balances: any = {
+    chargeBreakdown: async () => ({
+      jobId: 'job-1',
+      serviceLines: [],
+      customLines: [],
+      depositLines: [],
+      bookings: [],
+      adjustments: [],
+      prorationFactor: 1,
+      chargesToDate: 350,
+      paymentsToDate: 0,
+      balanceDue: 350,
+      confirmedHours: 0,
+      unconfirmedBookings: 0
+    }),
+    confirmedBookings: async () => []
+  };
   const dispatch: any = { dispatch: () => undefined };
 
-  return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService, balances, dispatch), created, existing };
+  return { service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService, charges, balances, dispatch), created, existing, voidedCharges, releasedCharges };
 }
 
-/** An invoice as `createForJob` writes one, reduced to what the guard reads. */
+/** An invoice as `createForJob` writes one, reduced to what void reads. */
 const priorInvoice = (overrides: any = {}): any => ({
   _id: 'inv-1',
   invoiceNumber: '04217-001',
@@ -110,42 +139,6 @@ describe('voidInvoice', () => {
 
     await expect(service.voidInvoice('nope', 'Any reason', staff)).rejects.toThrow(/not found/i);
   });
-});
-
-describe('voiding releases the invoice’s service lines', () => {
-  it('refuses to re-bill a line while the earlier invoice stands', async () => {
-    const { service } = harness({ existingInvoices: [priorInvoice()] });
-
-    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/already been invoiced/i);
-  });
-
-  it('points staff at the action that now exists', async () => {
-    const { service } = harness({ existingInvoices: [priorInvoice()] });
-
-    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/void that invoice to release its lines/i);
-  });
-
-  it('bills the line again once that invoice is voided', async () => {
-    const { service, created } = harness({ existingInvoices: [priorInvoice()] });
-
-    await service.voidInvoice('inv-1', 'Billed the wrong customer', staff);
-    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
-
-    expect(created).toHaveLength(1);
-    expect(created[0].services[0].serviceId).toBe('s1');
-    expect(created[0].services[0].sourceIndex).toBe(0);
-  });
-
-  it('keeps the voided invoice inside the numbering sequence', async () => {
-    const { service, created } = harness({ existingInvoices: [priorInvoice()] });
-
-    await service.voidInvoice('inv-1', 'Billed the wrong customer', staff);
-    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
-
-    // -002, not -001: the void released the line but not the number, so the
-    // replacement cannot collide with the invoice it replaces.
-    expect(created[0].invoiceNumber).toBe('04217-002');
-  });
 
   it('stops counting a voided invoice as billing on the jobs list', async () => {
     const { service } = harness({ existingInvoices: [priorInvoice()] });
@@ -156,26 +149,23 @@ describe('voiding releases the invoice’s service lines', () => {
     expect(await service.countByJobId('job-1')).toBe(0);
   });
 
-  it('still refuses a line held by a second, live invoice', async () => {
-    const { service } = harness({
-      existingInvoices: [priorInvoice(), priorInvoice({ _id: 'inv-2', invoiceNumber: '04217-002', services: [{ serviceId: 's1', name: 'PCR', sourceIndex: 0 }] })]
-    });
+  it('keeps the voided invoice inside the numbering sequence', async () => {
+    const { service, created } = harness({ existingInvoices: [priorInvoice()] });
 
-    await service.voidInvoice('inv-1', 'Duplicate', staff);
+    await service.voidInvoice('inv-1', 'Billed the wrong customer', staff);
+    await service.createForJob({ jobId: 'job-1', releaseServiceLines: [] } as any, staff);
 
-    await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/already on invoice 04217-002/);
+    // -002, not -001: voiding never frees a number, whether or not it releases
+    // any charge.
+    expect(created[0].invoiceNumber).toBe('04217-002');
   });
+});
 
-  it('voids an equipment invoice the same way, releasing nothing because it claims no lines', async () => {
-    const equipment = { _id: 'inv-eq', invoiceNumber: '04217-001', kind: 'EQUIPMENT', services: [], equipmentLines: [{ bookingId: 'bk-1', cost: 80 }] };
-    const { service } = harness({ existingInvoices: [equipment] });
-
-    const voided: any = await service.voidInvoice('inv-eq', 'Issued against the wrong job', staff);
-
-    expect(voided.voidedAt).toBeInstanceOf(Date);
-    expect(voided.voidReason).toBe('Issued against the wrong job');
-    // No line release to assert, and that is the point: an equipment invoice
-    // never took a position out of circulation.
-    expect(voided.equipmentLines).toHaveLength(1);
+describe('voiding changes nothing on the charge ledger', () => {
+  it('leaves the released service lines exactly where they were', async () => {
+    const { service, voidedCharges } = harness({ existingInvoices: [priorInvoice()] });
+    await service.voidInvoice('inv-1', 'Billed the wrong customer', staff);
+    // Holding a line back is voiding its charge, which is a separate act.
+    expect(voidedCharges).toEqual([]);
   });
 });

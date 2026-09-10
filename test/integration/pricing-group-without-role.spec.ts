@@ -119,7 +119,7 @@ describe('a pricing group with no realm role, absent from the token', () => {
 
     const { sowByJobId } = await gql(testApp, 'staff', `query ($jobId: ID!) { sowByJobId(jobId: $jobId) { billableServices { serviceId } } }`, { jobId });
     const invoice = await gql(testApp, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { subtotal totalCost services { cost } } }`, {
-      input: { jobId, services: [{ index: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }
+      input: { jobId, releaseServiceLines: [{ sourceIndex: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }
     });
     expect(Number(invoice.createInvoice.services[0].cost)).toBe(150);
     expect(Number(invoice.createInvoice.totalCost)).toBe(150);

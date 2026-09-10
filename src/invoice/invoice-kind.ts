@@ -16,13 +16,12 @@ registerEnumType(InvoiceKind, { name: 'InvoiceKind', description: 'What an invoi
  * Every invoice written before this field existed bills SOW service lines, so
  * an absent `kind` reads as SOW. This is a READ-TIME fallback rather than a
  * schema default deliberately: a default only reaches documents Mongoose
- * hydrates, and the billed-positions guard, the resolver and the UI must all
- * agree about a `.lean()` row and a projected one too.
+ * hydrates, and the resolver and the UI must all agree about a `.lean()` row
+ * and a projected one too.
  *
- * Anything unrecognised also reads as SOW — the safe direction, since EQUIPMENT
- * is what exempts an invoice from the double-billing guard (see
- * `InvoiceService.createForJob`'s prior-invoice scan). STATEMENT is not wired
- * into that guard yet — this task only prepares the model.
+ * Anything unrecognised also reads as SOW — the safe direction. `createForJob`
+ * writes only STATEMENT now; SOW and EQUIPMENT persist as the kind of every
+ * document the two retired generators already wrote.
  */
 export function invoiceKindOf(invoice: { kind?: string | null } | null | undefined): InvoiceKind {
   const stored = String(invoice?.kind ?? '');

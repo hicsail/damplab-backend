@@ -325,10 +325,10 @@ export class Invoice {
    * deleting one hands its number straight to the next invoice and produces two
    * `04217-003`s. A void leaves the count intact.
    *
-   * Voiding releases the invoice's service lines: `createForJob`'s prior-invoice
-   * scan skips voided documents, so those positions can be billed again. That is
-   * the whole point — the double-billing guard would otherwise make a
-   * mis-generated invoice permanent.
+   * Voiding changes nothing on the job's charge ledger: a statement's service
+   * lines live there, not on the invoice, so voiding the document does not
+   * release them. Holding a line back is voiding its underlying `JobCharge`, a
+   * separate act on `JobChargeService`.
    *
    * All three fields move together. `voidedAt` is the flag every reader tests.
    */

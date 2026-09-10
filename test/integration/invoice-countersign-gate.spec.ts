@@ -4,14 +4,15 @@ import mongoose from 'mongoose';
 import * as F from './sow-flow';
 
 /**
- * An invoice bills a countersigned Statement of Work, or nothing.
+ * A statement bills a countersigned Statement of Work, or nothing.
  *
- * The colocated unit spec drives `invoiceBlockedReason` and the service against
- * stand-ins. This walks the real lifecycle, because the distinction the gate turns
- * on — "no version in force" meaning *withdrawn* versus *never issued* — is
- * produced by compare-and-set behaviour that only a real Mongo exhibits:
- * `withdrawSowFromCustomer` zeroes `activeVersionNumber` exactly as never having
- * issued anything leaves it.
+ * `createForJob` no longer distinguishes why: sent-but-unsigned, signed-but-
+ * uncountersigned, cancelled, withdrawn and never-versioned all refuse in the
+ * same words. This still walks the real lifecycle rather than stand-ins,
+ * because several of those states — in particular "no version in force"
+ * meaning *withdrawn* versus *never issued* — are produced by compare-and-set
+ * behaviour that only a real Mongo exhibits: `withdrawSowFromCustomer` zeroes
+ * `activeVersionNumber` exactly as never having issued anything leaves it.
  */
 
 jest.setTimeout(60000);
@@ -48,17 +49,19 @@ describe('invoicing is gated on a countersigned SOW', () => {
     return { jobId, sowId };
   }
 
+  const COUNTERSIGNED_MESSAGE = 'Cannot generate an invoice until the Statement of Work is countersigned.';
+
   async function invoiceError(jobId: string): Promise<string> {
     const { sowByJobId } = await gql(ctx, 'staff', `query ($jobId: ID!) { sowByJobId(jobId: $jobId) { billableServices { serviceId } } }`, { jobId });
     return gqlError(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id } }`, {
-      input: { jobId, services: [{ index: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }
+      input: { jobId, releaseServiceLines: [{ sourceIndex: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }
     });
   }
 
   async function invoice(jobId: string): Promise<any> {
     const { sowByJobId } = await gql(ctx, 'staff', `query ($jobId: ID!) { sowByJobId(jobId: $jobId) { billableServices { serviceId } } }`, { jobId });
     const data = await gql(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id invoiceNumber sowVersionNumber } }`, {
-      input: { jobId, services: [{ index: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }
+      input: { jobId, releaseServiceLines: [{ sourceIndex: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }
     });
     return data.createInvoice;
   }
@@ -66,20 +69,20 @@ describe('invoicing is gated on a countersigned SOW', () => {
   it('refuses a draft that was never sent, which used to invoice off the live figures', async () => {
     const { jobId } = await draftSow();
 
-    expect(await invoiceError(jobId)).toMatch(/not been sent to the customer or countersigned/i);
+    expect(await invoiceError(jobId)).toBe(COUNTERSIGNED_MESSAGE);
   });
 
   it('refuses a SOW sitting with the customer for signature', async () => {
     const { jobId, sowId } = await draftSow();
     await F.sendSowToCustomer(ctx, 'staff', sowId);
 
-    expect(await invoiceError(jobId)).toMatch(/not been countersigned yet/i);
+    expect(await invoiceError(jobId)).toBe(COUNTERSIGNED_MESSAGE);
   });
 
   it('refuses a SOW the customer signed but the lab has not countersigned', async () => {
     const { jobId } = await signedSow();
 
-    expect(await invoiceError(jobId)).toMatch(/not been countersigned yet/i);
+    expect(await invoiceError(jobId)).toBe(COUNTERSIGNED_MESSAGE);
   });
 
   it('allows it once countersigned, and anchors the invoice to that version', async () => {
@@ -117,8 +120,10 @@ describe('invoicing is gated on a countersigned SOW', () => {
     await F.finalizeSow(ctx, 'staff', sowId, 'Tess Technician');
     await F.cancelSow(ctx, 'staff', sowId, 'Project called off');
 
-    // Not "not countersigned yet" — it was. The reader needs the actual reason.
-    expect(await invoiceError(jobId)).toMatch(/cancelled/i);
+    // Countersigning happened and was undone by cancellation, but the gate no
+    // longer distinguishes that from any other reason it refuses: the action
+    // that clears all of them is the same.
+    expect(await invoiceError(jobId)).toBe(COUNTERSIGNED_MESSAGE);
   });
 
   it('points a pre-versioning SOW at the migration, and lets it through once migrated', async () => {
@@ -129,9 +134,11 @@ describe('invoicing is gated on a countersigned SOW', () => {
     await db.collection('sow_versions').deleteMany({ sowId: String(sowId) });
     await db.collection('sows').updateOne({ _id: new mongoose.Types.ObjectId(sowId) }, { $set: { currentVersionNumber: 0, activeVersionNumber: 0 } });
 
-    expect(await invoiceError(jobId)).toMatch(/predates document versioning/i);
+    expect(await invoiceError(jobId)).toBe(COUNTERSIGNED_MESSAGE);
 
-    // The remedy the message names, end to end.
+    // The remedy is still the SOW migration, even though the message no longer
+    // names it directly — see sow-access.spec.ts for `invoiceBlockedReason`
+    // itself, which still distinguishes this case for the UI's tooltip.
     await migrateSows(db, { log: () => undefined });
     const migrated = await F.readSow(ctx, 'staff', sowId);
     await F.saveSowVersion(ctx, 'staff', sowId, migrated.currentVersion, { note: 'Filled in' });
