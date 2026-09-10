@@ -19,7 +19,9 @@ function round2(n: number): number {
 export const CHARGE_MESSAGES = {
   labelRequired: 'A label is required for a charge.',
   amountZero: 'A charge amount cannot be zero.',
-  depositNotPositive: 'A deposit must be greater than zero.'
+  depositNotPositive: 'A deposit must be greater than zero.',
+  reasonRequired: 'A reason is required to void a charge.',
+  alreadyVoided: 'That charge has already been voided.'
 } as const;
 
 @Injectable()
@@ -126,7 +128,7 @@ export class JobChargeService {
   async voidCharge(id: string, reason: string, user: User): Promise<JobCharge> {
     const trimmed = String(reason ?? '').trim();
     if (!trimmed) {
-      throw new BadRequestException('A reason is required to void a charge.');
+      throw new BadRequestException(CHARGE_MESSAGES.reasonRequired);
     }
 
     const charge: any = await this.model.findById(id).exec();
@@ -134,7 +136,7 @@ export class JobChargeService {
       throw new NotFoundException(`Charge with ID ${id} not found`);
     }
     if (charge.voidedAt) {
-      throw new BadRequestException('That charge has already been voided.');
+      throw new BadRequestException(CHARGE_MESSAGES.alreadyVoided);
     }
 
     const voidedBy = user.email || user.preferred_username || 'unknown';
@@ -142,7 +144,7 @@ export class JobChargeService {
     // overwrite each other's reason.
     const updated = await this.model.findOneAndUpdate({ _id: id, voidedAt: null }, { $set: { voidedAt: new Date(), voidedBy, voidReason: trimmed } }, { new: true }).exec();
     if (!updated) {
-      throw new BadRequestException('That charge has already been voided.');
+      throw new BadRequestException(CHARGE_MESSAGES.alreadyVoided);
     }
     return updated;
   }
