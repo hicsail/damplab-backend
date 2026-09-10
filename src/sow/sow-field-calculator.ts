@@ -1,7 +1,7 @@
 import { SowField, SowFieldKind, SowVersionInputs, SowPeriod } from './sow-version.model';
 import { SOWAdjustmentType } from './sow.model';
 import { CUSTOM_FIELD_ORDER_BASE, SOW_FIELD_CATALOG, SOW_PROSE_DEFAULTS, SowFieldDefinition, customerCategoryLabel, findFieldDefinition, isCustomFieldKey } from './sow-field-defaults';
-import { isEquipmentLineDescription } from '../pricing/service-pricing.util';
+import { splitContractedLines, sumLineCosts } from '../pricing/service-pricing.util';
 
 /**
  * Generates the SOW document text from structured inputs.
@@ -235,13 +235,13 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
     ''
   ];
 
-  const serviceRows = (inputs.services ?? []).map((s) => {
+  // A line written before unit prices were recorded has only its total to
+  // quote. Deriving a base by dividing the total would rewrite the figures on
+  // documents that are already sent, signed or finalized — every load
+  // regenerates this text (see mergeCalculatedFields) and Fee Schedule has no
+  // text override to fall back on.
+  const renderRow = (s: SowVersionInputs['services'][number]): string => {
     const multiplier = Number(s.multiplier);
-    // A line written before unit prices were recorded has only its total to
-    // quote. Deriving a base by dividing the total would rewrite the figures on
-    // documents that are already sent, signed or finalized — every load
-    // regenerates this text (see mergeCalculatedFields) and Fee Schedule has no
-    // text override to fall back on.
     const headline =
       s.unitCost == null || !Number.isFinite(multiplier) || multiplier === 1
         ? `${s.name} — ${formatCurrency(s.cost)}`
@@ -255,13 +255,20 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
     // see what they were being billed for. Lines with nothing to itemise render
     // exactly as they did, so no already-issued document's text moves.
     const detailRows = (s.pricingDetails ?? []).map((d) => `    - ${d.label} — ${formatMultiplier(Number(d.quantity))} x ${formatCurrency(Number(d.unitPrice))} = ${formatCurrency(Number(d.total))}`);
+    return [`- ${headline}`, ...detailRows].join('\n');
+  };
 
-    // Behaviour 13: the customer must be told that this figure is a projection and
-    // that the invoice will bill the hours actually booked. No figure changes.
-    const estimateNote = isEquipmentLineDescription(s.description) ? ['    Estimated · billed at actual booked hours'] : [];
-    return [`- ${headline}`, ...estimateNote, ...detailRows].join('\n');
-  });
-  lines.push(...(serviceRows.length ? [serviceRows.join('\n')] : ['- No services listed']));
+  // Behaviour 1-2: what the document contracts for, and what it merely projects.
+  // The estimate figure is derived from the rows just listed rather than read
+  // from inputs.estimatedEquipmentCost, so the sentence can never disagree with
+  // the lines above it — including on a version frozen before that field existed.
+  const { contracted, equipment } = splitContractedLines(inputs.services ?? []);
+  const contractedRows = contracted.map(renderRow);
+  lines.push(...(contractedRows.length ? [contractedRows.join('\n')] : ['- No services listed']));
+
+  if (equipment.length > 0) {
+    lines.push('', 'Estimated equipment usage — billed at actual booked hours', equipment.map(renderRow).join('\n'));
+  }
 
   const adjustments = inputs.adjustments ?? [];
   if (adjustments.length > 0) {
@@ -281,9 +288,11 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
     lines.push(bulletList(adjRows));
   }
 
+  lines.push('', `Total: ${formatCurrency(inputs.totalCost)}`);
+  if (equipment.length > 0) {
+    lines.push(`Estimated equipment usage (not included in Total): ${formatCurrency(sumLineCosts(equipment))}`);
+  }
   lines.push(
-    '',
-    `Total: ${formatCurrency(inputs.totalCost)}`,
     '',
     'Upon completion of the initial performance period, University and the Client will have the option to renew this SOW for an additional then-stated project for those resources identified.'
   );

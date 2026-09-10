@@ -642,24 +642,39 @@ describe('the Fee Schedule and equipment-use lines', () => {
 
   const feeScheduleFor = (overrides: Partial<SowVersionInputs>): string => calculateFieldValues(inputs(overrides as any), ctx).feeSchedule;
 
-  it('marks an equipment-use line as an estimate billed at actual booked hours', () => {
+  it('gives equipment lines their own heading rather than a note per line', () => {
     const text = feeScheduleFor({ services: [equipmentLine as any] });
-    expect(text).toContain('Estimated · billed at actual booked hours');
+    expect(text).toContain('Estimated equipment usage — billed at actual booked hours');
+    expect(text).not.toContain('Estimated · billed at actual booked hours');
   });
 
-  it('says nothing extra on an ordinary service line', () => {
-    expect(feeScheduleFor({ services: [plainLine as any] })).not.toContain('Estimated');
-  });
-
-  it('leaves the total alone', () => {
-    expect(feeScheduleFor({ services: [equipmentLine as any], totalCost: 400 })).toContain('Total: $400.00');
-  });
-
-  it('puts the note under the line it belongs to, not at the end', () => {
+  it('lists contracted lines first, then the heading, then the equipment ones', () => {
     const lines = feeScheduleFor({ services: [equipmentLine as any, plainLine as any] }).split('\n');
-    const noteAt = lines.findIndex((l) => l.includes('Estimated · billed at actual booked hours'));
-    const plainAt = lines.findIndex((l) => l.includes('PCR'));
-    expect(noteAt).toBeGreaterThan(0);
-    expect(noteAt).toBeLessThan(plainAt);
+    const pcrAt = lines.findIndex((l) => l.includes('PCR'));
+    const headingAt = lines.findIndex((l) => l.includes('Estimated equipment usage — billed at actual booked hours'));
+    const readerAt = lines.findIndex((l) => l.includes('Plate reader time'));
+    expect(pcrAt).toBeLessThan(headingAt);
+    expect(headingAt).toBeLessThan(readerAt);
+  });
+
+  it('renders an equipment line in the same row format as any other', () => {
+    expect(feeScheduleFor({ services: [equipmentLine as any] })).toContain('- Plate reader time — $10.00 x 40 = $400.00');
+  });
+
+  it('states the estimate under the total, and excludes it from the total', () => {
+    const text = feeScheduleFor({ services: [equipmentLine as any, plainLine as any], totalCost: 350 });
+    expect(text).toContain('Total: $350.00');
+    expect(text).toContain('Estimated equipment usage (not included in Total): $400.00');
+  });
+
+  it('says nothing about estimates when there is no equipment line', () => {
+    const text = feeScheduleFor({ services: [plainLine as any], totalCost: 350 });
+    expect(text).not.toContain('Estimated equipment usage');
+  });
+
+  it('still says "No services listed" when a document has no contracted lines but does have an estimate', () => {
+    const text = feeScheduleFor({ services: [equipmentLine as any], totalCost: 0 });
+    expect(text).toContain('- No services listed');
+    expect(text).toContain('Total: $0.00');
   });
 });
