@@ -635,3 +635,31 @@ describe('Fee Schedule: what a parameter-priced line was made of', () => {
     expect(line(undefined)).not.toContain('    - ');
   });
 });
+
+describe('the Fee Schedule and equipment-use lines', () => {
+  const equipmentLine = { serviceId: 'e1', name: 'Plate reader time', description: 'Plate reader — 10 hrs/wk x 4 wks (estimate; billed on actual hours)', cost: 400, unitCost: 10, multiplier: 40 };
+  const plainLine = { serviceId: 's1', name: 'PCR', description: 'Amplification', cost: 350, unitCost: 175, multiplier: 2 };
+
+  const feeScheduleFor = (overrides: Partial<SowVersionInputs>): string => calculateFieldValues(inputs(overrides as any), ctx).feeSchedule;
+
+  it('marks an equipment-use line as an estimate billed at actual booked hours', () => {
+    const text = feeScheduleFor({ services: [equipmentLine as any] });
+    expect(text).toContain('Estimated · billed at actual booked hours');
+  });
+
+  it('says nothing extra on an ordinary service line', () => {
+    expect(feeScheduleFor({ services: [plainLine as any] })).not.toContain('Estimated');
+  });
+
+  it('leaves the total alone', () => {
+    expect(feeScheduleFor({ services: [equipmentLine as any], totalCost: 400 })).toContain('Total: $400.00');
+  });
+
+  it('puts the note under the line it belongs to, not at the end', () => {
+    const lines = feeScheduleFor({ services: [equipmentLine as any, plainLine as any] }).split('\n');
+    const noteAt = lines.findIndex((l) => l.includes('Estimated · billed at actual booked hours'));
+    const plainAt = lines.findIndex((l) => l.includes('PCR'));
+    expect(noteAt).toBeGreaterThan(0);
+    expect(noteAt).toBeLessThan(plainAt);
+  });
+});

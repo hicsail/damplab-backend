@@ -12,6 +12,7 @@ import {
   equipmentLineDescription,
   equipmentWeeks,
   extractRunCount,
+  isEquipmentLineDescription,
   RUN_COUNT_PARAM_ID
 } from './service-pricing.util';
 
@@ -446,5 +447,21 @@ describe('equipmentLineDescription', () => {
 
   it('says nothing about an incomplete window, which the pricer also ignores', () => {
     expect(equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', undefined, 10))).toBe('Plate reader time');
+  });
+});
+
+describe('isEquipmentLineDescription', () => {
+  it('recognises the suffix equipmentLineDescription writes', () => {
+    expect(isEquipmentLineDescription(equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10)))).toBe(true);
+  });
+
+  it('recognises a fractional hours-per-week figure', () => {
+    expect(isEquipmentLineDescription('X — 7.5 hrs/wk x 3 wks (estimate; billed on actual hours)')).toBe(true);
+  });
+
+  it('says no to an ordinary service line, and to nothing at all', () => {
+    expect(isEquipmentLineDescription('Amplification of the supplied template')).toBe(false);
+    expect(isEquipmentLineDescription(undefined)).toBe(false);
+    expect(isEquipmentLineDescription('')).toBe(false);
   });
 });

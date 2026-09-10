@@ -1,6 +1,7 @@
 import { SowField, SowFieldKind, SowVersionInputs, SowPeriod } from './sow-version.model';
 import { SOWAdjustmentType } from './sow.model';
 import { CUSTOM_FIELD_ORDER_BASE, SOW_FIELD_CATALOG, SOW_PROSE_DEFAULTS, SowFieldDefinition, customerCategoryLabel, findFieldDefinition, isCustomFieldKey } from './sow-field-defaults';
+import { isEquipmentLineDescription } from '../pricing/service-pricing.util';
 
 /**
  * Generates the SOW document text from structured inputs.
@@ -254,7 +255,11 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
     // see what they were being billed for. Lines with nothing to itemise render
     // exactly as they did, so no already-issued document's text moves.
     const detailRows = (s.pricingDetails ?? []).map((d) => `    - ${d.label} — ${formatMultiplier(Number(d.quantity))} x ${formatCurrency(Number(d.unitPrice))} = ${formatCurrency(Number(d.total))}`);
-    return [`- ${headline}`, ...detailRows].join('\n');
+
+    // Behaviour 13: the customer must be told that this figure is a projection and
+    // that the invoice will bill the hours actually booked. No figure changes.
+    const estimateNote = isEquipmentLineDescription(s.description) ? ['    Estimated · billed at actual booked hours'] : [];
+    return [`- ${headline}`, ...estimateNote, ...detailRows].join('\n');
   });
   lines.push(...(serviceRows.length ? [serviceRows.join('\n')] : ['- No services listed']));
 

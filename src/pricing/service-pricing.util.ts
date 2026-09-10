@@ -117,6 +117,18 @@ export function equipmentFactor(rawFormData: unknown): number | undefined {
 const EQUIPMENT_DESCRIPTION_SUFFIX_RE = / — \d+(?:\.\d+)? hrs\/wk x \d+ wks \(estimate; billed on actual hours\)$/;
 
 /**
+ * Whether a SOW/invoice line describes equipment time.
+ *
+ * The suffix `equipmentLineDescription` writes is the only marker that survives
+ * onto a frozen SOW version — `SowVersionService` lines carry no `equipmentUse`
+ * flag — so the predicate lives here with the regex rather than being copied
+ * next to each reader.
+ */
+export function isEquipmentLineDescription(description: string | null | undefined): boolean {
+  return EQUIPMENT_DESCRIPTION_SUFFIX_RE.test(String(description ?? ''));
+}
+
+/**
  * The SOW/invoice line description for an operation, with the equipment estimate
  * spelled out on it.
  *
