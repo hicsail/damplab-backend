@@ -404,6 +404,43 @@ describe('deposit mode', () => {
     expect(added).toHaveLength(0);
     expect(created).toHaveLength(0);
   });
+
+  // A deposit is money owed before the SOW is signed — the countersign gate
+  // exists to keep the lab from billing an unsigned contract, and a deposit is
+  // not that: it must not be blocked by a SOW that is merely SENT, or absent.
+  it('issues a STATEMENT carrying the deposit when the SOW is only SENT', async () => {
+    const { service, added, created } = harness({
+      activeStatus: 'SENT',
+      breakdown: { ...defaultBreakdown({}), depositLines: [{ _id: 'chg-1', kind: 'DEPOSIT', label: 'Deposit', amount: 500 }], chargesToDate: 500, balanceDue: 500 }
+    });
+    await service.createForJob({ jobId: 'job-1', deposit: { amount: 500 } } as any, staff);
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ kind: 'DEPOSIT', label: 'Deposit', amount: 500 });
+    expect(created).toHaveLength(1);
+    expect(created[0].kind).toBe('STATEMENT');
+    // Not FINAL, so the document carries no version number.
+    expect(created[0].sowVersionNumber).toBeUndefined();
+  });
+
+  it('issues a STATEMENT carrying the deposit when the job has no SOW at all', async () => {
+    const { service, added, created } = harness({
+      hasSow: false,
+      breakdown: { ...defaultBreakdown({}), depositLines: [{ _id: 'chg-1', kind: 'DEPOSIT', label: 'Deposit', amount: 500 }], chargesToDate: 500, balanceDue: 500 }
+    });
+    await service.createForJob({ jobId: 'job-1', deposit: { amount: 500 } } as any, staff);
+    expect(added).toHaveLength(1);
+    expect(created).toHaveLength(1);
+    expect(created[0].kind).toBe('STATEMENT');
+    expect(created[0].sowVersionNumber).toBeUndefined();
+    expect(created[0].billedToName).toBe('Client');
+  });
+
+  it('still refuses a non-deposit call on a SENT SOW with the countersign message', async () => {
+    const { service, added, created } = harness({ activeStatus: 'SENT' });
+    await expect(service.createForJob({ jobId: 'job-1' } as any, staff)).rejects.toThrow('Cannot generate an invoice until the Statement of Work is countersigned.');
+    expect(added).toHaveLength(0);
+    expect(created).toHaveLength(0);
+  });
 });
 
 describe('custom lines', () => {

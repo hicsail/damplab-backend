@@ -95,10 +95,22 @@ export class InvoiceService {
     // distinguishes "never sent" from "cancelled" from "withdrawn": the action
     // that clears all of them is the same, countersign the SOW, so naming the
     // reason only gave staff more ways to misread it as a permanent refusal.
+    //
+    // A deposit is money owed BEFORE the SOW is signed — that is the entire
+    // point of asking for one — so a deposit request is exempt from this gate.
+    // The SOW may be SENT, DRAFT, withdrawn, or absent entirely; whatever
+    // version (if any) is in force is still read below, for `sowVersionNumber`
+    // and the client's billing details, but its status is never checked here.
+    const deposit = input.deposit ?? null;
     const sow: any = await this.sowService.findByJobId(input.jobId);
-    if (!sow) throw new BadRequestException(COUNTERSIGNED_MESSAGE);
-    const active = await this.sowVersionService.getActiveVersion(String(sow._id));
-    if (active?.status !== SOWStatus.FINAL) throw new BadRequestException(COUNTERSIGNED_MESSAGE);
+    if (!deposit && !sow) throw new BadRequestException(COUNTERSIGNED_MESSAGE);
+    const active = sow ? await this.sowVersionService.getActiveVersion(String(sow._id)) : null;
+    if (!deposit && active?.status !== SOWStatus.FINAL) throw new BadRequestException(COUNTERSIGNED_MESSAGE);
+    // The version actually in force, for `sowVersionNumber` — undefined unless
+    // it is FINAL. Deposit mode may reach here with `active` set but SENT (or
+    // unset entirely); non-deposit mode never reaches here unless it is FINAL,
+    // so this is a no-op restatement of the gate above for that path.
+    const finalVersionNumber = active?.status === SOWStatus.FINAL ? active.versionNumber : undefined;
 
     // Every refusal this call can make, decided before a single row is written.
     // A deposit that releases lines, or a third custom line with a zero amount,
@@ -106,7 +118,6 @@ export class InvoiceService {
     // through this service, and the retry would then double-charge. The amount
     // checks round to cents first, the way `addCharge` does, so a sub-cent line
     // is refused here rather than from inside the write loop.
-    const deposit = input.deposit ?? null;
     const customLines = input.customLines ?? [];
     // Fetched here, before the deposit gate, so a deposit can be checked
     // against the ledger's current SERVICE_LINE charges before anything is
@@ -130,8 +141,9 @@ export class InvoiceService {
     }
 
     // What this statement may release, and what the staff dialog listed — one
-    // array, so a position means the same thing on both sides.
-    const sowServices: any[] = await this.sowService.billableServiceLines(sow);
+    // array, so a position means the same thing on both sides. A deposit
+    // request may reach here with no SOW at all, so there is nothing to list.
+    const sowServices: any[] = sow ? await this.sowService.billableServiceLines(sow) : [];
 
     // Release, before the balance is computed: the statement states what the
     // ledger holds AFTER this release, not before it.
@@ -160,7 +172,7 @@ export class InvoiceService {
         serviceId: String(line.serviceId ?? line._id),
         label: String(line.name ?? 'Service'),
         amount: Number(line.cost) || 0,
-        sowVersionNumber: active?.versionNumber ?? undefined,
+        sowVersionNumber: finalVersionNumber,
         sourceIndex
       });
     }
@@ -228,11 +240,11 @@ export class InvoiceService {
       // have already paid.
       totalCost: breakdown.balanceDue,
       dueDate,
-      billedToName: String((sow as any).clientName ?? 'Client'),
-      billedToEmail: String((sow as any).clientEmail ?? ''),
-      billedToAddress: (sow as any).clientAddress ?? undefined,
+      billedToName: String((sow as any)?.clientName ?? 'Client'),
+      billedToEmail: String((sow as any)?.clientEmail ?? ''),
+      billedToAddress: (sow as any)?.clientAddress ?? undefined,
       customerCategory: active?.inputs?.customerCategory ?? (job as any).customerCategory ?? undefined,
-      sowVersionNumber: active?.versionNumber ?? undefined,
+      sowVersionNumber: finalVersionNumber,
       createdAt: new Date()
     });
 
