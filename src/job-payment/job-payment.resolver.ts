@@ -2,8 +2,8 @@ import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { UseGuards } from '@nestjs/common';
 import { JobPayment } from './job-payment.model';
 import { JobPaymentService } from './job-payment.service';
-import { JobEquipmentBalanceService } from './job-equipment-balance.service';
-import { JobEquipmentBalance } from './dto/job-equipment-balance.type';
+import { JobBalanceService } from './job-balance.service';
+import { JobBalance } from './dto/job-balance.type';
 import { RecordJobPaymentInput } from './dto/record-job-payment.input';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
@@ -19,7 +19,7 @@ import { NotificationDispatchService } from '../notification/notification-dispat
 export class JobPaymentResolver {
   constructor(
     private readonly payments: JobPaymentService,
-    private readonly balances: JobEquipmentBalanceService,
+    private readonly balances: JobBalanceService,
     private readonly jobService: JobService,
     private readonly notificationDispatch: NotificationDispatchService
   ) {}
@@ -30,8 +30,8 @@ export class JobPaymentResolver {
    * hold no billing permission. `assertMayReadJobFinancials` is the server-side
    * twin of the card that renders it.
    */
-  @Query(() => JobEquipmentBalance, { description: "A job's equipment charges, payments and balance." })
-  async jobEquipmentBalance(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<JobEquipmentBalance> {
+  @Query(() => JobBalance, { description: "A job's charges, payments and balance." })
+  async jobBalance(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<JobBalance> {
     const job = await this.jobService.findById(jobId);
     assertMayReadJobFinancials(job as any, user);
     return this.balances.balance(String((job as any)._id));

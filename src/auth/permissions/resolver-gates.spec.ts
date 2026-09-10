@@ -248,7 +248,7 @@ describe('Phase 2b widening — the gate on each operation', () => {
    * anyone who is not staff, the creator, or the named client.
    */
   it('leaves the job billing reads ungated, with the scope enforced inside', () => {
-    for (const method of ['jobEquipmentBalance', 'jobPayments']) {
+    for (const method of ['jobBalance', 'jobPayments']) {
       expect(permissionOn(JobPaymentResolver, method)).toBeUndefined();
       expect(rolesOn(JobPaymentResolver, method)).toBeUndefined();
     }

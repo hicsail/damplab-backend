@@ -12,7 +12,7 @@ import { Role } from '../auth/roles/roles.enum';
 import { selectServiceLines } from './select-service-lines';
 import { invoiceBlockedReason } from '../sow/sow-access';
 import { SOWStatus } from '../sow/sow.model';
-import { JobEquipmentBalanceService } from '../job-payment/job-equipment-balance.service';
+import { JobBalanceService } from '../job-payment/job-balance.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { appliedAdjustmentsTotal, prorateAdjustments, prorationFactorFor } from '../sow/prorate-adjustments';
 
@@ -32,7 +32,7 @@ export class InvoiceService {
     private readonly jobService: JobService,
     private readonly sowService: SOWService,
     private readonly sowVersionService: SowVersionService,
-    private readonly equipmentBalance: JobEquipmentBalanceService,
+    private readonly balances: JobBalanceService,
     private readonly notificationDispatch: NotificationDispatchService
   ) {}
 
@@ -318,7 +318,7 @@ export class InvoiceService {
     if (active?.status !== SOWStatus.FINAL) throw new BadRequestException(countersigned);
 
     const key = String(job._id);
-    const balance = await this.equipmentBalance.balance(key);
+    const balance = await this.balances.balance(key);
     if (!(balance.chargesToDate > 0 || balance.paymentsToDate > 0)) {
       // Hours confirmed against an operation whose service has no price sum to
       // nothing — say that, not "no usage", or the lab looks for a booking to
@@ -331,7 +331,7 @@ export class InvoiceService {
 
     // Lines and money come from the same service, so a statement can never list
     // one set of bookings and total another.
-    const bookings = await this.equipmentBalance.confirmedBookings(key);
+    const bookings = await this.balances.confirmedBookings(key);
     const equipmentLines = bookings.map((booking: any) => ({
       bookingId: String(booking._id),
       itemName: String(booking.inventoryName ?? 'Equipment'),
