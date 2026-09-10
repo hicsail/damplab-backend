@@ -1,6 +1,7 @@
 import { Resolver, Query, Mutation, Args, ID, ResolveField, Parent } from '@nestjs/graphql';
 import { UseGuards, ForbiddenException } from '@nestjs/common';
 import { Invoice } from './invoice.model';
+import { InvoiceKind, invoiceKindOf } from './invoice-kind';
 import { InvoiceService } from './invoice.service';
 import { CreateInvoiceInput } from './dto/create-invoice.input';
 import { AuthRolesGuard } from '../auth/auth.guard';
@@ -55,5 +56,17 @@ export class InvoiceResolver {
   @ResolveField(() => Job, { description: 'Job this invoice is associated with' })
   async job(@Parent() invoice: Invoice): Promise<Job | null> {
     return this.jobService.findById((invoice as any).jobId);
+  }
+
+  /**
+   * `kind` over the wire, non-null, for every invoice including the legacy ones
+   * that carry no stored value. This is not cosmetic: without it a non-nullable
+   * field on a `required: false` prop is a runtime GraphQL error on every legacy
+   * invoice, which would break the existing Invoices card and not just the new
+   * equipment layout.
+   */
+  @ResolveField(() => InvoiceKind, { description: 'What this invoice bills. Invoices written before equipment invoicing read as SOW.' })
+  kind(@Parent() invoice: Invoice): InvoiceKind {
+    return invoiceKindOf(invoice as any);
   }
 }

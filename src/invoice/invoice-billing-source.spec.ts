@@ -459,6 +459,26 @@ describe('the itemised breakdown behind a parameter-priced line', () => {
   });
 });
 
+describe('equipment invoices and the billed-positions guard', () => {
+  it('ignores an equipment invoice when checking which SOW lines are already billed', async () => {
+    const { service, created } = harness({
+      existingInvoices: [{ _id: 'inv-eq', invoiceNumber: '04217-001', kind: 'EQUIPMENT', sowVersionNumber: 999, services: [], equipmentLines: [{ bookingId: 'bk-1', cost: 80 }] }]
+    });
+
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+
+    expect(created).toHaveLength(1);
+    // Neither refused, nor warned about: an equipment invoice is not comparable.
+    expect(created[0].billingWarnings).toBeUndefined();
+  });
+
+  it('stamps a SOW invoice with its kind, so nothing has to infer it later', async () => {
+    const { service, created } = harness();
+    await service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff);
+    expect(created[0].kind).toBe('SOW');
+  });
+});
+
 describe('an earlier invoice with no issued version to anchor it', () => {
   it('warns instead of comparing positions against a billing core that gets rewritten', async () => {
     // The countersign gate means THIS invoice always has a version in force. An

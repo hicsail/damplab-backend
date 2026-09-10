@@ -2,6 +2,7 @@ import { Injectable, BadRequestException, ForbiddenException, NotFoundException 
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Invoice, InvoiceDocument } from './invoice.model';
+import { InvoiceKind, invoiceKindOf } from './invoice-kind';
 import { CreateInvoiceInput } from './dto/create-invoice.input';
 import { JobService } from '../job/job.service';
 import { SOWService } from '../sow/sow.service';
@@ -139,6 +140,12 @@ export class InvoiceService {
 
     for (const prior of priorInvoices) {
       const priorNumber = String((prior as any).invoiceNumber ?? prior._id);
+      // An equipment invoice bills confirmed bookings, never SOW service lines, so
+      // it can neither claim a position nor leave one unproven. Skipped BEFORE the
+      // checks below rather than after: its `services` is empty, which passes the
+      // positions test vacuously but then trips the version test and emits a
+      // billing warning about an invoice that has nothing to do with these lines.
+      if (invoiceKindOf(prior as any) === InvoiceKind.EQUIPMENT) continue;
       const priorLines: any[] = Array.isArray((prior as any).services) ? (prior as any).services : [];
       const priorVersion = (prior as any).sowVersionNumber ?? null;
       const positioned = priorLines.filter((line) => typeof line?.sourceIndex === 'number');
@@ -233,6 +240,7 @@ export class InvoiceService {
       jobDisplayId,
       jobName: (job as any).name ?? '',
       invoiceNumber,
+      kind: InvoiceKind.SOW,
       invoiceDate: new Date(),
       createdBy,
       // Carry the pricing breakdown, not just the total. The SOW's Fee Schedule

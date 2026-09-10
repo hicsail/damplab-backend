@@ -5,6 +5,7 @@ import { Field, ObjectType, ID, Float, Int } from '@nestjs/graphql';
 import { Job } from '../job/job.model';
 import { SOWAdjustmentType } from '../sow/sow.model';
 import { PricingDetail } from '../pricing/pricing.model';
+import { InvoiceKind } from './invoice-kind';
 
 /**
  * A SOW pricing adjustment as applied to THIS invoice (snapshot at generation).
@@ -115,6 +116,51 @@ export class InvoiceServiceLineItem {
   sourceIndex?: number;
 }
 
+/**
+ * One confirmed booking as an equipment invoice states it. A snapshot: the
+ * booking may be moved or re-confirmed afterwards, and an issued statement must
+ * keep saying what it said.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'One confirmed equipment booking as billed on an equipment invoice (snapshot at generation).' })
+export class EquipmentInvoiceLine {
+  @Prop({ required: true })
+  @Field(() => ID, { description: 'The booking this line bills.' })
+  bookingId: string;
+
+  @Prop({ required: true })
+  @Field({ description: 'Inventory item name, as snapshotted on the booking.' })
+  itemName: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: "Label of the job's equipment-use operation, when the node is still resolvable." })
+  operationLabel?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  startTime?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  endTime?: Date;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Confirmed hours used.' })
+  actualHours?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'The $/hour rate snapshot the booking carries.' })
+  rate?: number;
+
+  @Prop({ required: true })
+  @Field(() => Float, { description: "The booking's stored cost. Never recomputed from hours x rate." })
+  cost: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  confirmedAt?: Date;
+}
+
 @Schema()
 @ObjectType({ description: 'Invoice generated for a job, optionally covering a subset of services' })
 export class Invoice {
@@ -141,6 +187,14 @@ export class Invoice {
   @Field({ description: 'Invoice number, unique per job (e.g., "04217-001")' })
   invoiceNumber: string;
 
+  /**
+   * What this invoice bills. Absent on every invoice written before equipment
+   * invoicing existed, which is why nothing reads this field directly — see
+   * `invoiceKindOf`, and the `kind` ResolveField that populates the wire.
+   */
+  @Prop({ required: false, type: String, enum: Object.values(InvoiceKind) })
+  kind?: InvoiceKind;
+
   @Prop({ required: true })
   @Field({ description: 'When the invoice was generated' })
   invoiceDate: Date;
@@ -162,6 +216,18 @@ export class Invoice {
     description: 'SOW pricing adjustments carried onto this invoice, prorated to the services it covers.'
   })
   adjustments: InvoiceAdjustment[];
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
+  @Field(() => [EquipmentInvoiceLine], { description: 'Confirmed equipment bookings billed on this invoice. Empty on a SOW invoice.' })
+  equipmentLines: EquipmentInvoiceLine[];
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Payments received against the job as at this invoice. EQUIPMENT invoices only.' })
+  paymentsToDate?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'chargesToDate minus paymentsToDate as at this invoice. Negative means a credit. EQUIPMENT invoices only.' })
+  balanceDue?: number;
 
   @Prop({ required: true })
   @Field(() => Float, { description: 'Amount payable: subtotal plus the applied adjustments.' })

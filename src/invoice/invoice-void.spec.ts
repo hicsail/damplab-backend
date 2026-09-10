@@ -162,4 +162,17 @@ describe('voiding releases the invoice’s service lines', () => {
 
     await expect(service.createForJob({ jobId: 'job-1', services: [{ index: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(/already on invoice 04217-002/);
   });
+
+  it('voids an equipment invoice the same way, releasing nothing because it claims no lines', async () => {
+    const equipment = { _id: 'inv-eq', invoiceNumber: '04217-001', kind: 'EQUIPMENT', services: [], equipmentLines: [{ bookingId: 'bk-1', cost: 80 }] };
+    const { service } = harness({ existingInvoices: [equipment] });
+
+    const voided: any = await service.voidInvoice('inv-eq', 'Issued against the wrong job', staff);
+
+    expect(voided.voidedAt).toBeInstanceOf(Date);
+    expect(voided.voidReason).toBe('Issued against the wrong job');
+    // No line release to assert, and that is the point: an equipment invoice
+    // never took a position out of circulation.
+    expect(voided.equipmentLines).toHaveLength(1);
+  });
 });
