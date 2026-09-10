@@ -2,6 +2,8 @@ import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { JobPayment, JobPaymentSchema } from './job-payment.model';
 import { JobPaymentService } from './job-payment.service';
+import { JobCharge, JobChargeSchema } from './job-charge.model';
+import { JobChargeService } from './job-charge.service';
 import { JobEquipmentBalanceService } from './job-equipment-balance.service';
 import { JobPaymentResolver } from './job-payment.resolver';
 import { BookingModule } from '../booking/booking.module';
@@ -15,8 +17,16 @@ import { NotificationModule } from '../notification/notification.module';
  * keep forwardRef because they already forward-reference each other.
  */
 @Module({
-  imports: [MongooseModule.forFeature([{ name: JobPayment.name, schema: JobPaymentSchema }]), BookingModule, forwardRef(() => JobModule), forwardRef(() => NotificationModule)],
-  providers: [JobPaymentService, JobEquipmentBalanceService, JobPaymentResolver],
-  exports: [JobPaymentService, JobEquipmentBalanceService]
+  imports: [
+    MongooseModule.forFeature([
+      { name: JobPayment.name, schema: JobPaymentSchema },
+      { name: JobCharge.name, schema: JobChargeSchema }
+    ]),
+    BookingModule,
+    forwardRef(() => JobModule),
+    forwardRef(() => NotificationModule)
+  ],
+  providers: [JobPaymentService, JobChargeService, JobEquipmentBalanceService, JobPaymentResolver],
+  exports: [JobPaymentService, JobChargeService, JobEquipmentBalanceService]
 })
 export class JobPaymentModule {}
