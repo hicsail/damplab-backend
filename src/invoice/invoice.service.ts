@@ -343,6 +343,12 @@ export class InvoiceService {
     const key = String(job._id);
     const balance = await this.equipmentBalance.balance(key);
     if (!(balance.chargesToDate > 0 || balance.paymentsToDate > 0)) {
+      // Hours confirmed against an operation whose service has no price sum to
+      // nothing — say that, not "no usage", or the lab looks for a booking to
+      // confirm that is already confirmed.
+      if (balance.confirmedHours > 0) {
+        throw new BadRequestException("Confirmed usage on this job has no rate. Set a price for the operation's service and confirm the usage again.");
+      }
       throw new BadRequestException('Nothing to invoice yet: no confirmed equipment usage on this job.');
     }
 

@@ -19,7 +19,7 @@ describe('billable usage excludes job-scoped bookings', () => {
         return [];
       }
     };
-    return { filters, service: new BookingService(model, {} as any, {} as any, {} as any) };
+    return { filters, service: new BookingService(model, {} as any, {} as any, {} as any, {} as any) };
   };
 
   it('filters findBillableForOwner on jobId: null', async () => {

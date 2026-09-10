@@ -87,8 +87,13 @@ describe('createEquipmentInvoice — the gates, in order', () => {
   });
 
   it('refuses when there is neither a charge nor a payment to state', async () => {
-    const { service } = harness({ balance: { ...defaultBalance, chargesToDate: 0, paymentsToDate: 0, balanceDue: 0 }, confirmed: [] });
+    const { service } = harness({ balance: { ...defaultBalance, chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 0 }, confirmed: [] });
     await expect(service.createEquipmentInvoice('job-1', staff)).rejects.toThrow('Nothing to invoice yet: no confirmed equipment usage on this job.');
+  });
+
+  it('names the missing rate when hours are confirmed but sum to nothing', async () => {
+    const { service } = harness({ balance: { ...defaultBalance, chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 3 }, confirmed: [] });
+    await expect(service.createEquipmentInvoice('job-1', staff)).rejects.toThrow("Confirmed usage on this job has no rate. Set a price for the operation's service and confirm the usage again.");
   });
 
   it('allows an invoice that states a credit, where a payment arrived before any usage', async () => {

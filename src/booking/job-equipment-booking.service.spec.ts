@@ -211,7 +211,7 @@ describe('BookingService.createForJob', () => {
       created.push(doc);
       return doc;
     };
-    const svc = new BookingService(model, {} as any, { findItemConflicts: async () => conflicts } as any, {} as any);
+    const svc = new BookingService(model, {} as any, { findItemConflicts: async () => conflicts } as any, {} as any, {} as any);
     return { svc, created };
   };
 
@@ -334,7 +334,7 @@ describe('BookingService.updateForJob history', () => {
         return { exec: async () => ({ ...existing, ...update.$set }) };
       }
     };
-    const svc = new BookingService(model as any, {} as any, { findItemConflicts: async () => [] } as any, {} as any);
+    const svc = new BookingService(model as any, {} as any, { findItemConflicts: async () => [] } as any, {} as any, {} as any);
     return { svc, updates };
   };
   const move = { startTime: new Date('2026-01-07T10:00:00Z'), endTime: new Date('2026-01-07T11:00:00Z') };

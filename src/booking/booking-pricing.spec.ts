@@ -57,7 +57,7 @@ function harness(opts: HarnessOptions = {}): { service: BookingService; created:
     }
   };
 
-  return { service: new BookingService(model, inventoryService, availability, keycloakService), created, askedFor };
+  return { service: new BookingService(model, inventoryService, availability, keycloakService, { findOne: async () => null } as any), created, askedFor };
 }
 
 const timedInput = (over: any = {}): any => ({

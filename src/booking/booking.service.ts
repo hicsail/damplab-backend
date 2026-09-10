@@ -6,6 +6,7 @@ import { CreateBookingInput } from './dtos/create-booking.input';
 import { InventoryService } from '../inventory/inventory.service';
 import { AvailabilityService } from '../availability/availability.service';
 import { KeycloakService } from '../keycloak/keycloak.service';
+import { DampLabServices } from '../services/damplab-services.services';
 import { resolveCategoryPrice } from '../pricing/service-pricing.util';
 import { CustomerCategory } from '../pricing/customer-category';
 
@@ -57,7 +58,8 @@ export class BookingService {
     @InjectModel(Booking.name) private readonly model: Model<BookingDocument>,
     private readonly inventoryService: InventoryService,
     private readonly availability: AvailabilityService,
-    private readonly keycloakService: KeycloakService
+    private readonly keycloakService: KeycloakService,
+    private readonly services: DampLabServices
   ) {}
 
   /**
@@ -264,13 +266,26 @@ export class BookingService {
     if (!b) throw new NotFoundException('Booking not found.');
     if (b.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot confirm usage on a cancelled booking.');
 
-    const rate = b.rateSnapshot;
+    let rate = b.rateSnapshot;
     const update: Record<string, unknown> = {
       usageConfirmed: true,
       usageConfirmedBy: by,
       usageConfirmedAt: new Date(),
       status: BookingStatus.COMPLETED
     };
+
+    // A job booking made before its operation's service had a price carries no
+    // rate, and confirming hours against no rate charges nothing — silently. Look
+    // the price up again now: the lab sets the catalog price and re-confirms, and
+    // the booking is charged without being cancelled and re-made.
+    if (rate == null && b.jobId && b.serviceId) {
+      const service = await this.services.findOne(String(b.serviceId)).catch(() => null);
+      const late = resolveCategoryPrice(service, b.customerCategory as CustomerCategory | undefined);
+      if (late != null) {
+        rate = late;
+        update.rateSnapshot = late;
+      }
+    }
 
     if (b.kind === BookingKind.TIMED) {
       const hours = actualHours != null ? actualHours : b.startTime && b.endTime ? (new Date(b.endTime).getTime() - new Date(b.startTime).getTime()) / 3_600_000 : 0;
