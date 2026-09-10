@@ -25,6 +25,7 @@ import { AnnouncementResolver } from '../../announcements/announcement.resolver'
 import { CustomerManagementResolver } from '../../workflow/resolvers/customer-management.resolver';
 import { PermissionsResolver } from './permissions.resolver';
 import { InvoiceResolver } from '../../invoice/invoice.resolver';
+import { JobPaymentResolver } from '../../job-payment/job-payment.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -138,6 +139,13 @@ const GATES: Row[] = [
   // `damplab-staff` check inside InvoiceService, and migrating it is separate work.
   [InvoiceResolver, 'voidInvoice', Permission.BillingWrite],
 
+  // Recording money in or out is a financial write, the same tier as voiding an
+  // invoice. `createEquipmentInvoice` is gated (unlike the older `createInvoice`,
+  // which still hand-rolls a damplab-staff check inside InvoiceService).
+  [JobPaymentResolver, 'recordJobPayment', Permission.BillingWrite],
+  [JobPaymentResolver, 'voidJobPayment', Permission.BillingWrite],
+  [InvoiceResolver, 'createEquipmentInvoice', Permission.BillingWrite],
+
   // Job-scoped equipment booking. `inventory:book` is the tier; being on the job
   // is checked inside JobEquipmentBookingService.
   [BookingResolver, 'createJobEquipmentBooking', Permission.InventoryBook],
@@ -225,6 +233,19 @@ describe('Phase 2b widening — the gate on each operation', () => {
   it('leaves the job equipment-booking query ungated, with the scope enforced inside', () => {
     expect(permissionOn(BookingResolver, 'jobEquipmentBooking')).toBeUndefined();
     expect(rolesOn(BookingResolver, 'jobEquipmentBooking')).toBeUndefined();
+  });
+
+  /**
+   * Ungated for the same reason `jobEquipmentBooking` is: these load on a
+   * customer's own job page, and a client holds neither billing permission.
+   * The scope is `assertMayReadJobFinancials` inside the resolver, which refuses
+   * anyone who is not staff, the creator, or the named client.
+   */
+  it('leaves the job billing reads ungated, with the scope enforced inside', () => {
+    for (const method of ['jobEquipmentBalance', 'jobPayments']) {
+      expect(permissionOn(JobPaymentResolver, method)).toBeUndefined();
+      expect(rolesOn(JobPaymentResolver, method)).toBeUndefined();
+    }
   });
 
   it('leaves no @Roles behind on any of them', () => {

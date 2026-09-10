@@ -34,6 +34,16 @@ export const EVENT_RECIPIENT_MAP: Record<string, EventRecipientConfig> = {
     recipients: [RecipientRole.JOB_OWNER],
     emailWorthy: true
   },
+  // Billing. Both go to the job owner and both are worth an email: an invoice
+  // is a request for money and a recorded payment is the receipt for it.
+  INVOICE_ISSUED: {
+    recipients: [RecipientRole.JOB_OWNER],
+    emailWorthy: true
+  },
+  PAYMENT_RECORDED: {
+    recipients: [RecipientRole.JOB_OWNER],
+    emailWorthy: true
+  },
   COMMENT_CREATED: {
     recipients: [RecipientRole.JOB_OWNER, RecipientRole.ALL_STAFF],
     excludeActor: true,
