@@ -321,10 +321,19 @@ export class BookingService {
     return this.model.find(q).sort({ startTime: 1, usedOn: 1 }).exec();
   }
 
-  /** Confirmed-but-unbilled usage for one owner — the candidates for a usage SOW/invoice. */
+  /**
+   * Confirmed-but-unbilled usage for one owner — the candidates for a usage
+   * SOW/invoice.
+   *
+   * `jobId: null` excludes job-scoped bookings, which are billed to the JOB
+   * through an equipment invoice on its own page. Without it the same hours could
+   * be billed twice, to two different parties. (`jobId: null` matches both an
+   * absent field and an explicit null, so walk-up bookings written before the
+   * field existed still count.)
+   */
   async findBillableForOwner(ownerSub: string): Promise<Booking[]> {
     return this.model
-      .find({ ownerSub, billingStatus: BookingBillingStatus.UNBILLED, usageConfirmed: true, status: { $ne: BookingStatus.CANCELLED } })
+      .find({ ownerSub, jobId: null, billingStatus: BookingBillingStatus.UNBILLED, usageConfirmed: true, status: { $ne: BookingStatus.CANCELLED } })
       .sort({ startTime: 1, usedOn: 1 })
       .exec();
   }
@@ -336,7 +345,7 @@ export class BookingService {
   /** Distinct owners who have confirmed, unbilled usage — powers the staff "pick a user to bill" list. */
   async getBillableOwners(): Promise<Array<{ ownerSub: string; ownerEmail: string; ownerName?: string; bookingCount: number; totalCost: number }>> {
     const rows = await this.model.aggregate([
-      { $match: { billingStatus: BookingBillingStatus.UNBILLED, usageConfirmed: true, status: { $ne: BookingStatus.CANCELLED } } },
+      { $match: { jobId: null, billingStatus: BookingBillingStatus.UNBILLED, usageConfirmed: true, status: { $ne: BookingStatus.CANCELLED } } },
       {
         $group: {
           _id: '$ownerSub',
