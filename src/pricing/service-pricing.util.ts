@@ -128,6 +128,37 @@ export function isEquipmentLineDescription(description: string | null | undefine
   return EQUIPMENT_DESCRIPTION_SUFFIX_RE.test(String(description ?? ''));
 }
 
+/** The shape both halves of the split need: a description to classify by and a cost to sum. */
+export interface CostLineLike {
+  description?: string | null;
+  cost?: number | null;
+}
+
+/**
+ * THE split between what a SOW contracts for and what it merely estimates.
+ *
+ * An equipment-use line is a projection — hours per week times weeks — and the
+ * lab bills the hours actually booked instead, through the job's bookings. So
+ * its figure belongs on the document as information and in no total. Every
+ * reader of that distinction goes through here rather than calling the
+ * predicate itself, so "contracted" cannot come to mean two different things
+ * in two files.
+ */
+export function splitContractedLines<T extends CostLineLike>(lines: readonly T[] | null | undefined): { contracted: T[]; equipment: T[] } {
+  const contracted: T[] = [];
+  const equipment: T[] = [];
+  for (const line of lines ?? []) {
+    (isEquipmentLineDescription(line?.description) ? equipment : contracted).push(line);
+  }
+  return { contracted, equipment };
+}
+
+/** Σ cost, rounded to cents so a float sum cannot put noise into a stored total. */
+export function sumLineCosts(lines: readonly CostLineLike[] | null | undefined): number {
+  const total = (lines ?? []).reduce((sum, line) => sum + (Number(line?.cost) || 0), 0);
+  return Math.round(total * 100) / 100;
+}
+
 /**
  * The SOW/invoice line description for an operation, with the equipment estimate
  * spelled out on it.
