@@ -168,6 +168,15 @@ describe('the gates, in order', () => {
       "Confirmed usage on this job has no rate. Set a price for the operation's service and confirm the usage again."
     );
   });
+
+  it('creates no invoice when every listed position is already live, no deposit or custom lines are given, and the job has zero charges and payments', async () => {
+    const { service, created } = harness({
+      liveCharges: [{ kind: 'SERVICE_LINE', sourceIndex: 0 }],
+      breakdown: { ...defaultBreakdown({}), chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 0 }
+    });
+    await expect(service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow('Nothing to invoice yet.');
+    expect(created).toHaveLength(0);
+  });
 });
 
 describe('releasing service lines', () => {
@@ -327,6 +336,27 @@ describe('equipment estimates are never released', () => {
   it('still says "not on the Statement of Work" for a position that does not exist', async () => {
     const { service } = harness({ billableLines: withEquipment });
     await expect(service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 9, serviceId: 'e1' }] } as any, staff)).rejects.toThrow('Selected line is not on the Statement of Work.');
+  });
+
+  it('writes nothing to the ledger, and creates no invoice, when a refused equipment line follows a contracted one in the same call', async () => {
+    // Guards createServiceLineCharges staying OUTSIDE the release loop: if it were
+    // called per-row as each line is validated, the contracted line ahead of the
+    // refused equipment line would already be on the ledger by the time this throws.
+    const { service, released, created } = harness({ billableLines: withEquipment });
+    await expect(
+      service.createForJob(
+        {
+          jobId: 'job-1',
+          releaseServiceLines: [
+            { sourceIndex: 0, serviceId: 's1' },
+            { sourceIndex: 1, serviceId: 'e1' }
+          ]
+        } as any,
+        staff
+      )
+    ).rejects.toThrow('Equipment-use lines are billed from bookings, not released.');
+    expect(released).toEqual([]);
+    expect(created).toHaveLength(0);
   });
 });
 
