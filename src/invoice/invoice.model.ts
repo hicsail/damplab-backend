@@ -6,6 +6,7 @@ import { Job } from '../job/job.model';
 import { SOWAdjustmentType } from '../sow/sow.model';
 import { PricingDetail } from '../pricing/pricing.model';
 import { InvoiceKind } from './invoice-kind';
+import { JobChargeKind } from '../job-payment/job-charge.model';
 
 /**
  * A SOW pricing adjustment as applied to THIS invoice (snapshot at generation).
@@ -161,6 +162,31 @@ export class EquipmentInvoiceLine {
   confirmedAt?: Date;
 }
 
+/**
+ * A charge on the statement that is neither a SOW service line nor equipment
+ * time: a deposit, or an ad-hoc cost or credit. A snapshot — voiding the
+ * underlying charge changes the next statement, never an issued one.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'A custom or deposit charge as billed on a statement (snapshot at generation).' })
+export class InvoiceCustomLine {
+  @Prop({ required: true })
+  @Field(() => ID, { description: 'The JobCharge this line bills.' })
+  chargeId: string;
+
+  @Prop({ required: true })
+  @Field(() => JobChargeKind, { description: 'CUSTOM or DEPOSIT.' })
+  kind: JobChargeKind;
+
+  @Prop({ required: true })
+  @Field()
+  label: string;
+
+  @Prop({ required: true })
+  @Field(() => Float, { description: 'Signed: a CUSTOM credit is negative.' })
+  amount: number;
+}
+
 @Schema()
 @ObjectType({ description: 'Invoice generated for a job, optionally covering a subset of services' })
 export class Invoice {
@@ -208,7 +234,10 @@ export class Invoice {
   services: InvoiceServiceLineItem[];
 
   @Prop({ required: false, default: 0 })
-  @Field(() => Float, { description: 'Sum of the service line items, BEFORE adjustments.' })
+  @Field(() => Float, {
+    description:
+      'What this invoice adds up before payments. On a SOW invoice the service lines before adjustments; on an EQUIPMENT or STATEMENT invoice the whole charge to date, adjustments and every other line already included.'
+  })
   subtotal: number;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
@@ -222,12 +251,23 @@ export class Invoice {
   equipmentLines: EquipmentInvoiceLine[];
 
   @Prop({ required: false })
-  @Field(() => Float, { nullable: true, description: 'Payments received against the job as at this invoice. EQUIPMENT invoices only.' })
+  @Field(() => Float, { nullable: true, description: 'Payments received against the job as at this invoice. EQUIPMENT and STATEMENT invoices.' })
   paymentsToDate?: number;
 
   @Prop({ required: false })
-  @Field(() => Float, { nullable: true, description: 'chargesToDate minus paymentsToDate as at this invoice. Negative means a credit. EQUIPMENT invoices only.' })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'chargesToDate minus paymentsToDate as at this invoice. Negative means a credit. EQUIPMENT and STATEMENT invoices.'
+  })
   balanceDue?: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When payment is due. Absent on documents written before due dates existed.' })
+  dueDate?: Date;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
+  @Field(() => [InvoiceCustomLine], { description: 'Deposits and ad-hoc charges billed on this statement. Empty on SOW and EQUIPMENT documents.' })
+  customLines: InvoiceCustomLine[];
 
   @Prop({ required: true })
   @Field(() => Float, { description: 'Amount payable: subtotal plus the applied adjustments.' })

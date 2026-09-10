@@ -4,7 +4,9 @@ export enum InvoiceKind {
   /** Bills service lines from the job's Statement of Work. */
   SOW = 'SOW',
   /** A running statement of the job's confirmed equipment usage, payments and balance. */
-  EQUIPMENT = 'EQUIPMENT'
+  EQUIPMENT = 'EQUIPMENT',
+  /** A statement of everything the job has been charged, less what it has paid. Every new invoice is one. */
+  STATEMENT = 'STATEMENT'
 }
 registerEnumType(InvoiceKind, { name: 'InvoiceKind', description: 'What an invoice bills.' });
 
@@ -18,8 +20,11 @@ registerEnumType(InvoiceKind, { name: 'InvoiceKind', description: 'What an invoi
  * agree about a `.lean()` row and a projected one too.
  *
  * Anything unrecognised also reads as SOW — the safe direction, since EQUIPMENT
- * is what exempts an invoice from the double-billing guard.
+ * and STATEMENT are what exempts an invoice from the double-billing guard.
  */
 export function invoiceKindOf(invoice: { kind?: string | null } | null | undefined): InvoiceKind {
-  return String(invoice?.kind ?? '') === InvoiceKind.EQUIPMENT ? InvoiceKind.EQUIPMENT : InvoiceKind.SOW;
+  const stored = String(invoice?.kind ?? '');
+  if (stored === InvoiceKind.STATEMENT) return InvoiceKind.STATEMENT;
+  if (stored === InvoiceKind.EQUIPMENT) return InvoiceKind.EQUIPMENT;
+  return InvoiceKind.SOW;
 }
