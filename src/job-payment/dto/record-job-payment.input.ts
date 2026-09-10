@@ -16,4 +16,7 @@ export class RecordJobPaymentInput {
 
   @Field({ nullable: true, description: 'Free-text note.' })
   note?: string;
+
+  @Field(() => ID, { nullable: true, description: 'The invoice this payment settles, if any. Must belong to the same job and be live (not voided).' })
+  invoiceId?: string;
 }

@@ -59,6 +59,14 @@ export class JobPayment {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Why it was voided. Required when voiding.' })
   voidReason?: string;
+
+  @Prop({ required: false })
+  @Field(() => ID, { nullable: true, description: 'The invoice this payment settles, if any.' })
+  invoiceId?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: "Snapshot of the invoice's number at record time, so a payment row can name its invoice without a second read." })
+  invoiceNumber?: string;
 }
 
 export type JobPaymentDocument = JobPayment & Document;

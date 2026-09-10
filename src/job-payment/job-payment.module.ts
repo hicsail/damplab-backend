@@ -11,6 +11,7 @@ import { BookingModule } from '../booking/booking.module';
 import { JobModule } from '../job/job.module';
 import { NotificationModule } from '../notification/notification.module';
 import { SOWModule } from '../sow/sow.module';
+import { Invoice, InvoiceSchema } from '../invoice/invoice.model';
 
 /**
  * BookingModule is imported plainly, not through forwardRef: nothing in the
@@ -27,7 +28,14 @@ import { SOWModule } from '../sow/sow.module';
   imports: [
     MongooseModule.forFeature([
       { name: JobPayment.name, schema: JobPaymentSchema },
-      { name: JobCharge.name, schema: JobChargeSchema }
+      { name: JobCharge.name, schema: JobChargeSchema },
+      // Read-only access to the Invoice collection: JobPaymentService validates
+      // that an invoiceId belongs to the job and is live. This is deliberately
+      // a second forFeature registration of Invoice's model (Mongoose reuses
+      // the already-compiled model rather than re-registering it), not an
+      // import of InvoiceModule/InvoiceService — that would create a
+      // JobPaymentModule <-> InvoiceModule forwardRef cycle.
+      { name: Invoice.name, schema: InvoiceSchema }
     ]),
     BookingModule,
     forwardRef(() => JobModule),
