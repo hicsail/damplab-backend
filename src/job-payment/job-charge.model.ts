@@ -47,6 +47,10 @@ export class JobCharge {
   @Field({ description: 'What the charge is for, shown on the statement.' })
   label: string;
 
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Free text shown under the label on the statement. Absent on charges added without one.' })
+  note?: string;
+
   @Prop({ required: true })
   @Field(() => Float, { description: 'Amount of the charge. CUSTOM may be negative; SERVICE_LINE and DEPOSIT must be positive.' })
   amount: number;

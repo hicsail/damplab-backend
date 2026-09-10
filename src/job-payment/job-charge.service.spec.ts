@@ -1,4 +1,4 @@
-import { JobChargeService } from './job-charge.service';
+import { JobChargeService, CHARGE_MESSAGES } from './job-charge.service';
 import { JobChargeKind } from './job-charge.model';
 import { User } from '../auth/user.interface';
 
@@ -73,6 +73,25 @@ describe('addCharge', () => {
   it('refuses a job that does not exist', async () => {
     const { service } = harness();
     await expect(service.addCharge({ jobId: 'nope', kind: JobChargeKind.CUSTOM, label: 'x', amount: 1 }, staff)).rejects.toThrow(/not found/i);
+  });
+
+  it('stores a note against a custom charge', async () => {
+    const { service } = harness();
+    const charge = await service.addCharge({ jobId: 'job-1', kind: JobChargeKind.CUSTOM, label: 'Courier', amount: 25, note: '  Overnight to Cambridge  ' } as any, staff);
+    expect((charge as any).note).toBe('Overnight to Cambridge');
+  });
+
+  it('stores no note at all when the field is blank', async () => {
+    const { service } = harness();
+    const charge = await service.addCharge({ jobId: 'job-1', kind: JobChargeKind.CUSTOM, label: 'Courier', amount: 25, note: '   ' } as any, staff);
+    expect((charge as any).note).toBeUndefined();
+  });
+
+  it('refuses with the exact shared messages', async () => {
+    const { service } = harness();
+    await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.CUSTOM, label: '  ', amount: 5 } as any, staff)).rejects.toThrow(CHARGE_MESSAGES.labelRequired);
+    await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.CUSTOM, label: 'x', amount: 0 } as any, staff)).rejects.toThrow(CHARGE_MESSAGES.amountZero);
+    await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.DEPOSIT, label: 'x', amount: 0 } as any, staff)).rejects.toThrow(CHARGE_MESSAGES.depositNotPositive);
   });
 });
 

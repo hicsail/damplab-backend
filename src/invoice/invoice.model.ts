@@ -182,6 +182,10 @@ export class InvoiceCustomLine {
   @Field()
   label: string;
 
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Free text printed under the label in Other charges. Absent on lines billed without one.' })
+  note?: string;
+
   @Prop({ required: true })
   @Field(() => Float, { description: 'Signed: a CUSTOM credit is negative.' })
   amount: number;

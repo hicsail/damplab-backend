@@ -12,6 +12,9 @@ export class AddJobChargeInput {
   @Field({ description: 'What the charge is for, shown on the statement.' })
   label: string;
 
+  @Field({ nullable: true, description: 'Free text shown under the label on the statement.' })
+  note?: string;
+
   @Field(() => Float, { description: 'Amount of the charge. CUSTOM may be negative; DEPOSIT must be greater than zero.' })
   amount: number;
 }

@@ -11,6 +11,17 @@ function round2(n: number): number {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
 
+/**
+ * Charge refusal messages shared with InvoiceService, so a customer sees the
+ * same wording whether the refusal came from adding a charge directly or from
+ * generating a statement.
+ */
+export const CHARGE_MESSAGES = {
+  labelRequired: 'A label is required for a charge.',
+  amountZero: 'A charge amount cannot be zero.',
+  depositNotPositive: 'A deposit must be greater than zero.'
+} as const;
+
 @Injectable()
 export class JobChargeService {
   constructor(@InjectModel(JobCharge.name) private readonly model: Model<JobChargeDocument>, @Inject(forwardRef(() => JobService)) private readonly jobService: JobService) {}
@@ -33,17 +44,19 @@ export class JobChargeService {
   async addCharge(input: AddJobChargeInput, user: User): Promise<JobCharge> {
     const label = String(input.label ?? '').trim();
     if (!label) {
-      throw new BadRequestException('A label is required for a charge.');
+      throw new BadRequestException(CHARGE_MESSAGES.labelRequired);
     }
+
+    const note = String(input.note ?? '').trim();
 
     const amount = round2(input.amount);
     if (input.kind === JobChargeKind.DEPOSIT) {
       if (!(amount > 0)) {
-        throw new BadRequestException('A deposit must be greater than zero.');
+        throw new BadRequestException(CHARGE_MESSAGES.depositNotPositive);
       }
     } else if (input.kind === JobChargeKind.CUSTOM) {
       if (amount === 0) {
-        throw new BadRequestException('A charge amount cannot be zero.');
+        throw new BadRequestException(CHARGE_MESSAGES.amountZero);
       }
     }
 
@@ -66,7 +79,8 @@ export class JobChargeService {
       label,
       amount,
       addedBy: user.email || user.preferred_username || 'unknown',
-      addedAt: new Date()
+      addedAt: new Date(),
+      ...(note ? { note } : {})
     });
   }
 
