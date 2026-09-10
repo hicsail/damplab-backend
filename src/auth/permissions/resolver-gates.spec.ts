@@ -26,6 +26,7 @@ import { CustomerManagementResolver } from '../../workflow/resolvers/customer-ma
 import { PermissionsResolver } from './permissions.resolver';
 import { InvoiceResolver } from '../../invoice/invoice.resolver';
 import { JobPaymentResolver } from '../../job-payment/job-payment.resolver';
+import { JobChargeResolver } from '../../job-payment/job-charge.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -146,6 +147,11 @@ const GATES: Row[] = [
   [JobPaymentResolver, 'voidJobPayment', Permission.BillingWrite],
   [InvoiceResolver, 'createEquipmentInvoice', Permission.BillingWrite],
 
+  // Adding or voiding a charge moves the job's balance, the same tier as
+  // recording a payment.
+  [JobChargeResolver, 'addJobCharge', Permission.BillingWrite],
+  [JobChargeResolver, 'voidJobCharge', Permission.BillingWrite],
+
   // Job-scoped equipment booking. `inventory:book` is the tier; being on the job
   // is checked inside JobEquipmentBookingService.
   [BookingResolver, 'createJobEquipmentBooking', Permission.InventoryBook],
@@ -246,6 +252,8 @@ describe('Phase 2b widening — the gate on each operation', () => {
       expect(permissionOn(JobPaymentResolver, method)).toBeUndefined();
       expect(rolesOn(JobPaymentResolver, method)).toBeUndefined();
     }
+    expect(permissionOn(JobChargeResolver, 'jobCharges')).toBeUndefined();
+    expect(rolesOn(JobChargeResolver, 'jobCharges')).toBeUndefined();
   });
 
   it('leaves no @Roles behind on any of them', () => {

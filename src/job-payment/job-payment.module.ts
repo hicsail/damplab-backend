@@ -6,6 +6,7 @@ import { JobCharge, JobChargeSchema } from './job-charge.model';
 import { JobChargeService } from './job-charge.service';
 import { JobEquipmentBalanceService } from './job-equipment-balance.service';
 import { JobPaymentResolver } from './job-payment.resolver';
+import { JobChargeResolver } from './job-charge.resolver';
 import { BookingModule } from '../booking/booking.module';
 import { JobModule } from '../job/job.module';
 import { NotificationModule } from '../notification/notification.module';
@@ -26,7 +27,7 @@ import { NotificationModule } from '../notification/notification.module';
     forwardRef(() => JobModule),
     forwardRef(() => NotificationModule)
   ],
-  providers: [JobPaymentService, JobChargeService, JobEquipmentBalanceService, JobPaymentResolver],
+  providers: [JobPaymentService, JobChargeService, JobEquipmentBalanceService, JobPaymentResolver, JobChargeResolver],
   exports: [JobPaymentService, JobChargeService, JobEquipmentBalanceService]
 })
 export class JobPaymentModule {}
