@@ -48,8 +48,9 @@ export class CreateInvoiceInput {
     description:
       'The SOW service lines to release now, by position in SOW.billableServices. Names only lines newly ' +
       'released with this call — lines already released by a prior statement are not repeated here. A line ' +
-      'at an already-released position is a no-op, not an error. An empty (or omitted) list is legitimate: ' +
-      'it re-issues a statement of what is already on the ledger, releasing nothing new.'
+      'at an already-released position is a no-op, not an error. An equipment-use position is refused, ' +
+      'not skipped: that figure is an estimate and the lab bills the hours actually booked. An empty (or ' +
+      'omitted) list is legitimate: it re-issues a statement of what is already on the ledger, releasing nothing new.'
   })
   releaseServiceLines?: ReleaseServiceLineInput[];
 

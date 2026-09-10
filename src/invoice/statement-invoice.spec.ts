@@ -50,9 +50,10 @@ function defaultBreakdown(opts: Opts): any {
   );
 }
 
-function harness(opts: Opts = {}): { service: InvoiceService; created: any[]; released: any[]; dispatched: any[] } {
+function harness(opts: Opts = {}): { service: InvoiceService; created: any[]; released: any[]; added: any[]; dispatched: any[] } {
   const created: any[] = [];
   const released: any[] = [];
+  const added: any[] = [];
   const dispatched: any[] = [];
   const existing = opts.existingInvoices ?? [];
 
@@ -84,6 +85,11 @@ function harness(opts: Opts = {}): { service: InvoiceService; created: any[]; re
     createServiceLineCharges: async (jobId: string, rows: any[]) => {
       released.push(...rows);
       return rows;
+    },
+    addCharge: async (input: any) => {
+      const saved = { _id: `chg-${added.length + 1}`, ...input };
+      added.push(saved);
+      return saved;
     }
   };
 
@@ -99,6 +105,7 @@ function harness(opts: Opts = {}): { service: InvoiceService; created: any[]; re
     service: new InvoiceService(invoiceModel, jobService, sowService, sowVersionService, chargeService, balances, dispatch),
     created,
     released,
+    added,
     dispatched
   };
 }
@@ -272,6 +279,176 @@ describe('releasing service lines', () => {
     await service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 0, serviceId: 's1' }] } as any, staff);
     expect(released).toEqual([{ serviceId: 's1', label: 'PCR', amount: 350, sowVersionNumber: 1000, sourceIndex: 0 }]);
     expect(created[0]).toMatchObject({ kind: 'STATEMENT', subtotal: 0, totalCost: 0, balanceDue: 0 });
+  });
+});
+
+const EQUIP = 'Plate reader — 10 hrs/wk x 4 wks (estimate; billed on actual hours)';
+const withEquipment = [
+  { serviceId: 's1', name: 'PCR', description: '', cost: 350 },
+  { serviceId: 'e1', name: 'Plate reader', description: EQUIP, cost: 45 }
+];
+
+describe('equipment estimates are never released', () => {
+  it('refuses a release naming an equipment line', async () => {
+    const { service } = harness({ billableLines: withEquipment });
+    await expect(service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 1, serviceId: 'e1' }] } as any, staff)).rejects.toThrow(
+      'Equipment-use lines are billed from bookings, not released.'
+    );
+  });
+
+  it('still releases the contracted line beside it', async () => {
+    const { service, released } = harness({ billableLines: withEquipment });
+    await service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 0, serviceId: 's1' }] } as any, staff);
+    expect(released).toHaveLength(1);
+    expect(released[0].sourceIndex).toBe(0);
+  });
+
+  it('is a no-op, not a refusal, when a legacy equipment charge already holds that position', async () => {
+    // A real job billed before this run has a live SERVICE_LINE at an equipment position, and a
+    // dialog locks released rows checked. The already-live check runs first, so re-sending it
+    // cannot make the statement un-issuable.
+    const { service, released } = harness({
+      billableLines: withEquipment,
+      liveCharges: [{ kind: 'SERVICE_LINE', sourceIndex: 1, amount: 45 }]
+    });
+    await service.createForJob(
+      {
+        jobId: 'job-1',
+        releaseServiceLines: [
+          { sourceIndex: 1, serviceId: 'e1' },
+          { sourceIndex: 0, serviceId: 's1' }
+        ]
+      } as any,
+      staff
+    );
+    expect(released.map((r: any) => r.sourceIndex)).toEqual([0]);
+  });
+
+  it('still says "not on the Statement of Work" for a position that does not exist', async () => {
+    const { service } = harness({ billableLines: withEquipment });
+    await expect(service.createForJob({ jobId: 'job-1', releaseServiceLines: [{ sourceIndex: 9, serviceId: 'e1' }] } as any, staff)).rejects.toThrow('Selected line is not on the Statement of Work.');
+  });
+});
+
+describe('deposit mode', () => {
+  it('writes one DEPOSIT charge and issues the statement', async () => {
+    const { service, added, created } = harness({
+      breakdown: { ...defaultBreakdown({}), depositLines: [{ _id: 'chg-1', kind: 'DEPOSIT', label: 'Deposit', amount: 500 }], chargesToDate: 500, balanceDue: 500 }
+    });
+    await service.createForJob({ jobId: 'job-1', deposit: { amount: 500 } } as any, staff);
+    expect(added).toHaveLength(1);
+    expect(added[0]).toMatchObject({ kind: 'DEPOSIT', label: 'Deposit', amount: 500 });
+    expect(created).toHaveLength(1);
+  });
+
+  it('uses the label the caller gave', async () => {
+    const { service, added } = harness({ breakdown: { ...defaultBreakdown({}), chargesToDate: 500, balanceDue: 500 } });
+    await service.createForJob({ jobId: 'job-1', deposit: { amount: 500, label: '  50% up front  ' } } as any, staff);
+    expect(added[0].label).toBe('50% up front');
+  });
+
+  it('refuses a deposit that also releases service lines', async () => {
+    const { service, added, released } = harness();
+    await expect(service.createForJob({ jobId: 'job-1', deposit: { amount: 500 }, releaseServiceLines: [{ sourceIndex: 0, serviceId: 's1' }] } as any, staff)).rejects.toThrow(
+      'A deposit request cannot release service lines.'
+    );
+    expect(added).toHaveLength(0);
+    expect(released).toHaveLength(0);
+  });
+
+  it.each([[0], [-5]])('refuses a deposit of %s', async (amount) => {
+    const { service } = harness();
+    await expect(service.createForJob({ jobId: 'job-1', deposit: { amount } } as any, staff)).rejects.toThrow('A deposit must be greater than zero.');
+  });
+
+  it('refuses a deposit carrying custom lines', async () => {
+    const { service } = harness();
+    await expect(service.createForJob({ jobId: 'job-1', deposit: { amount: 500 }, customLines: [{ label: 'Courier', amount: 25 }] } as any, staff)).rejects.toThrow(
+      'A deposit request cannot carry other lines.'
+    );
+  });
+});
+
+describe('custom lines', () => {
+  it('writes each one as a CUSTOM charge before the balance is read', async () => {
+    const { service, added } = harness({ breakdown: { ...defaultBreakdown({}), chargesToDate: 375, balanceDue: 375 } });
+    await service.createForJob(
+      {
+        jobId: 'job-1',
+        customLines: [
+          { label: 'Courier', amount: 25, note: 'Overnight' },
+          { label: 'Goodwill', amount: -50 }
+        ]
+      } as any,
+      staff
+    );
+    expect(added.map((c: any) => [c.kind, c.label, c.amount, c.note])).toEqual([
+      ['CUSTOM', 'Courier', 25, 'Overnight'],
+      ['CUSTOM', 'Goodwill', -50, undefined]
+    ]);
+  });
+
+  it('writes nothing at all when one of them is invalid', async () => {
+    const { service, added } = harness();
+    await expect(
+      service.createForJob(
+        {
+          jobId: 'job-1',
+          customLines: [
+            { label: 'Courier', amount: 25 },
+            { label: 'Bad', amount: 0 }
+          ]
+        } as any,
+        staff
+      )
+    ).rejects.toThrow('A charge amount cannot be zero.');
+    expect(added).toHaveLength(0);
+  });
+
+  it('writes nothing at all when one of them rounds away to zero cents', async () => {
+    // The charge service rounds to cents before its own zero check, so a
+    // sub-cent line refuses there — after the lines before it are already on
+    // the ledger. This gate rounds the same way, so it refuses first.
+    const { service, added } = harness();
+    await expect(
+      service.createForJob(
+        {
+          jobId: 'job-1',
+          customLines: [
+            { label: 'Courier', amount: 25 },
+            { label: 'Dust', amount: 0.004 }
+          ]
+        } as any,
+        staff
+      )
+    ).rejects.toThrow('A charge amount cannot be zero.');
+    expect(added).toHaveLength(0);
+  });
+
+  it('refuses a line with no label', async () => {
+    const { service } = harness();
+    await expect(service.createForJob({ jobId: 'job-1', customLines: [{ label: '   ', amount: 25 }] } as any, staff)).rejects.toThrow('A label is required for a charge.');
+  });
+
+  it('issues a statement for a single negative custom line even though it charges nothing', async () => {
+    // Behaviour 11's last sentence: a call that changes the ledger always issues. A deposit
+    // cannot exercise this — deposits are positive — so a credit is the case that matters.
+    const { service, created } = harness({ breakdown: { ...defaultBreakdown({}), chargesToDate: -50, paymentsToDate: 0, balanceDue: -50, confirmedHours: 0 } });
+    await service.createForJob({ jobId: 'job-1', customLines: [{ label: 'Goodwill', amount: -50 }] } as any, staff);
+    expect(created).toHaveLength(1);
+  });
+
+  it('still refuses an empty statement when the call changed nothing', async () => {
+    const { service } = harness({ breakdown: { ...defaultBreakdown({}), chargesToDate: 0, paymentsToDate: 0, balanceDue: 0, confirmedHours: 0 } });
+    await expect(service.createForJob({ jobId: 'job-1' } as any, staff)).rejects.toThrow('Nothing to invoice yet.');
+  });
+
+  it('carries the note onto the document', async () => {
+    const { service, created } = harness({
+      breakdown: { ...defaultBreakdown({}), customLines: [{ _id: 'chg-9', kind: 'CUSTOM', label: 'Courier', amount: 25, note: 'Overnight' }], depositLines: [] }
+    });
+    await service.createForJob({ jobId: 'job-1' } as any, staff);
+    expect(created[0].customLines[0]).toMatchObject({ label: 'Courier', amount: 25, note: 'Overnight' });
   });
 });
 
