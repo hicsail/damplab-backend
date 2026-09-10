@@ -74,6 +74,20 @@ export class JobChargeService {
       throw new NotFoundException(`Job with ID ${input.jobId} not found`);
     }
 
+    // A deposit is dropped by JobBalanceService.chargeBreakdown once any
+    // service line on the job is live (see depositsDropped there), so writing
+    // one past that point would land on the ledger with no statement to show
+    // it and no way to undo it — a released service line never un-releases.
+    // InvoiceService checks this up front, before its own release loop runs,
+    // for ordering; this is the same refusal for every other caller of
+    // addCharge, direct or not.
+    if (input.kind === JobChargeKind.DEPOSIT) {
+      const live = await this.liveByJobId(String(job._id));
+      if (live.some((c: any) => String(c.kind) === 'SERVICE_LINE')) {
+        throw new BadRequestException(CHARGE_MESSAGES.depositAfterRelease);
+      }
+    }
+
     return this.model.create({
       // String(job._id), not the argument: the same key Booking.jobId and
       // SOW.jobId use, so the balance query joins on one value.

@@ -87,6 +87,11 @@ describe('addCharge', () => {
     expect((charge as any).note).toBeUndefined();
   });
 
+  it('refuses a deposit once a service line has been released on the job', async () => {
+    const { service } = harness([{ _id: 'chg-1', jobId: 'job-1', kind: 'SERVICE_LINE', label: 'PCR', amount: 350, sourceIndex: 0 }]);
+    await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.DEPOSIT, label: 'Deposit', amount: 500 }, staff)).rejects.toThrow(CHARGE_MESSAGES.depositAfterRelease);
+  });
+
   it('refuses with the exact shared messages', async () => {
     const { service } = harness();
     await expect(service.addCharge({ jobId: 'job-1', kind: JobChargeKind.CUSTOM, label: '  ', amount: 5 } as any, staff)).rejects.toThrow(CHARGE_MESSAGES.labelRequired);
