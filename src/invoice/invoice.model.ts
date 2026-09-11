@@ -219,6 +219,43 @@ export class InvoiceDeposit {
   outstanding: number;
 }
 
+/**
+ * One due date: an amount still owed, and when. Together with the deposit's
+ * outstanding amount, an invoice's due dates cover its balance due.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'An amount the invoice asks for by a date. With the deposit, the due dates cover the balance due.' })
+export class InvoiceDueDate {
+  @Prop({ required: true })
+  @Field(() => Float)
+  amount: number;
+
+  @Prop({ required: true })
+  @Field(() => Date, { description: 'When this amount is due.' })
+  dueDate: Date;
+}
+
+/** A payment as an invoice lists it. A snapshot: a later void changes the next version, never this one. */
+@Schema({ _id: false })
+@ObjectType({ description: 'A payment received against the job, as an invoice lists it (snapshot at issue).' })
+export class InvoicePayment {
+  @Prop({ required: true })
+  @Field(() => ID, { description: 'The JobPayment this lists.' })
+  paymentId: string;
+
+  @Prop({ required: true })
+  @Field(() => Float)
+  amount: number;
+
+  @Prop({ required: true })
+  @Field(() => Date, { description: 'When the lab received it.' })
+  receivedOn: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'A cheque number, a PO, an ISR reference.' })
+  reference?: string;
+}
+
 @Schema()
 @ObjectType({ description: 'Invoice generated for a job, optionally covering a subset of services' })
 export class Invoice {
@@ -304,8 +341,26 @@ export class Invoice {
   balanceDue?: number;
 
   @Prop({ required: false })
-  @Field({ nullable: true, description: 'When payment is due. Absent on documents written before due dates existed.' })
+  @Field({
+    nullable: true,
+    description:
+      'The first date anything on this invoice falls due: the deposit while it is outstanding, else the earliest due date. Absent when nothing is due, and on documents written before due dates existed.'
+  })
   dueDate?: Date;
+
+  // `default: undefined`, because Mongoose otherwise hydrates a missing array
+  // as [] — and an absent schedule is how a document issued before due dates
+  // were split says to read its single `dueDate` instead.
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false, default: undefined })
+  @Field(() => [InvoiceDueDate], {
+    nullable: true,
+    description: 'When the balance is due besides the deposit, oldest date first. Absent on documents issued before due dates were split; those carry one `dueDate`.'
+  })
+  dueSchedule?: InvoiceDueDate[];
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false, default: undefined })
+  @Field(() => [InvoicePayment], { nullable: true, description: 'The live payments on the job when this version was issued, oldest first. Absent on documents issued before payments were listed.' })
+  payments?: InvoicePayment[];
 
   @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
   @Field(() => [InvoiceCustomLine], { description: 'Custom charges and discounts on this invoice. Empty on SOW and EQUIPMENT documents.' })

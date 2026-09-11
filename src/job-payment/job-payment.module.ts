@@ -11,6 +11,7 @@ import { BookingModule } from '../booking/booking.module';
 import { JobModule } from '../job/job.module';
 import { NotificationModule } from '../notification/notification.module';
 import { SOWModule } from '../sow/sow.module';
+import { InvoiceModule } from '../invoice/invoice.module';
 
 /**
  * BookingModule is imported plainly, not through forwardRef: nothing in the
@@ -21,7 +22,9 @@ import { SOWModule } from '../sow/sow.module';
  * this module back either, but SOWModule itself sits behind other forwardRefs
  * (JobModule, NotificationModule) that make its own construction order
  * unpredictable, so JobBalanceService resolves SOWService/SowVersionService
- * lazily rather than assuming SOWModule is ready first.
+ * lazily rather than assuming SOWModule is ready first. InvoiceModule is
+ * forwardRef both ways: it reads the balance from here, and the payment
+ * resolver here reissues the invoice when a payment changes it.
  */
 @Module({
   imports: [
@@ -32,7 +35,8 @@ import { SOWModule } from '../sow/sow.module';
     BookingModule,
     forwardRef(() => JobModule),
     forwardRef(() => NotificationModule),
-    forwardRef(() => SOWModule)
+    forwardRef(() => SOWModule),
+    forwardRef(() => InvoiceModule)
   ],
   providers: [JobPaymentService, JobChargeService, JobBalanceService, JobPaymentResolver, JobChargeResolver],
   exports: [JobPaymentService, JobChargeService, JobBalanceService]

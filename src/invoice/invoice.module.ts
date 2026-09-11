@@ -14,7 +14,7 @@ import { NotificationModule } from '../notification/notification.module';
     MongooseModule.forFeature([{ name: Invoice.name, schema: InvoiceSchema }]),
     forwardRef(() => JobModule),
     forwardRef(() => SOWModule),
-    JobPaymentModule,
+    forwardRef(() => JobPaymentModule),
     forwardRef(() => NotificationModule)
   ],
   providers: [InvoiceService, InvoiceResolver, JobInvoiceFieldsResolver],

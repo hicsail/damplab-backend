@@ -139,6 +139,9 @@ const GATES: Row[] = [
   // absent from this table: it still hand-rolls a `damplab-staff` check inside
   // InvoiceService, and migrating it is separate work.
   [InvoiceResolver, 'voidInvoice', Permission.BillingWrite],
+  // A preview reads the whole job's billing and exists only to prepare an
+  // issue, so it is gated like one.
+  [InvoiceResolver, 'invoicePreview', Permission.BillingWrite],
 
   // Recording money in or out is a financial write, the same tier as voiding an
   // invoice.

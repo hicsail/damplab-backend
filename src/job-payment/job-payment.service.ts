@@ -25,6 +25,11 @@ export class JobPaymentService {
     return this.model.find({ jobId }).sort({ receivedOn: -1 }).exec();
   }
 
+  /** The job's live payments, oldest received first — the order an invoice lists them in. */
+  async livePayments(jobId: string): Promise<JobPayment[]> {
+    return this.model.find({ jobId, voidedAt: null }).sort({ receivedOn: 1 }).exec();
+  }
+
   /** What the job has paid: live payments only. */
   async paymentsToDate(jobId: string): Promise<number> {
     const live = await this.model.find({ jobId, voidedAt: null }).exec();

@@ -1,5 +1,5 @@
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
-import { UseGuards } from '@nestjs/common';
+import { Inject, UseGuards, forwardRef } from '@nestjs/common';
 import { JobPayment } from './job-payment.model';
 import { JobPaymentService } from './job-payment.service';
 import { JobBalanceService } from './job-balance.service';
@@ -13,6 +13,7 @@ import { Permission } from '../auth/permissions/permission.enum';
 import { JobService } from '../job/job.service';
 import { assertMayReadJobFinancials } from '../job/job-read-access';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
+import { InvoiceService } from '../invoice/invoice.service';
 
 @Resolver(() => JobPayment)
 @UseGuards(AuthRolesGuard)
@@ -21,7 +22,10 @@ export class JobPaymentResolver {
     private readonly payments: JobPaymentService,
     private readonly balances: JobBalanceService,
     private readonly jobService: JobService,
-    private readonly notificationDispatch: NotificationDispatchService
+    private readonly notificationDispatch: NotificationDispatchService,
+    // forwardRef: InvoiceModule imports this module for the balance, and this
+    // resolver reissues the invoice when a payment changes it.
+    @Inject(forwardRef(() => InvoiceService)) private readonly invoices: InvoiceService
   ) {}
 
   /**
@@ -49,11 +53,18 @@ export class JobPaymentResolver {
   async recordJobPayment(@Args('input', { type: () => RecordJobPaymentInput }) input: RecordJobPaymentInput, @CurrentUser() user: User): Promise<JobPayment> {
     const payment = await this.payments.record(input, user);
     const jobId = String((payment as any).jobId);
+    const amount = Number((payment as any).amount).toFixed(2);
+    const reference = (payment as any).reference ? ` (${(payment as any).reference})` : '';
+
+    // A payment changes what the invoice says, so the invoice is reissued, and
+    // its announcement — which names the payment — is the one email the
+    // customer gets. The receipt below is for a job with no invoice standing.
+    const reissued = await this.invoices.reissueAfterPaymentChange(jobId, user, `A payment of $${amount}${reference} was received.`);
+    if (reissued) return payment;
+
     const job: any = await this.jobService.findById(jobId);
     // After the write, so the figure the customer reads is the new one.
     const balance = await this.balances.balance(jobId);
-    const amount = Number((payment as any).amount).toFixed(2);
-    const reference = (payment as any).reference ? ` (${(payment as any).reference})` : '';
     this.notificationDispatch.dispatch({
       eventType: 'PAYMENT_RECORDED',
       title: `Payment of $${amount} recorded`,
@@ -65,9 +76,14 @@ export class JobPaymentResolver {
     return payment;
   }
 
-  @Mutation(() => JobPayment, { description: 'Void a payment. The record is kept and struck through; issued invoices are not touched.' })
+  @Mutation(() => JobPayment, {
+    description: 'Void a payment. The record is kept and struck through; issued invoices are not rewritten, but the current one is reissued to restate the balance.'
+  })
   @RequirePermission(Permission.BillingWrite)
   async voidJobPayment(@Args('id', { type: () => ID }) id: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<JobPayment> {
-    return this.payments.voidPayment(id, reason, user);
+    const payment = await this.payments.voidPayment(id, reason, user);
+    const amount = Number((payment as any).amount).toFixed(2);
+    await this.invoices.reissueAfterPaymentChange(String((payment as any).jobId), user, `A payment of $${amount} was voided (${String(reason).trim()}).`);
+    return payment;
   }
 }

@@ -40,6 +40,17 @@ export class InvoiceResolver {
   }
 
   /**
+   * What `createInvoice` would issue with this input, written nowhere — the
+   * issue dialog renders it as the invoice the customer will see. Gated like a
+   * write: it reads the whole job's billing, and exists only to prepare one.
+   */
+  @Query(() => Invoice, { description: 'Staff-only. The invoice createInvoice would issue with this input, without writing anything. Carries the default due dates when the input gives none.' })
+  @RequirePermission(Permission.BillingWrite)
+  async invoicePreview(@Args('input', { type: () => CreateInvoiceInput }) input: CreateInvoiceInput, @CurrentUser() user: User): Promise<Invoice> {
+    return this.invoiceService.previewForJob(input, user);
+  }
+
+  /**
    * Void the job's current invoice, keeping the record — for a job that was
    * cancelled or changed. Nothing else moves: the job's charges and payments
    * stay, and the next version restates them.

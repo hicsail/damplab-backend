@@ -2,6 +2,7 @@ import { Inject, Injectable, forwardRef } from '@nestjs/common';
 import { BookingService } from '../booking/booking.service';
 import { Booking } from '../booking/booking.model';
 import { JobPaymentService } from './job-payment.service';
+import { JobPayment } from './job-payment.model';
 import { JobChargeService } from './job-charge.service';
 import { JobCharge, JobChargeKind } from './job-charge.model';
 import { JobBalance } from './dto/job-balance.type';
@@ -49,6 +50,68 @@ export interface JobChargeBreakdown extends JobBalance {
   depositCharge: JobCharge | null; // the live DEPOSIT, if any
   bookings: Booking[]; // billable, oldest slot first
   adjustments: ProratedAdjustment[]; // the rows an invoice writes, at factor 1
+  payments: JobPayment[]; // live, oldest received first
+}
+
+/**
+ * What is still owed against the deposit: the deposit less payments, never
+ * below zero and never more than the balance — so the deposit can never ask
+ * for more than the whole invoice does.
+ */
+export function depositOutstandingOf(depositAmount: number | null, paymentsToDate: number, balanceDue: number): number {
+  return depositAmount == null ? 0 : round2(Math.max(0, Math.min(depositAmount - paymentsToDate, balanceDue)));
+}
+
+/** What an issue is about to add or change, before any of it is written. */
+export interface DraftCharges {
+  customLines?: ReadonlyArray<{ label: string; amount: number; note?: string }>;
+  /** A deposit replacing the job's current one. */
+  deposit?: { label: string; amount: number; dueDate: Date } | null;
+  removeDeposit?: boolean;
+}
+
+/**
+ * The breakdown as it will stand once `draft` is written: the arithmetic
+ * `chargeBreakdown` does, applied to lines that so far exist only in the issue
+ * dialog. A preview and the version issued from it therefore agree, and the
+ * due dates can be checked against the balance before anything is written.
+ */
+export function applyDraft(breakdown: JobChargeBreakdown, draft: DraftCharges): JobChargeBreakdown {
+  const now = new Date();
+  const added = (draft.customLines ?? []).map(
+    (line, i) => ({ _id: `draft-${i + 1}`, jobId: breakdown.jobId, kind: JobChargeKind.CUSTOM, label: line.label, amount: round2(line.amount), note: line.note, addedAt: now } as unknown as JobCharge)
+  );
+  const customLines = [...breakdown.customLines, ...added];
+  const customCharges = round2(customLines.reduce((sum: number, c: any) => sum + (Number(c.amount) || 0), 0));
+  const chargesToDate = round2(breakdown.serviceCharges + breakdown.adjustmentCharges + breakdown.equipmentCharges + customCharges);
+  const balanceDue = round2(chargesToDate - breakdown.paymentsToDate);
+
+  let depositCharge = breakdown.depositCharge;
+  if (draft.removeDeposit) depositCharge = null;
+  else if (draft.deposit) {
+    depositCharge = {
+      _id: 'draft-deposit',
+      jobId: breakdown.jobId,
+      kind: JobChargeKind.DEPOSIT,
+      label: draft.deposit.label,
+      amount: round2(draft.deposit.amount),
+      dueDate: draft.deposit.dueDate,
+      addedAt: now
+    } as unknown as JobCharge;
+  }
+  const depositAmount = depositCharge ? round2((depositCharge as any).amount) : null;
+
+  return {
+    ...breakdown,
+    customLines,
+    customCharges,
+    chargesToDate,
+    balanceDue,
+    depositCharge,
+    depositAmount,
+    depositDueDate: (depositCharge as any)?.dueDate ?? null,
+    depositOutstanding: depositOutstandingOf(depositAmount, breakdown.paymentsToDate, balanceDue)
+  };
 }
 
 /**
@@ -123,15 +186,14 @@ export class JobBalanceService {
     const unconfirmedBookings = all.filter((booking: any) => booking?.usageConfirmed !== true && String(booking?.status) !== 'CANCELLED').length;
 
     const chargesToDate = round2(serviceCharges + adjustmentCharges + equipmentCharges + customCharges);
-    const paymentsToDate = round2(await this.payments.paymentsToDate(jobId));
+    const payments = await this.payments.livePayments(jobId);
+    const paymentsToDate = round2(payments.reduce((sum: number, payment: any) => sum + (Number(payment.amount) || 0), 0));
     // Not floored at zero: an overpayment is a credit the customer is owed,
     // and hiding it would make the next invoice bill money already paid.
     const balanceDue = round2(chargesToDate - paymentsToDate);
 
     const depositAmount = depositCharge ? round2((depositCharge as any).amount) : null;
-    // Capped at the balance, so the deposit can never ask for more than the
-    // whole invoice does.
-    const depositOutstanding = depositAmount == null ? 0 : round2(Math.max(0, Math.min(depositAmount - paymentsToDate, balanceDue)));
+    const depositOutstanding = depositOutstandingOf(depositAmount, paymentsToDate, balanceDue);
 
     return {
       jobId,
@@ -152,7 +214,8 @@ export class JobBalanceService {
       customLines,
       depositCharge,
       bookings,
-      adjustments
+      adjustments,
+      payments
     };
   }
 

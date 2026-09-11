@@ -24,7 +24,7 @@ const build = (bookings: any[], opts: { paid?: number; charges?: any[]; sowLines
   const active = status === null ? null : { versionNumber: 1000, status, inputs: { services: opts.sowLines, adjustments: opts.adjustments ?? [] } };
   return new JobBalanceService(
     { findByJob: async () => bookings } as any,
-    { paymentsToDate: async () => opts.paid ?? 0 } as any,
+    { livePayments: async () => (opts.paid ? [{ _id: 'pay-1', amount: opts.paid, receivedOn: at('2026-03-02T12:00:00Z') }] : []) } as any,
     { liveByJobId: async () => opts.charges ?? [] } as any,
     {
       findByJobId: async () => (opts.hasSow === false ? null : { _id: 'sow-1' }),
