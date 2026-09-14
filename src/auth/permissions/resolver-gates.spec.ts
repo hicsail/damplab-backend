@@ -9,6 +9,7 @@ import { StationResolver } from '../../station/station.resolver';
 import { ProtocolMapResolver } from '../../protocol-map/protocol-map.resolver';
 import { TemplateResolver } from '../../template/template.resolver';
 import { JobResolver } from '../../job/job.resolver';
+import { SecureDnaResolver } from '../../securedna/securedna.resolver';
 import { WorkflowResolver } from '../../workflow/workflow.resolver';
 import { WorkflowNodeResolver } from '../../workflow/resolvers/node.resolver';
 import { InventoryResolver } from '../../inventory/inventory.resolver';
@@ -90,6 +91,10 @@ const GATES: Row[] = [
   [JobResolver, 'unarchiveJob', Permission.JobsViewAll],
   [WorkflowResolver, 'workflowById', Permission.JobsViewAll],
   [JobResolver, 'jobClients', Permission.JobsViewAll],
+  [JobResolver, 'rerunJobHomologyScreening', Permission.JobsViewAll],
+  [SecureDnaResolver, 'screeningBatches', Permission.JobsViewAll],
+  [SecureDnaResolver, 'createSequencesBatch', Permission.JobsViewAll],
+  [SecureDnaResolver, 'screenSequencesBatch', Permission.JobsViewAll],
   // The merged jobs page. Deliberately the BASELINE permission: this one query
   // serves a client and a technician, and the scope is enforced inside the
   // resolver rather than by the gate. See JobResolver.jobsForViewer.

@@ -1,4 +1,4 @@
-import { ForbiddenException } from '@nestjs/common';
+import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JobResolver } from './job.resolver';
 import { JobState } from './job.model';
 import { Role } from '../auth/roles/roles.enum';
@@ -173,5 +173,94 @@ describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
     const { resolver, findJobsForViewer } = harness();
     await resolver.jobsForViewer({ scope: 'WORKED_BY_ME' } as any, viewer([Role.Technician], 'tech-7'));
     expect(findJobsForViewer.mock.calls[0][1]).toEqual(expect.objectContaining({ scope: 'WORKED_BY_ME', viewerSub: 'tech-7' }));
+  });
+});
+
+function screeningHarness(overrides: { created?: { _id: string; name: string }; findById?: jest.Mock } = {}): {
+  resolver: JobResolver;
+  screenJobInBackground: jest.Mock;
+  screenJob: jest.Mock;
+  findById: jest.Mock;
+} {
+  const created = overrides.created ?? { _id: 'job-1', name: 'Submitted job' };
+  const findById = overrides.findById ?? jest.fn(async () => created);
+  const jobService: any = {
+    create: jest.fn(async () => created),
+    findById
+  };
+  const jobVersionService: any = {
+    snapshotLiveWorkflows: jest.fn(async () => []),
+    appendVersion: jest.fn(async () => undefined)
+  };
+  const activityService: any = { createEvent: jest.fn(async () => undefined) };
+  const keycloakService: any = { resolveCustomerCategoryForUser: jest.fn(async () => undefined) };
+  const notificationDispatch: any = { dispatch: jest.fn() };
+  const screenJobInBackground = jest.fn();
+  const screenJob = jest.fn();
+  const jobScreeningService: any = { screenJobInBackground, screenJob };
+  const resolver = new JobResolver(
+    jobService,
+    {} as any,
+    {} as any,
+    activityService,
+    {} as any,
+    {} as any,
+    {} as any,
+    jobVersionService,
+    {} as any,
+    keycloakService,
+    notificationDispatch,
+    jobScreeningService
+  );
+  return { resolver, screenJobInBackground, screenJob, findById };
+}
+
+describe('JobResolver.createJob — homology screening dispatch', () => {
+  const user: any = {
+    sub: 'customer-9',
+    email: 'c@example.org',
+    preferred_username: 'Customer',
+    realm_access: { roles: [] }
+  };
+
+  it('starts screening in the background with the new job id and the submitter, and does not wait for a verdict', async () => {
+    const { resolver, screenJobInBackground, screenJob } = screeningHarness();
+
+    const created = await resolver.createJob({ name: 'Submitted job', workflows: [] } as any, user);
+
+    expect(created._id).toBe('job-1');
+    expect(screenJobInBackground).toHaveBeenCalledWith('job-1', 'customer-9');
+    expect(screenJob).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobResolver.rerunJobHomologyScreening', () => {
+  const staff: any = {
+    sub: 'staff-1',
+    email: 'staff@example.org',
+    preferred_username: 'Staff',
+    realm_access: { roles: [Role.DamplabStaff] }
+  };
+
+  it('awaits a new screen and returns the job with the recorded verdict', async () => {
+    const job = { _id: 'job-1', name: 'Job' };
+    const screened = { ...job, homologyScreening: { status: 'PASSED' } };
+    const findById = jest.fn().mockResolvedValueOnce(job).mockResolvedValueOnce(screened);
+    const { resolver, screenJob, screenJobInBackground } = screeningHarness({ findById });
+    screenJob.mockResolvedValue({ status: 'PASSED' });
+
+    const result = await resolver.rerunJobHomologyScreening('job-1', staff);
+
+    expect(screenJob).toHaveBeenCalledWith('job-1', 'staff-1');
+    expect(screenJobInBackground).not.toHaveBeenCalled();
+    expect(result).toBe(screened);
+  });
+
+  it('throws when the job is missing, without calling SecureDNA', async () => {
+    const findById = jest.fn(async () => null);
+    const { resolver, screenJob } = screeningHarness({ findById });
+
+    await expect(resolver.rerunJobHomologyScreening('missing', staff)).rejects.toBeInstanceOf(NotFoundException);
+    expect(screenJob).not.toHaveBeenCalled();
   });
 });

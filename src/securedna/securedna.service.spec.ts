@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import { assertSynthclientScreenResponse, buildFasta, mapHitsToSlices } from './securedna.service';
+import { SecureDnaService, assertSynthclientScreenResponse, buildFasta, mapHitsBySequenceId, mapHitsToSlices } from './securedna.service';
 import type { ScreeningInputSequence } from './types';
 
 const sequences: ScreeningInputSequence[] = [
@@ -63,4 +63,53 @@ describe('assertSynthclientScreenResponse', () => {
     expect(() => assertSynthclientScreenResponse('granted')).toThrow(HttpException);
     expect(() => assertSynthclientScreenResponse([{ synthesis_permission: 'granted' }])).toThrow(HttpException);
   });
+
+  /**
+   * Synthclient answers unknown paths with HTTP 200 and
+   * `synthesis_permission: "denied"` plus a `not_found` diagnostic. That is a
+   * routing miss, not a hazard hit — treating it as a deny would mark a job
+   * Failed because of a typo'd SECUREDNA_API_URL.
+   */
+  it('rejects a not_found body so a wrong path is not a deny', () => {
+    expect(() =>
+      assertSynthclientScreenResponse({
+        synthesis_permission: 'denied',
+        errors: [{ diagnostic: 'not_found', additional_info: '/v1/version was not found.' }]
+      })
+    ).toThrow(HttpException);
+  });
 });
+
+describe('mapHitsBySequenceId', () => {
+  const ids = ['65a1b2c3d4e5f60718293a4b', '65a1b2c3d4e5f60718293a4c'];
+
+  it('places a hit on the sequence whose id was the FASTA header', () => {
+    expect(mapHitsBySequenceId(ids, [{ fasta_header: ids[1], hits_by_hazard: ['hazard'] }])).toEqual([[], ['hazard']]);
+  });
+
+  it('falls back to position when the header is rewritten', () => {
+    expect(
+      mapHitsBySequenceId(ids, [
+        { fasta_header: 'renamed', hits_by_hazard: ['first'] },
+        { fasta_header: 'also-renamed', hits_by_hazard: ['second'] }
+      ])
+    ).toEqual([['first'], ['second']]);
+  });
+});
+
+describe('createSequencesBatch', () => {
+  const sequenceModel: any = { create: jest.fn() };
+  const service = new SecureDnaService({} as any, sequenceModel);
+
+  it('rejects an empty list without writing', async () => {
+    await expect(service.createSequencesBatch([], 'user-1')).rejects.toBeInstanceOf(HttpException);
+    expect(sequenceModel.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects more than the batch ceiling without writing', async () => {
+    const tooMany = Array.from({ length: 1001 }, (_, i) => ({ name: `s${i}`, type: 'dna' as const, seq: 'ATGC' }));
+    await expect(service.createSequencesBatch(tooMany, 'user-1')).rejects.toBeInstanceOf(HttpException);
+    expect(sequenceModel.create).not.toHaveBeenCalled();
+  });
+});
+

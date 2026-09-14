@@ -310,6 +310,23 @@ export class JobResolver {
     return created;
   }
 
+  /**
+   * Staff-only. Re-run homology screening on an existing job and wait for the
+   * verdict so the Biosecurity card can show it without a second refresh.
+   * Checkout still fires screening in the background; this is the explicit
+   * "Run screening" path.
+   */
+  @Mutation(() => Job, { description: 'Staff-only. Re-run SecureDNA homology screening on a job and return the recorded verdict.' })
+  @RequirePermission(Permission.JobsViewAll)
+  async rerunJobHomologyScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    await this.jobScreeningService.screenJob(jobId, user.sub);
+    return (await this.jobService.findById(jobId)) ?? job;
+  }
+
   @Mutation(() => Job, {
     description:
       'Staff-only. Archive a job: hides it from the default jobs dashboard and the live lab boards while retaining everything. Permitted even when the job is IN_PROGRESS — the caller is expected to have confirmed — and the state at archive time is recorded.'

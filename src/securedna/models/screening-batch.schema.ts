@@ -25,10 +25,14 @@ const ScreeningDiagnosticSchema = new Schema(
  */
 const ScreeningBatchSequenceSliceSchema = new Schema(
   {
+    /** Present on standalone screener runs; job homology slices omit it. */
+    sequence: { type: Schema.Types.ObjectId, ref: 'Sequence', required: false },
+    recordId: { type: String, required: false },
     name: { type: String, required: true },
     order: { type: Number, required: true },
     originalSeq: { type: String, required: true },
-    threats: { type: [Schema.Types.Mixed], default: [] }
+    threats: { type: [Schema.Types.Mixed], default: [] },
+    warning: { type: String, required: false }
   },
   { _id: false }
 );
@@ -48,5 +52,25 @@ export const ScreeningBatchSchema = new Schema(
     jobId: { type: Schema.Types.ObjectId, ref: 'Job', required: false },
     userId: { type: String, required: true }
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: {
+      transform: function (_doc, ret): Record<string, unknown> {
+        const r = ret as Record<string, unknown> & {
+          _id?: unknown;
+          __v?: unknown;
+          createdAt?: Date;
+          updatedAt?: Date;
+        };
+        r.id = String(r._id);
+        r.created_at = r.createdAt;
+        r.updated_at = r.updatedAt;
+        delete r._id;
+        delete r.__v;
+        delete r.createdAt;
+        delete r.updatedAt;
+        return r;
+      }
+    }
+  }
 );
