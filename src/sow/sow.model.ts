@@ -3,6 +3,7 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, registerEnumType, Float, Int } from '@nestjs/graphql';
 import { Job } from '../job/job.model';
+import { PricingDetail } from '../pricing/pricing.model';
 
 export enum SOWStatus {
   DRAFT = 'DRAFT',
@@ -207,15 +208,28 @@ export class SOWPricingAdjustment {
   reason?: string;
 }
 
+/**
+ * @deprecated Has no effect on any figure. Scheduled for deletion.
+ *
+ * This was never wired to anything that computes money: nothing reads it when
+ * pricing a SOW, an invoice, or a fee schedule, and no UI has ever set it. The
+ * mechanism that does work is `SOWPricing.adjustments` — a `DISCOUNT` adjustment
+ * reduces the total, is carried onto invoices, and is prorated across partial
+ * ones (see `InvoiceService.createForJob`).
+ *
+ * Kept for one release rather than deleted outright because the `x-api-key` read
+ * path lets out-of-repo consumers select SOW fields; removing it immediately would
+ * break any query that names it.
+ */
 @Schema()
-@ObjectType({ description: 'Discount information for a Statement of Work' })
+@ObjectType({ description: 'DEPRECATED — has no effect on any total. Use SOWPricing.adjustments with type DISCOUNT.' })
 export class SOWDiscount {
   @Prop({ required: true })
-  @Field(() => Float, { description: 'Discount amount' })
+  @Field(() => Float, { deprecationReason: 'Never applied to any total. Use a DISCOUNT adjustment.', description: 'Discount amount' })
   amount: number;
 
   @Prop({ required: true })
-  @Field({ description: 'Reason for the discount' })
+  @Field({ deprecationReason: 'Never applied to any total. Use a DISCOUNT adjustment.', description: 'Reason for the discount' })
   reason: string;
 }
 
@@ -226,6 +240,14 @@ export class SOWPricing {
   @Field(() => Float, { description: 'Base cost before adjustments' })
   baseCost: number;
 
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description:
+      'Σ cost over equipment-use lines. Information, never money: these are projections, and the lab bills the hours actually booked through the job’s bookings instead. Deliberately NOT part of baseCost or totalCost. Absent on documents written before the split.'
+  })
+  estimatedEquipmentCost?: number;
+
   @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
   @Field(() => [SOWPricingAdjustment], { description: 'List of pricing adjustments' })
   adjustments: SOWPricingAdjustment[];
@@ -234,8 +256,24 @@ export class SOWPricing {
   @Field(() => Float, { description: 'Total cost after adjustments' })
   totalCost: number;
 
+  /**
+   * @deprecated Dead field — see `SOWDiscount`.
+   *
+   * No longer settable: create does not write it, and update carries the stored
+   * value forward while ignoring anything the input supplies. Values already in the
+   * database keep resolving, so a legacy document still shows the figure it always
+   * showed — a figure that never applied to any total.
+   *
+   * Preserved rather than dropped on update because that assignment replaces the
+   * whole `pricing` object, so omitting the key would erase a legacy discount on
+   * the next unrelated pricing edit. The deprecation is non-destructive by design.
+   */
   @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
-  @Field(() => SOWDiscount, { description: 'Discount applied to the pricing', nullable: true })
+  @Field(() => SOWDiscount, {
+    deprecationReason: 'Never applied to any total, and no longer written. Use SOWPricing.adjustments with type DISCOUNT.',
+    description: 'DEPRECATED — has no effect on totalCost.',
+    nullable: true
+  })
   discount?: SOWDiscount;
 }
 
@@ -276,6 +314,10 @@ export class SOWService {
   @Prop({ required: false })
   @Field(() => Float, { nullable: true, description: 'The run count alone. Superseded by multiplier for display; kept because existing documents carry it.' })
   runCount?: number;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false })
+  @Field(() => [PricingDetail], { nullable: true, description: 'How unitCost was arrived at, for parameter-priced lines. Absent where there is nothing to itemise.' })
+  pricingDetails?: PricingDetail[];
 }
 
 @Schema()
@@ -420,6 +462,8 @@ export const SOWSchema = SchemaFactory.createForClass(SOW);
 
 // Create indexes
 SOWSchema.index({ jobId: 1 });
-SOWSchema.index({ sowNumber: 1 });
+// No `sowNumber` index here: `@Prop({ unique: true })` on the field already
+// declares one, and declaring it twice built a second, redundant, non-unique
+// index and made Mongoose warn on every boot.
 SOWSchema.index({ status: 1 });
 SOWSchema.index({ createdAt: 1 });

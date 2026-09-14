@@ -34,6 +34,21 @@ export const EVENT_RECIPIENT_MAP: Record<string, EventRecipientConfig> = {
     recipients: [RecipientRole.JOB_OWNER],
     emailWorthy: true
   },
+  // Billing. All go to the job owner and all are worth an email: the customer
+  // hears about every change to their invoice. A recorded payment reissues the
+  // invoice, so PAYMENT_RECORDED only fires on a job with no invoice standing.
+  INVOICE_ISSUED: {
+    recipients: [RecipientRole.JOB_OWNER],
+    emailWorthy: true
+  },
+  INVOICE_VOIDED: {
+    recipients: [RecipientRole.JOB_OWNER],
+    emailWorthy: true
+  },
+  PAYMENT_RECORDED: {
+    recipients: [RecipientRole.JOB_OWNER],
+    emailWorthy: true
+  },
   COMMENT_CREATED: {
     recipients: [RecipientRole.JOB_OWNER, RecipientRole.ALL_STAFF],
     excludeActor: true,

@@ -25,6 +25,48 @@ export enum BookingBillingStatus {
 registerEnumType(BookingBillingStatus, { name: 'BookingBillingStatus' });
 
 /**
+ * One line of a booking's audit trail: who did what, when, and — for a change —
+ * what the slot was before and why it moved. Appended, never edited, so the job
+ * page can show the whole story of a reservation including its cancellation.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'One entry of a booking’s history: created, updated (with the previous slot and a reason) or cancelled.' })
+export class BookingHistoryEntry {
+  @Prop({ required: true })
+  @Field()
+  at: Date;
+
+  @Prop({ required: true })
+  @Field({ description: 'CREATED, UPDATED or CANCELLED.' })
+  action: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  bySub?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  byName?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Why the booking was changed. Required on UPDATED.' })
+  reason?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'The slot before an UPDATED entry.' })
+  previousStartTime?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  previousEndTime?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  previousNotes?: string;
+}
+export const BookingHistoryEntrySchema = SchemaFactory.createForClass(BookingHistoryEntry);
+
+/**
  * A reservation/usage record for a bookable inventory item. Machines are booked
  * for a time slot (kind=TIMED, billed by the hour); consumables are booked by
  * quantity (kind=QUANTITY, billed per unit). Cost is derived from CONFIRMED
@@ -150,6 +192,30 @@ export class Booking {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Free-text notes.' })
   notes?: string;
+
+  // --- Job-scoped booking (booked from a job page, against one of its
+  // equipment-use operations). Absent on a walk-up booking, and that absence is
+  // load-bearing: it is what tells the availability board to redact the label and
+  // what tells `cancelBooking` which ownership rule applies.
+  //
+  // Plain strings, not ObjectIds, matching `SOW.jobId`. Nothing about the
+  // estimated window is stored — "outside the estimated window" is computed on
+  // read from the node's reserved parameters, so a re-estimate is never stale.
+  @Prop({ required: false })
+  @Field(() => ID, { nullable: true, description: 'Job this booking belongs to (job-scoped bookings only).' })
+  jobId?: string;
+
+  @Prop({ required: false })
+  @Field(() => ID, { nullable: true, description: 'Workflow node id of the equipment-use operation this booking is against.' })
+  nodeId?: string;
+
+  @Prop({ required: false })
+  @Field(() => ID, { nullable: true, description: "The operation's service, whose per-category price is the rate snapshot." })
+  serviceId?: string;
+
+  @Prop({ type: [BookingHistoryEntrySchema], required: false, default: undefined })
+  @Field(() => [BookingHistoryEntry], { nullable: true, description: 'Audit trail, oldest first. Job-scoped bookings carry one; walk-up bookings may not.' })
+  history?: BookingHistoryEntry[];
 }
 
 export type BookingDocument = Booking & Document;
@@ -159,3 +225,4 @@ BookingSchema.index({ inventoryItem: 1, startTime: 1, endTime: 1 });
 BookingSchema.index({ ownerSub: 1 });
 BookingSchema.index({ billingStatus: 1 });
 BookingSchema.index({ status: 1 });
+BookingSchema.index({ jobId: 1 });

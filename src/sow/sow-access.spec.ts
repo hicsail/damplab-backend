@@ -1,7 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Role } from '../auth/roles/roles.enum';
 import { User } from '../auth/user.interface';
-import { assertCanReadSow, canReadSow, isJobOwner } from './sow-access';
+import { assertCanReadSow, canReadSow, invoiceBlockedReason, isJobOwner } from './sow-access';
 
 function user(overrides: Partial<User> = {}): User {
   return {
@@ -54,5 +54,47 @@ describe('SOW read access', () => {
     expect(canReadSow(null, owner)).toBe(false);
     // ...but staff still get through, so a dangling jobId is not a lockout for them.
     expect(canReadSow(null, staff)).toBe(true);
+  });
+});
+
+describe('invoiceBlockedReason', () => {
+  const versioned = { hasAnyVersion: true, everCountersigned: false };
+  const countersignedBefore = { hasAnyVersion: true, everCountersigned: true };
+  const legacy = { hasAnyVersion: false, everCountersigned: false };
+
+  it('lets a countersigned SOW through, which is the only thing an invoice bills', () => {
+    expect(invoiceBlockedReason('FINAL', versioned)).toBeNull();
+    expect(invoiceBlockedReason('FINAL', legacy)).toBeNull();
+  });
+
+  it('refuses SENT and SIGNED, which are agreement by at most one party', () => {
+    expect(invoiceBlockedReason('SENT', versioned)).toMatch(/not been countersigned yet/i);
+    expect(invoiceBlockedReason('SIGNED', versioned)).toMatch(/not been countersigned yet/i);
+  });
+
+  it('refuses a cancelled SOW in its own words', () => {
+    expect(invoiceBlockedReason('CANCELLED', countersignedBefore)).toMatch(/cancelled/i);
+  });
+
+  /**
+   * The distinction the whole `history` argument exists for. Withdrawing zeroes
+   * `activeVersionNumber` exactly as never having issued anything leaves it, so
+   * without this a staff member who countersigned a SOW last week is told they
+   * never did — and concludes the software is broken.
+   */
+  it('tells a withdrawn SOW apart from one never countersigned', () => {
+    expect(invoiceBlockedReason(undefined, countersignedBefore)).toMatch(/withdrawn/i);
+    expect(invoiceBlockedReason(undefined, versioned)).not.toMatch(/withdrawn/i);
+    expect(invoiceBlockedReason(undefined, versioned)).toMatch(/not been sent to the customer or countersigned/i);
+  });
+
+  it('points a pre-versioning SOW at the migration rather than at a workflow it cannot complete', () => {
+    // Staff cannot fix these by hand: the editor holds no fields when
+    // currentVersion is null. See test/integration/legacy-unversioned-sow.spec.ts.
+    expect(invoiceBlockedReason(undefined, legacy)).toMatch(/migration/i);
+  });
+
+  it('treats a DRAFT above nothing as never issued, not as a fifth case', () => {
+    expect(invoiceBlockedReason('DRAFT', versioned)).toMatch(/not been sent to the customer or countersigned/i);
   });
 });

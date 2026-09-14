@@ -1,5 +1,22 @@
 import { DampLabService, ServicePricingMode } from '../services/models/damplab-service.model';
-import { calculateServiceCost, calculateServiceCostBreakdown, CustomerCategory, extractRunCount, RUN_COUNT_PARAM_ID } from './service-pricing.util';
+import {
+  calculateServiceCost,
+  calculateServiceCostBreakdown,
+  CustomerCategory,
+  EQUIPMENT_BOOKERS_PARAM_ID,
+  EQUIPMENT_END_PARAM_ID,
+  EQUIPMENT_HOURS_PER_WEEK_PARAM_ID,
+  EQUIPMENT_OPEN_END_PARAM_ID,
+  EQUIPMENT_START_PARAM_ID,
+  equipmentFactor,
+  equipmentLineDescription,
+  equipmentWeeks,
+  extractRunCount,
+  isEquipmentLineDescription,
+  RUN_COUNT_PARAM_ID,
+  splitContractedLines,
+  sumLineCosts
+} from './service-pricing.util';
 
 /**
  * The universal run count is injected into formData client-side under a synthetic
@@ -196,7 +213,13 @@ describe('calculateServiceCostBreakdown — a parameter-priced line with no valu
       { id: 'kit', value: 'standard' },
       { id: 'samples', value: 4 }
     ];
-    expect(calculateServiceCostBreakdown(parameterService, formData, 999)).toEqual({ unitCost: 50, multiplier: 4, cost: 200 });
+    expect(calculateServiceCostBreakdown(parameterService, formData, 999)).toEqual({
+      unitCost: 50,
+      multiplier: 4,
+      cost: 200,
+      // Samples carries no price of its own, so it still scales the whole line.
+      details: [{ label: 'Kit: Standard', quantity: 1, unitPrice: 50, total: 50 }]
+    });
   });
 
   it.each([
@@ -218,6 +241,263 @@ describe('calculateServiceCostBreakdown — a parameter-priced line with no valu
       pricingMode: ServicePricingMode.PARAMETER,
       parameters: [{ id: 'kit', name: 'Kit', type: 'dropdown', options: [{ id: 'free', name: 'Free', price: 0 }] }]
     } as unknown as DampLabService;
-    expect(calculateServiceCostBreakdown(freeOption, [{ id: 'kit', value: 'free' }], 500)).toEqual({ unitCost: 0, multiplier: 1, cost: 0 });
+    expect(calculateServiceCostBreakdown(freeOption, [{ id: 'kit', value: 'free' }], 500)).toEqual({
+      unitCost: 0,
+      multiplier: 1,
+      cost: 0,
+      details: [{ label: 'Kit: Free', quantity: 1, unitPrice: 0, total: 0 }]
+    });
+  });
+});
+
+describe('a priced multiplier parameter scales only itself', () => {
+  // The shape the lab actually needs and could not express: a fixed instrument
+  // charge plus an hourly rate, on one operation.
+  const equipment = {
+    pricingMode: ServicePricingMode.PARAMETER,
+    parameters: [
+      { id: 'instrument', name: 'Instrument', type: 'dropdown', options: [{ id: 'bioanalyzer', name: 'Bioanalyzer', price: 100 }] },
+      { id: 'hours', name: 'Hours in use', type: 'number', isPriceMultiplier: true, price: 40 }
+    ]
+  } as unknown as DampLabService;
+
+  const threeHours = [
+    { id: 'instrument', value: 'bioanalyzer' },
+    { id: 'hours', value: 3 }
+  ];
+
+  it('bills the setup fee once and the hourly rate per hour', () => {
+    // Was (100 + 40) x 3 = 420: the hours scaled the instrument charge too.
+    const breakdown = calculateServiceCostBreakdown(equipment, threeHours);
+    expect(breakdown.cost).toBe(220);
+    expect(breakdown.multiplier).toBe(1);
+    expect(breakdown.details).toEqual([
+      { label: 'Instrument: Bioanalyzer', quantity: 1, unitPrice: 100, total: 100 },
+      { label: 'Hours in use', quantity: 3, unitPrice: 40, total: 120 }
+    ]);
+  });
+
+  it('reads the number rather than counting the selection', () => {
+    // The other half of the old trap: unflagging the parameter billed a flat
+    // $140 however many hours were entered.
+    const sixHours = [
+      { id: 'instrument', value: 'bioanalyzer' },
+      { id: 'hours', value: 6 }
+    ];
+    expect(calculateServiceCostBreakdown(equipment, sixHours).cost).toBe(340);
+  });
+
+  it('still lets the universal run count scale the whole line', () => {
+    // Two runs of a $220 session. The run count has no price of its own, so it
+    // is not one of the parameters excluded from the multiplier.
+    const twoRuns = [...threeHours, { id: RUN_COUNT_PARAM_ID, value: 2 }];
+    const breakdown = calculateServiceCostBreakdown(equipment, twoRuns);
+    expect(breakdown.multiplier).toBe(2);
+    expect(breakdown.cost).toBe(440);
+  });
+
+  it('leaves SERVICE-mode pricing alone, where a multiplier parameter scales the service price', () => {
+    // In SERVICE mode a parameter's own price is never read, so there is nothing
+    // that could have been double-counted and nothing to exclude.
+    const flat = {
+      pricingMode: ServicePricingMode.SERVICE,
+      price: 100,
+      parameters: [{ id: 'hours', name: 'Hours in use', type: 'number', isPriceMultiplier: true, price: 40 }]
+    } as unknown as DampLabService;
+    expect(calculateServiceCostBreakdown(flat, [{ id: 'hours', value: 3 }]).cost).toBe(300);
+  });
+});
+
+describe('a line rebuilt from a figure the node already computed', () => {
+  // A catalogue service with no resolvable price at all: no pricing.*, no tier
+  // price, no flat price. transformServices then has nothing to price from and
+  // falls back to what the workflow node carries.
+  const priceless = {
+    pricingMode: ServicePricingMode.SERVICE,
+    parameters: [{ id: RUN_COUNT_PARAM_ID, isPriceMultiplier: true }]
+  } as unknown as DampLabService;
+
+  const fourRuns = [{ id: RUN_COUNT_PARAM_ID, value: 4 }];
+
+  it('divides a line-total fallback back down instead of multiplying it again', () => {
+    // node.price is already unit x 4. Passed in the unit position it billed
+    // unit x 4 x 4 — $800 for a $50 service run four times.
+    const breakdown = calculateServiceCostBreakdown(priceless, fourRuns, undefined, undefined, { fallbackLineCost: 200 });
+    expect(breakdown.unitCost).toBe(50);
+    expect(breakdown.multiplier).toBe(4);
+    expect(breakdown.cost).toBe(200);
+  });
+
+  it('still treats an explicit unit fallback as a unit price', () => {
+    expect(calculateServiceCostBreakdown(priceless, fourRuns, 50)).toEqual({ unitCost: 50, multiplier: 4, cost: 200, details: undefined });
+  });
+
+  it('prefers the unit fallback when both are supplied', () => {
+    const breakdown = calculateServiceCostBreakdown(priceless, fourRuns, 50, undefined, { fallbackLineCost: 999 });
+    expect(breakdown.cost).toBe(200);
+  });
+
+  it('never overrides a price the catalogue can actually resolve', () => {
+    const priced = { pricingMode: ServicePricingMode.SERVICE, price: 10, parameters: [{ id: RUN_COUNT_PARAM_ID, isPriceMultiplier: true }] } as unknown as DampLabService;
+    expect(calculateServiceCostBreakdown(priced, fourRuns, undefined, undefined, { fallbackLineCost: 200 }).cost).toBe(40);
+  });
+});
+
+/**
+ * THE shared table. damplab-ui/src/utils/servicePricing.equipment.test.ts holds a
+ * byte-identical copy; the two implementations must agree case for case.
+ */
+const EQUIPMENT_FACTOR_CASES: Array<[string, string | undefined, string | undefined, unknown, number | undefined]> = [
+  ['28 days is 4 weeks', '2026-01-01', '2026-01-29', 10, 40],
+  ['29 days rounds up to 5 weeks', '2026-01-01', '2026-01-30', 10, 50],
+  ['a same-day window is one week', '2026-01-01', '2026-01-01', 10, 10],
+  ['7 days is exactly one week', '2026-01-01', '2026-01-08', 1, 1],
+  ['8 days rounds up to 2 weeks', '2026-01-01', '2026-01-09', 2, 4],
+  ['a missing end date has no factor', '2026-01-01', undefined, 10, undefined],
+  ['a missing start date has no factor', undefined, '2026-01-29', 10, undefined],
+  ['an end before the start has no factor', '2026-01-29', '2026-01-01', 10, undefined],
+  ['a malformed date has no factor', '2026-01-01', 'next tuesday', 10, undefined],
+  ['zero hours per week has no factor', '2026-01-01', '2026-01-29', 0, undefined],
+  ['non-numeric hours per week has no factor', '2026-01-01', '2026-01-29', 'abc', undefined],
+  ['hours per week sent as a string still counts', '2026-01-01', '2026-01-29', '10', 40]
+];
+
+const equipmentFormData = (start?: string, end?: string, hours?: unknown): Array<{ id: string; value: unknown }> => [
+  ...(start === undefined ? [] : [{ id: EQUIPMENT_START_PARAM_ID, value: start }]),
+  ...(end === undefined ? [] : [{ id: EQUIPMENT_END_PARAM_ID, value: end }]),
+  ...(hours === undefined ? [] : [{ id: EQUIPMENT_HOURS_PER_WEEK_PARAM_ID, value: hours }]),
+  { id: EQUIPMENT_OPEN_END_PARAM_ID, value: false },
+  { id: EQUIPMENT_BOOKERS_PARAM_ID, value: [] }
+];
+
+describe('equipmentWeeks', () => {
+  it('counts whole weeks, rounding any partial week up, with one week as the floor', () => {
+    expect(equipmentWeeks('2026-01-01', '2026-01-29')).toBe(4);
+    expect(equipmentWeeks('2026-01-01', '2026-01-30')).toBe(5);
+    expect(equipmentWeeks('2026-01-01', '2026-01-01')).toBe(1);
+  });
+
+  it('is undefined rather than throwing on a window it cannot read', () => {
+    expect(equipmentWeeks(undefined, '2026-01-29')).toBeUndefined();
+    expect(equipmentWeeks('2026-01-29', '2026-01-01')).toBeUndefined();
+    expect(equipmentWeeks('2026-01-01', '')).toBeUndefined();
+  });
+
+  it('does not shift across a DST boundary', () => {
+    // 2026-03-08 is the US spring-forward. Parsed as local dates this window
+    // is 27.96 days and would round to 4 weeks either way; parsed as UTC it
+    // is exactly 28. The assertion pins the UTC reading.
+    expect(equipmentWeeks('2026-02-22', '2026-03-22')).toBe(4);
+  });
+});
+
+describe('equipmentFactor', () => {
+  it.each(EQUIPMENT_FACTOR_CASES)('%s', (_label, start, end, hours, expected) => {
+    expect(equipmentFactor(equipmentFormData(start, end, hours))).toBe(expected);
+  });
+
+  it('is undefined when none of the reserved entries are present', () => {
+    expect(equipmentFactor([{ id: 'vol', value: 5 }])).toBeUndefined();
+    expect(equipmentFactor(undefined)).toBeUndefined();
+  });
+});
+
+describe('calculateServiceCostBreakdown — equipment estimate', () => {
+  it('prices 10 hrs/wk at $40/hr over 28 days as $1,600', () => {
+    const b = calculateServiceCostBreakdown(service({ price: 40 }), equipmentFormData('2026-01-01', '2026-01-29', 10));
+    expect(b.unitCost).toBe(40);
+    expect(b.multiplier).toBe(40);
+    expect(b.cost).toBe(1600);
+  });
+
+  it('stacks the run count on top of the equipment factor', () => {
+    const formData = [...equipmentFormData('2026-01-01', '2026-01-29', 10), { id: RUN_COUNT_PARAM_ID, value: 2 }];
+    expect(calculateServiceCostBreakdown(service({ price: 40 }), formData).multiplier).toBe(80);
+  });
+
+  it('leaves the price alone rather than throwing when the window is unusable', () => {
+    // The submission validator blocks an incomplete window; the pricer must not.
+    expect(calculateServiceCost(service({ price: 40 }), equipmentFormData('2026-01-01', undefined, 10))).toBe(40);
+    expect(calculateServiceCost(service({ price: 40 }), equipmentFormData('2026-01-29', '2026-01-01', 10))).toBe(40);
+  });
+});
+
+describe('equipmentLineDescription', () => {
+  it('states the estimate basis and that actual hours are what bill', () => {
+    expect(equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10))).toBe('Plate reader time — 10 hrs/wk x 4 wks (estimate; billed on actual hours)');
+  });
+
+  it('is idempotent, because the workflow sync re-sends the description it last wrote', () => {
+    const once = equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10));
+    expect(equipmentLineDescription(once, equipmentFormData('2026-01-01', '2026-01-29', 10))).toBe(once);
+  });
+
+  it('rewrites a stale suffix rather than stacking a second one', () => {
+    const stale = equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10));
+    expect(equipmentLineDescription(stale, equipmentFormData('2026-01-01', '2026-01-30', 10))).toBe('Plate reader time — 10 hrs/wk x 5 wks (estimate; billed on actual hours)');
+  });
+
+  it('drops the suffix when a line stops being an equipment line', () => {
+    const withSuffix = equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10));
+    expect(equipmentLineDescription(withSuffix, [{ id: 'vol', value: 5 }])).toBe('Plate reader time');
+  });
+
+  it('leaves an ordinary line completely alone', () => {
+    expect(equipmentLineDescription('Gibson Assembly', [{ id: RUN_COUNT_PARAM_ID, value: 3 }])).toBe('Gibson Assembly');
+    expect(equipmentLineDescription(undefined, [])).toBe('');
+  });
+
+  it('says nothing about an incomplete window, which the pricer also ignores', () => {
+    expect(equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', undefined, 10))).toBe('Plate reader time');
+  });
+});
+
+describe('isEquipmentLineDescription', () => {
+  it('recognises the suffix equipmentLineDescription writes', () => {
+    expect(isEquipmentLineDescription(equipmentLineDescription('Plate reader time', equipmentFormData('2026-01-01', '2026-01-29', 10)))).toBe(true);
+  });
+
+  it('recognises a fractional hours-per-week figure', () => {
+    expect(isEquipmentLineDescription('X — 7.5 hrs/wk x 3 wks (estimate; billed on actual hours)')).toBe(true);
+  });
+
+  it('says no to an ordinary service line, and to nothing at all', () => {
+    expect(isEquipmentLineDescription('Amplification of the supplied template')).toBe(false);
+    expect(isEquipmentLineDescription(undefined)).toBe(false);
+    expect(isEquipmentLineDescription('')).toBe(false);
+  });
+});
+
+describe('splitContractedLines', () => {
+  const equipment = { name: 'Plate reader', description: 'Plate reader — 10 hrs/wk x 4 wks (estimate; billed on actual hours)', cost: 400 };
+  const contracted = { name: 'PCR', description: 'Amplification', cost: 350 };
+
+  it('sorts a line by its description, keeping document order within each half', () => {
+    const { contracted: c, equipment: e } = splitContractedLines([contracted, equipment, { ...contracted, name: 'Gel', cost: 120 }]);
+    expect(c.map((l) => l.name)).toEqual(['PCR', 'Gel']);
+    expect(e.map((l) => l.name)).toEqual(['Plate reader']);
+  });
+
+  it('treats a missing description as contracted — only the estimate suffix excludes a line', () => {
+    expect(splitContractedLines([{ cost: 10 }] as any).contracted).toHaveLength(1);
+  });
+
+  it('handles null and undefined as nothing', () => {
+    expect(splitContractedLines(null)).toEqual({ contracted: [], equipment: [] });
+    expect(splitContractedLines(undefined)).toEqual({ contracted: [], equipment: [] });
+  });
+});
+
+describe('sumLineCosts', () => {
+  it('sums costs and rounds to cents', () => {
+    expect(sumLineCosts([{ cost: 0.1 }, { cost: 0.2 }])).toBe(0.3);
+  });
+
+  it('treats a missing or unparseable cost as zero', () => {
+    expect(sumLineCosts([{ cost: null }, {}, { cost: 350 }] as any)).toBe(350);
+  });
+
+  it('is zero for nothing at all', () => {
+    expect(sumLineCosts(null)).toBe(0);
   });
 });

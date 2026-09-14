@@ -149,8 +149,9 @@ export class SOWResolver {
       "The SOW's current service lines and their costs, read fresh on every query. Kept in sync with the job's services/category by syncSowServicesFromJobWorkflows — this is what the Fee Schedule renders, since service prices belong to the job spec rather than the document."
   })
   async liveServices(@Parent() sow: SOW): Promise<SowVersionServiceLine[]> {
-    const job = await this.jobService.findById(sow.jobId);
-    return SowVersionService.deriveInputs(sow, job).services;
+    // Priced from the catalog as it stands, not read back off the stored billing
+    // core — see SOWService.liveServiceLines for why the two are not the same.
+    return SowVersionService.toServiceLines(await this.sowService.liveServiceLines(sow));
   }
 
   @ResolveField(() => [SowVersionServiceLine], {

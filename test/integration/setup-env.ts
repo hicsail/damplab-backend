@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 /**
  * Runs before the test framework and before any test file imports AppModule.
  *
@@ -6,7 +9,47 @@
  * at a scratch database here is what keeps `npm run test:integration` from
  * dropping the developer's real one.
  */
-process.env.MONGO_URI = process.env.MONGO_TEST_URI ?? 'mongodb://localhost:27018/damplab_itest';
+/**
+ * Reads one key out of the backend's .env.
+ *
+ * Deliberately NOT a dotenv pass: this file's whole job is to control the
+ * environment *before* dotenv runs (see above), and loading the developer's
+ * whole .env here would pull in their real MONGO_URI and DISABLE_AUTH. We want
+ * exactly one thing from it — which port their Mongo is published on — so we
+ * read that key and nothing else.
+ */
+function fromEnvFile(key: string): string | undefined {
+  try {
+    const text = readFileSync(join(process.cwd(), '.env'), 'utf8');
+    for (const raw of text.split('\n')) {
+      const line = raw.trim().replace(/^export\s+/, '');
+      if (!line.startsWith(`${key}=`)) continue;
+      // Strip surrounding quotes; stop at an inline comment.
+      return (
+        line
+          .slice(key.length + 1)
+          .replace(/\s+#.*$/, '')
+          .replace(/^["']|["']$/g, '')
+          .trim() || undefined
+      );
+    }
+  } catch {
+    // No .env (CI) — fall through to the defaults below.
+  }
+  return undefined;
+}
+
+/**
+ * The scratch database, never the developer's real one: only the *port* is taken
+ * from the environment, and the database name is always `damplab_itest`.
+ *
+ * Precedence: an explicit MONGO_TEST_URI (what CI sets) wins; otherwise the port
+ * comes from MONGO_HOST_PORT — the same knob docker-compose.yml substitutes — read
+ * from the shell first and then from .env, because jest performs no dotenv pass of
+ * its own. Defaults to 27017, matching docker-compose.yml.
+ */
+const testPort = process.env.MONGO_HOST_PORT ?? fromEnvFile('MONGO_HOST_PORT') ?? '27017';
+process.env.MONGO_URI = process.env.MONGO_TEST_URI ?? fromEnvFile('MONGO_TEST_URI') ?? `mongodb://localhost:${testPort}/damplab_itest`;
 
 // AuthModule calls getOrThrow('auth.jwksEndpoint') while it is being constructed,
 // so the app cannot boot without a value. Nothing ever dereferences it: the tests

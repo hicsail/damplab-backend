@@ -7,7 +7,7 @@ import { UpdateSOWInput } from './dto/update-sow.input';
 import { JobService } from '../job/job.service';
 import { Job } from '../job/job.model';
 import { DampLabServices } from '../services/damplab-services.services';
-import { calculateServiceCostBreakdown, extractRunCount, CustomerCategory } from '../pricing/service-pricing.util';
+import { calculateServiceCostBreakdown, equipmentLineDescription, extractRunCount, splitContractedLines, sumLineCosts, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
 import { SowVersionInputs } from './sow-version.model';
 import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-field-calculator';
@@ -174,27 +174,44 @@ export class SOWService {
         if (!serviceRecord || serviceRecord.isDeleted === true) {
           throw new NotFoundException(`Service with ID ${service.id} not found`);
         }
-        // The fallback is a *unit* price, so prefer an incoming unitCost: passing a
-        // line total here would see it multiplied a second time.
-        const { unitCost, multiplier, cost } = calculateServiceCostBreakdown(serviceRecord, service.formData, service.unitCost ?? service.cost, customerCategory);
+        // Two fallbacks, because callers hold two different figures. `unitCost` is
+        // a unit price and goes in as one. `cost` off the sync path is a workflow
+        // node's line total, multiplier already applied — handing that to the unit
+        // position is what billed a catalogue-priceless service `unit x N x N`, so
+        // it goes in as what it is and is divided back down.
+        const { unitCost, multiplier, cost, details } = calculateServiceCostBreakdown(serviceRecord, service.formData, service.unitCost, customerCategory, {
+          fallbackLineCost: service.cost
+        });
         const runCount = extractRunCount(service.formData);
         return {
           _id: service.id,
           serviceId: service.id,
           name: service.name,
-          description: service.description,
+          description: equipmentLineDescription(service.description, service.formData),
           cost,
           unitCost,
           multiplier,
           category: service.category,
-          runCount
+          runCount,
+          pricingDetails: details
         };
       })
     );
   }
 
+  /**
+   * What the document contracts for. Equipment-use lines are excluded: their
+   * figure is an estimate the lab does not bill, so including it here would put
+   * an hours-times-weeks projection into the customer's total and then charge
+   * the actual hours on top of it.
+   */
   private calculateBaseCost(services: SOW['services']): number {
-    return services.reduce((sum, service) => sum + (service.cost ?? 0), 0);
+    return sumLineCosts(splitContractedLines(services).contracted);
+  }
+
+  /** The other half of the same split, stated on the document but in no total. */
+  private calculateEstimatedEquipmentCost(services: SOW['services']): number {
+    return sumLineCosts(splitContractedLines(services).equipment);
   }
 
   private calculateAdjustmentsTotal(adjustments: SOW['pricing']['adjustments']): number {
@@ -274,9 +291,10 @@ export class SOWService {
         id: serviceId,
         name: existing?.name ?? node.label ?? 'Service',
         description: existing?.description ?? node.label ?? 'Service',
-        // A unit price, not a line total: transformServices multiplies whatever
-        // arrives here by the node's multiplier when the service record carries
-        // no price of its own.
+        // A line total, and only that. `node.price` is what calculateServiceCost
+        // returned for the node — unit price times multiplier — so naming it
+        // `unitCost` as well made transformServices multiply it a second time
+        // whenever the service record had no price of its own to prefer.
         //
         // The job's node price always wins. The stored SOW figure used to be
         // preferred, which was correct while the SOW editor could override a
@@ -284,7 +302,6 @@ export class SOWService {
         // line silently didn't, leaving a stale figure on the document forever.
         // Service lines are no longer document-editable, so there is nothing on
         // the SOW side worth preserving here.
-        unitCost: node.price ?? 0,
         cost: node.price ?? 0,
         category: existing?.category ?? 'molecular-biology',
         formData: node.formData ?? []
@@ -314,7 +331,13 @@ export class SOWService {
       // `cost`, and the multiplier includes __runCount), so a run-count or
       // sample-count change moves the figure below on its own. Both sides of the
       // gate's comparison run through here, so omitting it cannot cause drift.
-      services.map((s) => ({ serviceId: String(s.id), name: s.name, cost: Number(s.cost) || 0, unitCost: s.unitCost, multiplier: undefined })),
+      // `unitCost` is fed the line total deliberately, and must keep being fed it.
+      // collectSowServiceInputs used to set unitCost = cost = node.price, so every
+      // fingerprint already stamped on an accepted job encodes the total twice.
+      // Sending anything else here — including nothing — changes the string and
+      // makes every in-flight accepted job report drift it does not have, which
+      // would lock its SOW from being sent.
+      services.map((s) => ({ serviceId: String(s.id), name: s.name, cost: Number(s.cost) || 0, unitCost: Number(s.cost) || 0, multiplier: undefined })),
       (job as any).customerCategory ?? null
     );
   }
@@ -367,6 +390,41 @@ export class SOWService {
   }
 
   /**
+   * The service lines this job implies *right now*, priced from the catalog as it
+   * currently stands — without writing anything.
+   *
+   * This is what the Fee Schedule's Recalculate pulls, and it deliberately does
+   * not read `sow.services`. That stored core is only rewritten by
+   * `syncServicesFromJobWorkflows`, which fires on a workflow edit or a category
+   * change — never when someone corrects a price in the catalog. So a price the
+   * lab had fixed could not be pulled into the document at all: Recalculate
+   * refreshed the document from a copy that was itself stale.
+   *
+   * Cost is the same traversal `jobBillingFingerprint` already performs on this
+   * request (see the contract gate), so this adds no new class of work to a SOW
+   * read.
+   *
+   * Falls back to the stored core rather than throwing: `transformServices`
+   * rejects a service that has since been deleted from the catalog, and a
+   * document must still render for a job whose catalog moved underneath it.
+   */
+  async liveServiceLines(sow: SOW): Promise<SOW['services']> {
+    const stored = sow.services ?? [];
+    try {
+      const job = await this.getJobForSow(sow);
+      if (!job) return stored;
+
+      const inputs = await this.collectSowServiceInputs(job, stored);
+      if (inputs.length === 0) return stored;
+
+      return await this.transformServices(inputs, (job as any).customerCategory);
+    } catch (error) {
+      this.logger.warn(`Could not price live service lines for SOW ${String((sow as any)._id)}; falling back to the stored billing core`, error instanceof Error ? error.stack : error);
+      return stored;
+    }
+  }
+
+  /**
    * Cancels the SOW attached to a job the client just cancelled, if there is one
    * still standing.
    *
@@ -416,8 +474,11 @@ export class SOWService {
 
     const baseCost = this.calculateBaseCost(services);
     const totalCost = this.calculateTotalCost(baseCost, adjustments);
+    const estimatedEquipmentCost = this.calculateEstimatedEquipmentCost(services);
 
-    const updated = await this.sowModel.findByIdAndUpdate(sowId, { $set: { pricing: { ...(sow.pricing ?? {}), baseCost, adjustments, totalCost }, updatedAt: new Date() } }, { new: true }).exec();
+    const updated = await this.sowModel
+      .findByIdAndUpdate(sowId, { $set: { pricing: { ...(sow.pricing ?? {}), baseCost, adjustments, totalCost, estimatedEquipmentCost }, updatedAt: new Date() } }, { new: true })
+      .exec();
 
     if (!updated) throw new NotFoundException(`SOW with ID ${sowId} not found`);
     return updated;
@@ -430,8 +491,14 @@ export class SOWService {
    * knows whether its version row will win the parent-pointer CAS. A lost race
    * would otherwise leave the document billing figures that no version records.
    */
-  async restoreDocumentBilling(sowId: string, pricing: SOW['pricing']): Promise<void> {
-    await this.sowModel.findByIdAndUpdate(sowId, { $set: { pricing, updatedAt: new Date() } }).exec();
+  async restoreDocumentBilling(sowId: string, pricing: SOW['pricing'], services?: SOW['services']): Promise<void> {
+    // `services` is restored alongside `pricing` because a Fee Schedule refresh
+    // re-syncs the billing core, which rewrites both. Putting only the pricing
+    // back would leave repriced service lines that no version accounts for —
+    // exactly the permanently-stale document this rollback exists to prevent.
+    const $set: Record<string, unknown> = { pricing, updatedAt: new Date() };
+    if (services !== undefined) $set.services = services;
+    await this.sowModel.findByIdAndUpdate(sowId, { $set }).exec();
   }
 
   /** Default project length when nothing better is known; staff edit it in the editor. */
@@ -587,6 +654,7 @@ export class SOWService {
     const adjustments = this.transformPricingAdjustments(createSOWInput.pricing.adjustments ?? []);
     const baseCost = this.calculateBaseCost(services);
     const totalCost = this.calculateTotalCost(baseCost, adjustments);
+    const estimatedEquipmentCost = this.calculateEstimatedEquipmentCost(services);
     this.validatePricingConsistency(createSOWInput.pricing, baseCost, totalCost);
 
     // Create SOW document
@@ -606,11 +674,15 @@ export class SOWService {
       services,
       timeline: createSOWInput.timeline,
       resources: createSOWInput.resources,
+      // `discount` is deliberately not written. It is a dead field (see SOWDiscount)
+      // and a new SOW should not acquire one; the mechanism that works is a
+      // DISCOUNT entry in `adjustments`. The input still accepts it, for one
+      // deprecation release, and now ignores it.
       pricing: {
         baseCost,
         adjustments,
         totalCost,
-        discount: createSOWInput.pricing.discount
+        estimatedEquipmentCost
       },
       terms: createSOWInput.terms,
       additionalInformation: createSOWInput.additionalInformation,
@@ -701,11 +773,18 @@ export class SOWService {
       const baseCost = this.calculateBaseCost(services);
       const totalCost = this.calculateTotalCost(baseCost, adjustments);
       this.validatePricingConsistency(updateSOWInput.pricing, baseCost, totalCost);
+      // Carries the stored value forward, and ignores any new one from the input.
+      // Note this assignment REPLACES the whole pricing object, so omitting the key
+      // would not merely stop refreshing the field — it would erase a legacy
+      // document's stored discount on the next unrelated pricing edit. Preserving
+      // it keeps the deprecation non-destructive; the field goes away when the
+      // field goes away.
       updateData.pricing = {
         baseCost,
         adjustments,
         totalCost,
-        discount: updateSOWInput.pricing?.discount ?? sow.pricing.discount
+        estimatedEquipmentCost: this.calculateEstimatedEquipmentCost(services),
+        discount: sow.pricing.discount
       };
     }
     if (updateSOWInput.terms !== undefined) updateData.terms = updateSOWInput.terms;

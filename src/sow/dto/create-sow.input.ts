@@ -54,6 +54,12 @@ export class SOWPricingAdjustmentInput {
 }
 
 @InputType()
+/**
+ * @deprecated Accepted and ignored. See `SOWDiscount` in sow.model.ts — the field
+ * has never affected any total, and as of this release nothing persists a new
+ * value. Kept for one release so existing callers do not start failing validation;
+ * deleted with the field itself.
+ */
 export class SOWDiscountInput {
   @Field(() => Float, { description: 'Discount amount' })
   amount: number;
@@ -73,7 +79,7 @@ export class SOWPricingInput {
   @Field(() => Float, { description: 'Total cost after adjustments', nullable: true })
   totalCost?: number;
 
-  @Field(() => SOWDiscountInput, { description: 'Discount applied to the pricing', nullable: true })
+  @Field(() => SOWDiscountInput, { deprecationReason: 'Accepted and ignored; never applied to any total. Use adjustments with type DISCOUNT.', description: 'DEPRECATED — ignored.', nullable: true })
   discount?: SOWDiscountInput;
 }
 
@@ -88,10 +94,14 @@ export class SOWServiceInput {
   @Field({ description: 'Description of the service' })
   description: string;
 
-  @Field(() => Float, { description: 'Cost of the service. Used only as a fallback when the service record carries no price of its own.', nullable: true })
+  @Field(() => Float, {
+    description:
+      'Line total for the service — unit price times multiplier. Used only as a fallback when the service record carries no price of its own, and divided back down by the multiplier before it is used as one.',
+    nullable: true
+  })
   cost?: number;
 
-  @Field(() => Float, { description: 'Price of a single run, preferred over cost as the fallback: cost is already multiplied.', nullable: true })
+  @Field(() => Float, { description: 'Price of a single run. Preferred over cost as the fallback, since it needs no dividing.', nullable: true })
   unitCost?: number;
 
   @Field(() => JSON, { description: 'Parameter values for pricing', nullable: true })

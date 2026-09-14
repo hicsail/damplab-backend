@@ -24,6 +24,9 @@ import { TrainingResolver } from '../../training/training.resolver';
 import { AnnouncementResolver } from '../../announcements/announcement.resolver';
 import { CustomerManagementResolver } from '../../workflow/resolvers/customer-management.resolver';
 import { PermissionsResolver } from './permissions.resolver';
+import { InvoiceResolver } from '../../invoice/invoice.resolver';
+import { JobPaymentResolver } from '../../job-payment/job-payment.resolver';
+import { JobChargeResolver } from '../../job-payment/job-charge.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -131,6 +134,31 @@ const GATES: Row[] = [
   [BookingResolver, 'confirmBookingUsage', Permission.BillingView],
   [BookingResolver, 'billableBookings', Permission.BillingView],
 
+  // Voiding an invoice reverses a financial record, so it sits above
+  // `billing:view` and above generating one. `createInvoice` is deliberately
+  // absent from this table: it still hand-rolls a `damplab-staff` check inside
+  // InvoiceService, and migrating it is separate work.
+  [InvoiceResolver, 'voidInvoice', Permission.BillingWrite],
+  // A preview reads the whole job's billing and exists only to prepare an
+  // issue, so it is gated like one.
+  [InvoiceResolver, 'invoicePreview', Permission.BillingWrite],
+
+  // Recording money in or out is a financial write, the same tier as voiding an
+  // invoice.
+  [JobPaymentResolver, 'recordJobPayment', Permission.BillingWrite],
+  [JobPaymentResolver, 'voidJobPayment', Permission.BillingWrite],
+
+  // Adding or voiding a charge moves the job's balance, the same tier as
+  // recording a payment.
+  [JobChargeResolver, 'addJobCharge', Permission.BillingWrite],
+  [JobChargeResolver, 'voidJobCharge', Permission.BillingWrite],
+
+  // Job-scoped equipment booking. `inventory:book` is the tier; being on the job
+  // is checked inside JobEquipmentBookingService.
+  [BookingResolver, 'createJobEquipmentBooking', Permission.InventoryBook],
+  [BookingResolver, 'updateJobEquipmentBooking', Permission.InventoryBook],
+  [BookingResolver, 'setJobBookingBlock', Permission.BillingView],
+
   // /edit
   [DampLabServicesResolver, 'createService', Permission.CatalogEditorWrite],
   [DampLabServicesResolver, 'updateService', Permission.CatalogEditorWrite],
@@ -201,6 +229,34 @@ describe('Phase 2b widening — the gate on each operation', () => {
     expect(equipmentUser.has(Permission.ProtocolLibraryRead)).toBe(false);
   });
 
+  /**
+   * Also deliberately undecorated. `jobEquipmentBooking` is the client's own job
+   * page: a customer with no inventory permission must still load it and read
+   * "Booking opens once the Statement of Work is signed by both parties." The
+   * scope is enforced inside the resolver, which answers HIDDEN and nothing else
+   * to anyone who is not the job's owner, a listed booker, or staff. Gating it on
+   * inventory:book would 403 every ordinary client on page load.
+   */
+  it('leaves the job equipment-booking query ungated, with the scope enforced inside', () => {
+    expect(permissionOn(BookingResolver, 'jobEquipmentBooking')).toBeUndefined();
+    expect(rolesOn(BookingResolver, 'jobEquipmentBooking')).toBeUndefined();
+  });
+
+  /**
+   * Ungated for the same reason `jobEquipmentBooking` is: these load on a
+   * customer's own job page, and a client holds neither billing permission.
+   * The scope is `assertMayReadJobFinancials` inside the resolver, which refuses
+   * anyone who is not staff, the creator, or the named client.
+   */
+  it('leaves the job billing reads ungated, with the scope enforced inside', () => {
+    for (const method of ['jobBalance', 'jobPayments']) {
+      expect(permissionOn(JobPaymentResolver, method)).toBeUndefined();
+      expect(rolesOn(JobPaymentResolver, method)).toBeUndefined();
+    }
+    expect(permissionOn(JobChargeResolver, 'jobCharges')).toBeUndefined();
+    expect(rolesOn(JobChargeResolver, 'jobCharges')).toBeUndefined();
+  });
+
   it('leaves no @Roles behind on any of them', () => {
     // A leftover @Roles(DamplabStaff) is evaluated IN ADDITION to the permission,
     // so it would silently re-deny every technician the widening was for.
@@ -250,6 +306,15 @@ describe('Phase 2b widening — who each gate lets through', () => {
     for (const permission of [Permission.CatalogEditorWrite, Permission.LabLayoutWrite, Permission.InventoryWrite]) {
       expect({ permission, reach: reach(permission) }).toEqual({ permission, reach: ['administrator'] });
     }
+  });
+
+  /**
+   * Voiding is the one billing act above the page: a technician who can see the
+   * Billing page must not be able to reverse a charge from it.
+   */
+  it('keeps voiding an invoice above viewing billing', () => {
+    expect(reach(Permission.BillingWrite)).toEqual(['administrator']);
+    expect(reach(Permission.BillingView)).toEqual(['administrator']);
   });
 
   it('keeps confirm-usage administrator-only even though the page it sits on widened', () => {

@@ -6,10 +6,12 @@ import mongoose from 'mongoose';
 import { ServiceChange } from './dtos/update.dto';
 import { CreateService } from './dtos/create.dto';
 import { Pricing } from '../pricing/pricing.model';
+import { InventoryService } from '../inventory/inventory.service';
+import { equipmentUseRuleViolation } from './equipment-use.validation';
 
 @Injectable()
 export class DampLabServices {
-  constructor(@InjectModel(DampLabService.name) private readonly dampLabServiceModel: Model<DampLabServiceDocument>) {}
+  constructor(@InjectModel(DampLabService.name) private readonly dampLabServiceModel: Model<DampLabServiceDocument>, private readonly inventoryService: InventoryService) {}
 
   /**
    * Ensure deliverables field is always an array (for backward compatibility)
@@ -50,18 +52,36 @@ export class DampLabServices {
   /**
    * Backward compatibility: hydrate `pricing` from legacy scalar fields when present.
    */
+  /**
+   * Synthesizes `pricing` from the deprecated flat fields when a service has no
+   * pricing object yet.
+   *
+   * All five tiers, not three. It used to carry only internal/external/legacy,
+   * so a service priced per-tier in the flat fields came back claiming to have
+   * pricing while `externalAcademic`, `externalMarket` and `externalNoSalary`
+   * were quietly absent — and every reader of the synthesized object (the
+   * client-facing catalog quote among them) fell through to `legacy` for those
+   * three categories.
+   */
   private normalizePricing(service: DampLabService): DampLabService {
     const hasPricingObject = service.pricing && typeof service.pricing === 'object';
     if (hasPricingObject) return service;
 
-    const internal = (service as any).internalPrice;
-    const external = (service as any).externalPrice;
-    const legacy = (service as any).price;
+    const row = service as any;
+    const internal = row.internalPrice;
+    const external = row.externalPrice;
+    const externalAcademic = row.externalAcademicPrice;
+    const externalMarket = row.externalMarketPrice;
+    const externalNoSalary = row.externalNoSalaryPrice;
+    const legacy = row.price;
 
-    if (internal != null || external != null || legacy != null) {
+    if (internal != null || external != null || externalAcademic != null || externalMarket != null || externalNoSalary != null || legacy != null) {
       const pricing: Pricing = {
         internal: internal ?? undefined,
         external: external ?? undefined,
+        externalAcademic: externalAcademic ?? undefined,
+        externalMarket: externalMarket ?? undefined,
+        externalNoSalary: externalNoSalary ?? undefined,
         legacy: legacy ?? undefined
       };
       service.pricing = pricing;
@@ -123,10 +143,31 @@ export class DampLabServices {
     return service ? this.normalizeService(service) : null;
   }
 
+  /**
+   * The server-side twin of the catalog editor's inline warning: an operation that
+   * books equipment has to require a piece of equipment somebody can book.
+   *
+   * `equipmentUse` and `inventoryRequirements` are read as the *merged* record, so a
+   * partial update that strips the last bookable item off an already-flagged service
+   * is refused as firmly as one that turns the flag on without one. When neither
+   * field is in play both values come from the stored record, which was valid when
+   * it was written, and no inventory lookup happens at all.
+   */
+  private async assertEquipmentUseIsSatisfiable(equipmentUse: boolean | undefined, requirementIds: ReadonlyArray<unknown> | undefined): Promise<void> {
+    if (equipmentUse !== true) return;
+    const ids = (requirementIds ?? []).map((v) => String(v));
+    const items = ids.length ? await this.inventoryService.findByIds(ids) : [];
+    const violation = equipmentUseRuleViolation(equipmentUse, requirementIds, items as any);
+    if (violation) throw new BadRequestException(violation);
+  }
+
   async update(service: DampLabService, changes: ServiceChange): Promise<DampLabService> {
     if (service.isDeleted === true) {
       throw new BadRequestException(`Cannot update soft-deleted service ${service._id}`);
     }
+    const mergedEquipmentUse = (changes as any).equipmentUse ?? (service as any).equipmentUse;
+    const mergedRequirements = (changes as any).inventoryRequirements ?? (service as any).inventoryRequirements;
+    await this.assertEquipmentUseIsSatisfiable(mergedEquipmentUse, mergedRequirements);
     await this.dampLabServiceModel.updateOne({ _id: service._id }, changes);
     const updated = await this.dampLabServiceModel.findById(service._id);
     return this.normalizeService(updated!);
@@ -147,6 +188,7 @@ export class DampLabServices {
   }
 
   async create(service: CreateService): Promise<DampLabService> {
+    await this.assertEquipmentUseIsSatisfiable((service as any).equipmentUse, (service as any).inventoryRequirements);
     // Ensure deliverables defaults to empty array if not provided
     const serviceData = {
       ...service,

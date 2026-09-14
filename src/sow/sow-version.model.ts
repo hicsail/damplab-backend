@@ -3,6 +3,7 @@ import { Document } from 'mongoose';
 import mongoose from 'mongoose';
 import { Field, ObjectType, ID, Int, Float, registerEnumType } from '@nestjs/graphql';
 import { SOWStatus, SOWAdjustmentType, SOWAdjustmentCategory } from './sow.model';
+import { PricingDetail } from '../pricing/pricing.model';
 
 /**
  * A SOW version is an immutable snapshot of the document. Save, send, sign,
@@ -152,6 +153,10 @@ export class SowVersionService {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Category of the service, as it stood when this version was written.' })
   category?: string;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false })
+  @Field(() => [PricingDetail], { nullable: true, description: 'How unitCost was arrived at, for parameter-priced lines. Absent where there is nothing to itemise.' })
+  pricingDetails?: PricingDetail[];
 }
 
 @Schema({ _id: false })
@@ -237,6 +242,13 @@ export class SowVersionInputs {
   @Prop({ required: true, default: 0 })
   @Field(() => Float)
   baseCost: number;
+
+  // Optional, not required: every version frozen before the equipment-estimate
+  // split has no value here, and a non-null field nulled the whole sowByJobId
+  // query for those SOWs. Readers treat an absent value as 0.
+  @Prop({ default: 0 })
+  @Field(() => Float, { nullable: true, description: 'Σ cost over equipment-use lines, frozen with the rest. Stated on the document; in no total. Absent on versions written before the split.' })
+  estimatedEquipmentCost?: number;
 
   @Prop({ required: true, default: 0 })
   @Field(() => Float)

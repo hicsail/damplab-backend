@@ -22,6 +22,7 @@ interface ServiceParameterOption {
 
 interface ServiceParameterDefinition {
   id?: unknown;
+  name?: unknown;
   allowMultipleValues?: boolean;
   price?: unknown;
   internalPrice?: unknown;
@@ -50,6 +51,137 @@ export { CustomerCategory };
  * Must stay in sync with RUN_COUNT_PARAM_ID in damplab-ui/src/utils/servicePricing.ts.
  */
 export const RUN_COUNT_PARAM_ID = '__runCount';
+
+/**
+ * Ids of the five reserved equipment-use parameters. Like the run count these are
+ * injected into formData client-side and never stored in service.parameters, so they
+ * are read straight from formData. Must stay in sync with the constants of the same
+ * names in damplab-ui/src/utils/servicePricing.ts.
+ */
+export const EQUIPMENT_START_PARAM_ID = '__equipStart';
+export const EQUIPMENT_END_PARAM_ID = '__equipEnd';
+export const EQUIPMENT_OPEN_END_PARAM_ID = '__equipOpenEnd';
+export const EQUIPMENT_HOURS_PER_WEEK_PARAM_ID = '__equipHoursPerWeek';
+export const EQUIPMENT_BOOKERS_PARAM_ID = '__equipBookers';
+
+/** The five, in the order the sidebar and the documents show them. */
+export const EQUIPMENT_PARAM_IDS: readonly string[] = [EQUIPMENT_START_PARAM_ID, EQUIPMENT_END_PARAM_ID, EQUIPMENT_OPEN_END_PARAM_ID, EQUIPMENT_HOURS_PER_WEEK_PARAM_ID, EQUIPMENT_BOOKERS_PARAM_ID];
+
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * A `YYYY-MM-DD` string as UTC midnight in ms, or undefined.
+ *
+ * UTC deliberately: the difference between two of these has to be a whole number
+ * of days on both sides of the wire and on both sides of a DST boundary, and the
+ * frontend twin parses the same way.
+ */
+export function dateOnlyToUtcMs(value: unknown): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const m = DATE_ONLY_RE.exec(value.trim());
+  if (!m) return undefined;
+  const ms = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+/**
+ * Whole weeks from start to end, any partial week rounded up, never below one.
+ * Undefined when either date is missing or malformed, or the end precedes the
+ * start — the submission validator blocks those, the pricer must not throw on them.
+ */
+export function equipmentWeeks(start: unknown, end: unknown): number | undefined {
+  const s = dateOnlyToUtcMs(start);
+  const e = dateOnlyToUtcMs(end);
+  if (s === undefined || e === undefined) return undefined;
+  const days = Math.round((e - s) / 86400000);
+  if (days < 0) return undefined;
+  return Math.max(1, Math.ceil(days / 7));
+}
+
+/**
+ * The estimate multiplier for an equipment-use operation: projected hours per week
+ * times the number of weeks in the window. Undefined when the operation is not an
+ * equipment one, or its window/hours are incomplete or nonsensical.
+ */
+export function equipmentFactor(rawFormData: unknown): number | undefined {
+  const formData = normalizeFormDataToArray(rawFormData, new Set());
+  const byId = new Map(formData.map((entry) => [entry.id, entry.value]));
+  const weeks = equipmentWeeks(byId.get(EQUIPMENT_START_PARAM_ID), byId.get(EQUIPMENT_END_PARAM_ID));
+  if (weeks === undefined) return undefined;
+  const hours = resolveQty(byId.get(EQUIPMENT_HOURS_PER_WEEK_PARAM_ID));
+  if (hours === undefined || !(hours > 0)) return undefined;
+  return hours * weeks;
+}
+
+/** Everything this helper appends, so it can also take it back off. */
+const EQUIPMENT_DESCRIPTION_SUFFIX_RE = / — \d+(?:\.\d+)? hrs\/wk x \d+ wks \(estimate; billed on actual hours\)$/;
+
+/**
+ * Whether a SOW/invoice line describes equipment time.
+ *
+ * The suffix `equipmentLineDescription` writes is the only marker that survives
+ * onto a frozen SOW version — `SowVersionService` lines carry no `equipmentUse`
+ * flag — so the predicate lives here with the regex rather than being copied
+ * next to each reader.
+ */
+export function isEquipmentLineDescription(description: string | null | undefined): boolean {
+  return EQUIPMENT_DESCRIPTION_SUFFIX_RE.test(String(description ?? ''));
+}
+
+/** The shape both halves of the split need: a description to classify by and a cost to sum. */
+export interface CostLineLike {
+  description?: string | null;
+  cost?: number | null;
+}
+
+/**
+ * THE split between what a SOW contracts for and what it merely estimates.
+ *
+ * An equipment-use line is a projection — hours per week times weeks — and the
+ * lab bills the hours actually booked instead, through the job's bookings. So
+ * its figure belongs on the document as information and in no total. Every
+ * reader of that distinction goes through here rather than calling the
+ * predicate itself, so "contracted" cannot come to mean two different things
+ * in two files.
+ */
+export function splitContractedLines<T extends CostLineLike>(lines: readonly T[] | null | undefined): { contracted: T[]; equipment: T[] } {
+  const contracted: T[] = [];
+  const equipment: T[] = [];
+  for (const line of lines ?? []) {
+    (isEquipmentLineDescription(line?.description) ? equipment : contracted).push(line);
+  }
+  return { contracted, equipment };
+}
+
+/** Σ cost, rounded to cents so a float sum cannot put noise into a stored total. */
+export function sumLineCosts(lines: readonly CostLineLike[] | null | undefined): number {
+  const total = (lines ?? []).reduce((sum, line) => sum + (Number(line?.cost) || 0), 0);
+  return Math.round(total * 100) / 100;
+}
+
+/**
+ * The SOW/invoice line description for an operation, with the equipment estimate
+ * spelled out on it.
+ *
+ * SOWService stores no formData and this run adds no schema, so the description is
+ * the only place the hours-and-weeks basis can survive onto the document. It is
+ * rewritten rather than appended on every call because collectSowServiceInputs
+ * re-sends the description it last wrote on every workflow sync — appending would
+ * grow a new suffix each time.
+ */
+export function equipmentLineDescription(description: string | undefined, rawFormData: unknown): string {
+  const base = (description ?? '').replace(EQUIPMENT_DESCRIPTION_SUFFIX_RE, '');
+  const factor = equipmentFactor(rawFormData);
+  if (factor === undefined) return base;
+
+  const formData = normalizeFormDataToArray(rawFormData, new Set());
+  const byId = new Map(formData.map((entry) => [entry.id, entry.value]));
+  const weeks = equipmentWeeks(byId.get(EQUIPMENT_START_PARAM_ID), byId.get(EQUIPMENT_END_PARAM_ID));
+  const hours = resolveQty(byId.get(EQUIPMENT_HOURS_PER_WEEK_PARAM_ID));
+  if (weeks === undefined || hours === undefined) return base;
+
+  return `${base} — ${hours} hrs/wk x ${weeks} wks (estimate; billed on actual hours)`;
+}
 
 function normalizePrice(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -123,7 +255,7 @@ function resolveQty(rawValue: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function getMultiplier(parameters: unknown, rawFormData: unknown): number {
+function getMultiplier(parameters: unknown, rawFormData: unknown, opts?: { skipSelfPriced?: boolean; customerCategory?: CustomerCategory }): number {
   const multiValueParamIds = getMultiValueParamIds(parameters);
   const formData = normalizeFormDataToArray(rawFormData, multiValueParamIds);
   const formDataMap = new Map(formData.map((entry) => [entry.id, entry.value]));
@@ -135,6 +267,11 @@ function getMultiplier(parameters: unknown, rawFormData: unknown): number {
   const runCountQty = resolveQty(formDataMap.get(RUN_COUNT_PARAM_ID));
   if (runCountQty !== undefined) multiplier *= runCountQty;
 
+  // Equipment use, also read straight from formData. Stacks with the run count:
+  // 2 runs of a 40-hour booking bills 80 hours.
+  const equipmentQty = equipmentFactor(rawFormData);
+  if (equipmentQty !== undefined) multiplier *= equipmentQty;
+
   // Any further multiplier parameters the service declares for itself. The run count
   // is skipped here so a service that also declares it is not counted twice.
   if (Array.isArray(parameters)) {
@@ -143,6 +280,12 @@ function getMultiplier(parameters: unknown, rawFormData: unknown): number {
       if (param.isPriceMultiplier !== true) continue;
       const id = typeof param.id === 'string' ? param.id : undefined;
       if (!id || id === RUN_COUNT_PARAM_ID) continue;
+
+      // A parameter that carries its own price has already been billed as
+      // `price x value` inside the base, so scaling the whole line by that same
+      // value again would charge every other parameter for it too. See the
+      // note on calculateParameterCostWithCategory.
+      if (opts?.skipSelfPriced && resolveCategoryPrice(param, opts.customerCategory) !== undefined) continue;
 
       const qty = resolveQty(formDataMap.get(id));
       if (qty === undefined) continue;
@@ -165,6 +308,24 @@ export function extractRunCount(rawFormData: unknown): number | undefined {
   return entry ? resolveQty(entry.value) : undefined;
 }
 
+/**
+ * One priced element behind a parameter-priced line: which selection it was,
+ * how many, at what rate.
+ *
+ * The figure a parameter-priced service quotes is a sum over selections, and
+ * until now only the sum was kept. Both documents therefore printed an
+ * unexplained total whenever the line had no multiplier to describe — which is
+ * the normal case for option pricing. These rows are what let the Fee Schedule
+ * and the invoice say what the customer actually chose.
+ */
+export interface ServicePricingDetail {
+  /** The option or parameter name, as the customer picked it. */
+  label: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
 export interface ServiceCostBreakdown {
   /** What one run of the service costs, before any multiplier parameter. */
   unitCost: number;
@@ -172,6 +333,13 @@ export interface ServiceCostBreakdown {
   multiplier: number;
   /** What the line bills: unitCost x multiplier. */
   cost: number;
+  /**
+   * How unitCost was arrived at, for parameter-priced services. Absent — not
+   * empty — for flat service pricing and for a line rebuilt from a fallback,
+   * where there is nothing to itemise and an empty list would read as "priced
+   * from nothing".
+   */
+  details?: ServicePricingDetail[];
 }
 
 /**
@@ -180,14 +348,46 @@ export interface ServiceCostBreakdown {
  * SOW editor edits the unit price rather than the total, so both have to be
  * stored rather than recovered by dividing — a unit price of 0 is legitimate.
  */
-export function calculateServiceCostBreakdown(service: DampLabService, rawFormData: unknown, fallbackCost?: number, customerCategory?: CustomerCategory): ServiceCostBreakdown {
+export function calculateServiceCostBreakdown(
+  service: DampLabService,
+  rawFormData: unknown,
+  fallbackCost?: number,
+  customerCategory?: CustomerCategory,
+  opts?: { fallbackLineCost?: number }
+): ServiceCostBreakdown {
   const pricingMode = service.pricingMode ?? ServicePricingMode.SERVICE;
   let baseCost = 0;
+  let details: ServicePricingDetail[] | undefined;
+
+  // Computed before the base, because a line-total fallback has to be divided by
+  // it to recover a unit price. Nothing about the multiplier depends on the base.
+  const raw = getMultiplier(service.parameters, rawFormData, {
+    // Only in PARAMETER mode do parameters carry prices of their own, so only
+    // there can one have been billed into the base already. In SERVICE mode the
+    // base is the service's own price and every multiplier parameter scales it.
+    skipSelfPriced: pricingMode === ServicePricingMode.PARAMETER,
+    customerCategory
+  });
+  const multiplier = Number.isFinite(raw) && raw > 0 ? raw : 1;
+
+  /**
+   * The price to fall back on when the service record cannot be priced.
+   *
+   * `fallbackCost` is a *unit* price. `opts.fallbackLineCost` is a line total —
+   * what a workflow node already computed, multiplier included — so it has to be
+   * divided back down before it is used in the unit position. Feeding a total in
+   * as a unit price is what made a catalogue-priceless service with a run count
+   * of N bill `unit x N x N`.
+   */
+  const fallbackUnitCost = (): number | undefined => {
+    const unit = normalizePrice(fallbackCost);
+    if (unit !== undefined) return unit;
+    const line = normalizePrice(opts?.fallbackLineCost);
+    if (line === undefined) return undefined;
+    return multiplier > 0 ? line / multiplier : line;
+  };
 
   if (pricingMode === ServicePricingMode.PARAMETER) {
-    // Parameter/option level pricing can also be category-specific; resolve inside calculateParameterCost.
-    // To preserve the old signature, we pass category through by closing over it via resolveCategoryPrice below.
-    //
     // With no parameter values to price, there is nothing to compute from, and
     // the honest answer is the price the caller already holds — not zero. This
     // branch used to have no fallback at all, so a parameter-priced line whose
@@ -209,39 +409,54 @@ export function calculateServiceCostBreakdown(service: DampLabService, rawFormDa
     // failed save.
     const hasParameterValues = normalizeFormDataToArray(rawFormData, getMultiValueParamIds(service.parameters)).length > 0;
     if (hasParameterValues) {
-      baseCost = calculateParameterCostWithCategory(service.parameters, rawFormData, customerCategory);
+      const priced = calculateParameterCostWithCategory(service.parameters, rawFormData, customerCategory);
+      baseCost = priced.total;
+      // Left undefined rather than empty when nothing was priced: an empty list
+      // would read as "itemised, and it came to nothing".
+      if (priced.details.length > 0) details = priced.details;
     } else {
-      baseCost = normalizePrice(fallbackCost) ?? 0;
+      baseCost = fallbackUnitCost() ?? 0;
     }
   } else {
-    const servicePrice = resolveCategoryPrice(
-      {
-        pricing: (service as any).pricing,
-        internalPrice: (service as any).internalPrice,
-        externalPrice: (service as any).externalPrice,
-        price: service.price
-      },
-      customerCategory
-    );
-    if (servicePrice !== undefined) {
-      baseCost = servicePrice;
-    } else {
-      const fallbackPrice = normalizePrice(fallbackCost);
-      baseCost = fallbackPrice ?? 0;
-    }
+    // The whole service, not a hand-picked subset of its price fields.
+    //
+    // This used to build `{ pricing, internalPrice, externalPrice, price }`,
+    // which silently omitted `externalAcademicPrice`, `externalMarketPrice` and
+    // `externalNoSalaryPrice` — three of the five fields resolveCategoryPrice
+    // knows how to read. A service whose tiers lived only in those deprecated
+    // flat fields (every service not yet re-saved through AdminEditService)
+    // therefore resolved all three external tiers to `legacy`: the pricing
+    // category had no effect on operation-priced lines at all. Option and
+    // parameter pricing never had the bug because they pass their whole object.
+    const servicePrice = resolveCategoryPrice(service as any, customerCategory);
+    baseCost = servicePrice !== undefined ? servicePrice : fallbackUnitCost() ?? 0;
   }
 
-  const raw = getMultiplier(service.parameters, rawFormData);
-  const multiplier = Number.isFinite(raw) && raw > 0 ? raw : 1;
-  return { unitCost: baseCost, multiplier, cost: baseCost * multiplier };
+  return { unitCost: baseCost, multiplier, cost: baseCost * multiplier, details };
 }
 
 export function calculateServiceCost(service: DampLabService, rawFormData: unknown, fallbackCost?: number, customerCategory?: CustomerCategory): number {
   return calculateServiceCostBreakdown(service, rawFormData, fallbackCost, customerCategory).cost;
 }
 
-function calculateParameterCostWithCategory(parameters: unknown, rawFormData: unknown, customerCategory?: CustomerCategory): number {
-  if (!Array.isArray(parameters)) return 0;
+/**
+ * What the selected parameter values cost, and the rows explaining it.
+ *
+ * Three kinds of parameter are priced here:
+ *
+ *  - **option-priced** dropdowns/enums — each selected option adds its own price;
+ *  - **multiplier parameters that carry a price** — billed `price x value`, so a
+ *    $40/hr parameter set to 3 adds $120. These are excluded from the line's
+ *    global multiplier (see getMultiplier): scaling the whole line by the hours
+ *    would charge every *other* parameter for them as well, which is how a
+ *    $100 instrument plus $40/hr for 3 hours used to come to $420 instead of
+ *    $220. Unflagging the parameter was no better — it billed a flat $140
+ *    however many hours were entered, because "quantity" below counts selected
+ *    values rather than reading the number;
+ *  - **everything else priced** — `price x (number of values selected)`.
+ */
+function calculateParameterCostWithCategory(parameters: unknown, rawFormData: unknown, customerCategory?: CustomerCategory): { total: number; details: ServicePricingDetail[] } {
+  if (!Array.isArray(parameters)) return { total: 0, details: [] };
 
   const paramsById = new Map<string, ServiceParameterDefinition>();
   for (const param of parameters as ServiceParameterDefinition[]) {
@@ -256,10 +471,18 @@ function calculateParameterCostWithCategory(parameters: unknown, rawFormData: un
   const formDataMap = new Map(formData.map((entry) => [entry.id, entry.value]));
 
   let total = 0;
+  const details: ServicePricingDetail[] = [];
+
+  const record = (label: string, quantity: number, unitPrice: number): void => {
+    const lineTotal = unitPrice * quantity;
+    total += lineTotal;
+    details.push({ label, quantity, unitPrice, total: lineTotal });
+  };
 
   paramsById.forEach((param, id) => {
     const rawValue = formDataMap.get(id);
     const isMulti = multiValueParamIds.has(id) || Array.isArray(rawValue);
+    const paramLabel = typeof param.name === 'string' && param.name.trim() !== '' ? param.name : id;
 
     const options = Array.isArray(param.options) ? param.options : undefined;
     const hasOptionPricing =
@@ -275,7 +498,8 @@ function calculateParameterCostWithCategory(parameters: unknown, rawFormData: un
         if (!opt) continue;
         const price = resolveCategoryPrice(opt, customerCategory);
         if (price === undefined) continue;
-        total += price;
+        const optLabel = typeof opt.name === 'string' && opt.name.trim() !== '' ? opt.name : optId;
+        record(`${paramLabel}: ${optLabel}`, 1, price);
       }
 
       return;
@@ -283,6 +507,15 @@ function calculateParameterCostWithCategory(parameters: unknown, rawFormData: un
 
     const unitPrice = resolveCategoryPrice(param, customerCategory);
     if (unitPrice === undefined) return;
+
+    // A priced multiplier reads its number rather than counting it: "8" hours at
+    // $40 is $320, not one selection at $40.
+    if (param.isPriceMultiplier === true && id !== RUN_COUNT_PARAM_ID) {
+      const qty = resolveQty(rawValue);
+      if (qty === undefined || qty === 0) return;
+      record(paramLabel, qty, unitPrice);
+      return;
+    }
 
     let quantity = 0;
     if (isMulti) {
@@ -293,8 +526,8 @@ function calculateParameterCostWithCategory(parameters: unknown, rawFormData: un
     }
     if (quantity === 0) return;
 
-    total += unitPrice * quantity;
+    record(paramLabel, quantity, unitPrice);
   });
 
-  return total;
+  return { total, details };
 }

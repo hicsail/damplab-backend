@@ -17,6 +17,7 @@ import { Role } from '../../src/auth/roles/roles.enum';
 import { User } from '../../src/auth/user.interface';
 import { DampLabService } from '../../src/services/models/damplab-service.model';
 import { SowTextPresetService } from '../../src/sow-preset/sow-text-preset.service';
+import { KeycloakService } from '../../src/keycloak/keycloak.service';
 
 /**
  * A real NestJS app, a real Mongo, real GraphQL — the parts the unit specs fake.
@@ -33,7 +34,7 @@ import { SowTextPresetService } from '../../src/sow-preset/sow-text-preset.servi
 // Actors
 // ---------------------------------------------------------------------------
 
-export type ActorName = 'staff' | 'customer' | 'otherCustomer';
+export type ActorName = 'staff' | 'customer' | 'otherCustomer' | 'groupOnlyCustomer';
 
 export const ACTORS: Record<ActorName, User> = {
   staff: {
@@ -55,6 +56,22 @@ export const ACTORS: Record<ActorName, User> = {
     email: 'stranger@bu.test',
     preferred_username: 'Sam Stranger',
     realm_access: { roles: [Role.InternalCustomer] }
+  },
+  /**
+   * The shape a real customer actually has: a pricing **group** in Keycloak, no
+   * pricing realm role, and no `groups` claim in the token.
+   *
+   * The other two customers carry `internal-customer` as a role, so their price
+   * is decided by the token and the group is never consulted — which is why the
+   * suite could not see an academic customer being billed the fallback rate.
+   * Access-wise this actor is the client baseline, which is what a customer with
+   * no access group is.
+   */
+  groupOnlyCustomer: {
+    sub: 'customer-sub-3',
+    email: 'academic@bu.test',
+    preferred_username: 'Ada Academic',
+    realm_access: { roles: [] }
   }
 };
 
@@ -108,11 +125,41 @@ export interface TestApp {
   connection: mongoose.Connection;
 }
 
-export async function startTestApp(): Promise<TestApp> {
-  const moduleFixture = await Test.createTestingModule({ imports: [AppModule] })
+export interface TestAppOptions {
+  /**
+   * Pricing groups the Keycloak Admin API should report per user `sub`.
+   *
+   * Supplying this stands the Admin API up as configured, which is what lets a
+   * test reproduce the real deployment: pricing lives on Keycloak groups, and a
+   * group reaches a token only when the realm's client carries a Group
+   * Membership mapper. The actors here carry realm roles and no groups claim —
+   * exactly the shape that silently priced an academic customer at the fallback
+   * rate — so the group has to come from somewhere else or the case cannot be
+   * written at all.
+   */
+  keycloakGroupsBySub?: Record<string, { name?: string; path?: string }[]>;
+}
+
+export async function startTestApp(options: TestAppOptions = {}): Promise<TestApp> {
+  const builder = Test.createTestingModule({ imports: [AppModule] })
     .overrideGuard(AuthRolesGuard)
-    .useValue(new TestAuthGuard(new Reflector()))
-    .compile();
+    .useValue(new TestAuthGuard(new Reflector()));
+
+  if (options.keycloakGroupsBySub) {
+    const bySub = options.keycloakGroupsBySub;
+    builder.overrideProvider(KeycloakService).useValue(
+      Object.assign(Object.create(KeycloakService.prototype), {
+        logger: { warn: (): void => undefined, error: (): void => undefined },
+        isConfigured: (): boolean => true,
+        getUserGroups: async (sub: string) => bySub[sub] ?? [],
+        // Writes go nowhere: these tests assert on what is read back, and a real
+        // group write has no local Keycloak to land in.
+        setUserCustomerCategory: async (): Promise<void> => undefined
+      })
+    );
+  }
+
+  const moduleFixture = await builder.compile();
 
   // Mirrors main.ts: bodyParser off, then an explicit 2mb json limit. The
   // default 100kb ceiling is small enough that a SOW payload can cross it, and

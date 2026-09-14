@@ -1,9 +1,12 @@
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 import mongoose from 'mongoose';
-import { Field, ObjectType, ID, Float } from '@nestjs/graphql';
+import { Field, ObjectType, ID, Float, Int } from '@nestjs/graphql';
 import { Job } from '../job/job.model';
 import { SOWAdjustmentType } from '../sow/sow.model';
+import { PricingDetail } from '../pricing/pricing.model';
+import { InvoiceKind } from './invoice-kind';
+import { JobChargeKind } from '../job-payment/job-charge.model';
 
 /**
  * A SOW pricing adjustment as applied to THIS invoice (snapshot at generation).
@@ -95,6 +98,162 @@ export class InvoiceServiceLineItem {
   @Prop({ required: true })
   @Field({ description: 'Category of the service' })
   category: string;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false })
+  @Field(() => [PricingDetail], { nullable: true, description: 'How unitCost was arrived at, for parameter-priced lines. Absent where there is nothing to itemise.' })
+  pricingDetails?: PricingDetail[];
+
+  /**
+   * Which line of the billing source this was — the position the staff dialog
+   * ticked, and the only thing that identifies a line.
+   *
+   * `serviceId` cannot: a job may run the same catalog service twice at two
+   * different prices. Recording the position is what lets a later invoice for
+   * the same job see that this line is already billed. Nullable, because
+   * invoices written before this existed cannot say.
+   */
+  @Prop({ required: false })
+  @Field(() => Int, { nullable: true, description: 'Position of this line in the SOW billing source it was taken from.' })
+  sourceIndex?: number;
+}
+
+/**
+ * One confirmed booking as an equipment invoice states it. A snapshot: the
+ * booking may be moved or re-confirmed afterwards, and an issued statement must
+ * keep saying what it said.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'One confirmed equipment booking as billed on an equipment invoice (snapshot at generation).' })
+export class EquipmentInvoiceLine {
+  @Prop({ required: true })
+  @Field(() => ID, { description: 'The booking this line bills.' })
+  bookingId: string;
+
+  @Prop({ required: true })
+  @Field({ description: 'Inventory item name, as snapshotted on the booking.' })
+  itemName: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: "Label of the job's equipment-use operation, when the node is still resolvable." })
+  operationLabel?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  startTime?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  endTime?: Date;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Confirmed hours used.' })
+  actualHours?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'The $/hour rate snapshot the booking carries.' })
+  rate?: number;
+
+  @Prop({ required: true })
+  @Field(() => Float, { description: "The booking's stored cost. Never recomputed from hours x rate." })
+  cost: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true })
+  confirmedAt?: Date;
+}
+
+/**
+ * A charge on the statement that is neither a SOW service line nor equipment
+ * time: a deposit, or an ad-hoc cost or credit. A snapshot — voiding the
+ * underlying charge changes the next statement, never an issued one.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'A custom or deposit charge as billed on a statement (snapshot at generation).' })
+export class InvoiceCustomLine {
+  @Prop({ required: true })
+  @Field(() => ID, { description: 'The JobCharge this line bills.' })
+  chargeId: string;
+
+  @Prop({ required: true })
+  @Field(() => JobChargeKind, { description: 'CUSTOM or DEPOSIT.' })
+  kind: JobChargeKind;
+
+  @Prop({ required: true })
+  @Field()
+  label: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Free text printed under the label in Other charges. Absent on lines billed without one.' })
+  note?: string;
+
+  @Prop({ required: true })
+  @Field(() => Float, { description: 'Signed: a CUSTOM credit is negative.' })
+  amount: number;
+}
+
+/**
+ * The deposit as an invoice states it. Part of the invoice's total, never added
+ * to it: it is the first slice of that total, asked for by its own due date.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'The deposit an invoice asks for, with its own due date (snapshot at issue). Part of the total, never added to it.' })
+export class InvoiceDeposit {
+  @Prop({ required: true })
+  @Field(() => ID, { description: 'The DEPOSIT JobCharge this states.' })
+  chargeId: string;
+
+  @Prop({ required: true })
+  @Field()
+  label: string;
+
+  @Prop({ required: true })
+  @Field(() => Float)
+  amount: number;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When the deposit is due.' })
+  dueDate?: Date;
+
+  @Prop({ required: true })
+  @Field(() => Float, { description: 'What was still owed against the deposit at issue: the deposit less payments, never below zero and never more than the balance due.' })
+  outstanding: number;
+}
+
+/**
+ * One due date: an amount still owed, and when. Together with the deposit's
+ * outstanding amount, an invoice's due dates cover its balance due.
+ */
+@Schema({ _id: false })
+@ObjectType({ description: 'An amount the invoice asks for by a date. With the deposit, the due dates cover the balance due.' })
+export class InvoiceDueDate {
+  @Prop({ required: true })
+  @Field(() => Float)
+  amount: number;
+
+  @Prop({ required: true })
+  @Field(() => Date, { description: 'When this amount is due.' })
+  dueDate: Date;
+}
+
+/** A payment as an invoice lists it. A snapshot: a later void changes the next version, never this one. */
+@Schema({ _id: false })
+@ObjectType({ description: 'A payment received against the job, as an invoice lists it (snapshot at issue).' })
+export class InvoicePayment {
+  @Prop({ required: true })
+  @Field(() => ID, { description: 'The JobPayment this lists.' })
+  paymentId: string;
+
+  @Prop({ required: true })
+  @Field(() => Float)
+  amount: number;
+
+  @Prop({ required: true })
+  @Field(() => Date, { description: 'When the lab received it.' })
+  receivedOn: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'A cheque number, a PO, an ISR reference.' })
+  reference?: string;
 }
 
 @Schema()
@@ -123,6 +282,22 @@ export class Invoice {
   @Field({ description: 'Invoice number, unique per job (e.g., "04217-001")' })
   invoiceNumber: string;
 
+  /**
+   * Which version of the job's invoice this is — the same per-job count the
+   * number's `-NNN` suffix carries. Absent on documents issued before versioning;
+   * the `versionNumber` ResolveField reads those off that suffix.
+   */
+  @Prop({ required: false })
+  versionNumber?: number;
+
+  /**
+   * What this invoice bills. Absent on every invoice written before equipment
+   * invoicing existed, which is why nothing reads this field directly — see
+   * `invoiceKindOf`, and the `kind` ResolveField that populates the wire.
+   */
+  @Prop({ required: false, type: String, enum: Object.values(InvoiceKind) })
+  kind?: InvoiceKind;
+
   @Prop({ required: true })
   @Field({ description: 'When the invoice was generated' })
   invoiceDate: Date;
@@ -136,7 +311,10 @@ export class Invoice {
   services: InvoiceServiceLineItem[];
 
   @Prop({ required: false, default: 0 })
-  @Field(() => Float, { description: 'Sum of the service line items, BEFORE adjustments.' })
+  @Field(() => Float, {
+    description:
+      'What this invoice adds up before payments. On a SOW invoice the service lines before adjustments; on an EQUIPMENT or STATEMENT invoice the whole charge to date, adjustments and every other line already included.'
+  })
   subtotal: number;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
@@ -145,8 +323,57 @@ export class Invoice {
   })
   adjustments: InvoiceAdjustment[];
 
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
+  @Field(() => [EquipmentInvoiceLine], {
+    description: 'Confirmed equipment bookings billed on this invoice. Populated on EQUIPMENT and STATEMENT invoices; empty on a SOW invoice.'
+  })
+  equipmentLines: EquipmentInvoiceLine[];
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'Payments received against the job as at this invoice. EQUIPMENT and STATEMENT invoices.' })
+  paymentsToDate?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, {
+    nullable: true,
+    description: 'chargesToDate minus paymentsToDate as at this invoice. Negative means a credit. EQUIPMENT and STATEMENT invoices.'
+  })
+  balanceDue?: number;
+
+  @Prop({ required: false })
+  @Field({
+    nullable: true,
+    description:
+      'The first date anything on this invoice falls due: the deposit while it is outstanding, else the earliest due date. Absent when nothing is due, and on documents written before due dates existed.'
+  })
+  dueDate?: Date;
+
+  // `default: undefined`, because Mongoose otherwise hydrates a missing array
+  // as [] — and an absent schedule is how a document issued before due dates
+  // were split says to read its single `dueDate` instead.
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false, default: undefined })
+  @Field(() => [InvoiceDueDate], {
+    nullable: true,
+    description: 'When the balance is due besides the deposit, oldest date first. Absent on documents issued before due dates were split; those carry one `dueDate`.'
+  })
+  dueSchedule?: InvoiceDueDate[];
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], required: false, default: undefined })
+  @Field(() => [InvoicePayment], { nullable: true, description: 'The live payments on the job when this version was issued, oldest first. Absent on documents issued before payments were listed.' })
+  payments?: InvoicePayment[];
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.Mixed }], default: [] })
+  @Field(() => [InvoiceCustomLine], { description: 'Custom charges and discounts on this invoice. Empty on SOW and EQUIPMENT documents.' })
+  customLines: InvoiceCustomLine[];
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, required: false })
+  @Field(() => InvoiceDeposit, { nullable: true, description: 'The deposit this invoice asks for, when the job has one.' })
+  deposit?: InvoiceDeposit;
+
   @Prop({ required: true })
-  @Field(() => Float, { description: 'Amount payable: subtotal plus the applied adjustments.' })
+  @Field(() => Float, {
+    description: 'Amount payable now. On a STATEMENT, the balance due (charges to date minus payments to date). On older invoice kinds, the subtotal plus the applied adjustments.'
+  })
   totalCost: number;
 
   // Billing snapshot (copied from SOW at creation time)
@@ -165,6 +392,70 @@ export class Invoice {
   @Prop({ required: false })
   @Field({ description: 'Customer category used for pricing (if known)', nullable: true })
   customerCategory?: string;
+
+  /**
+   * The SOW version these lines were taken from.
+   *
+   * `sourceIndex` only means something relative to a particular version: a
+   * re-synced SOW can reorder its lines, so position 2 on one version is not
+   * position 2 on another. Recording the version is what lets the double-billing
+   * check know when two invoices are comparable and when they are merely
+   * unproven. Nullable for invoices written before this existed, and for a
+   * legacy SOW with no version in force at all.
+   */
+  @Prop({ required: false })
+  @Field(() => Int, { nullable: true, description: 'Version number of the SOW these lines were billed from, when one was in force.' })
+  sowVersionNumber?: number;
+
+  /**
+   * What could not be checked at generation time, in the reader's terms.
+   *
+   * An overlap this invoice can prove is refused outright. This is for the cases
+   * it cannot prove — an earlier invoice that predates `sourceIndex`, or one
+   * billed from a different SOW version — where staying silent would imply a
+   * guarantee that was never made.
+   */
+  @Prop({ type: [String], required: false })
+  @Field(() => [String], { nullable: true, description: 'Billing checks that could not be completed when this invoice was generated.' })
+  billingWarnings?: string[];
+
+  /**
+   * Void, not delete. **Nothing may ever remove an invoice document**, and this is
+   * load-bearing rather than tidiness: the invoice number is
+   * `countDocuments({ jobId }) + 1` (see `InvoiceService.createForJob`), so
+   * deleting one hands its number straight to the next invoice and produces two
+   * `04217-003`s. A void leaves the count intact.
+   *
+   * Voiding changes nothing else: the job's charges and payments stay as they
+   * are, and the next version restates them. Only the current invoice can be
+   * voided — a superseded one is already not payable.
+   *
+   * All three fields move together. `voidedAt` is the flag every reader tests.
+   */
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When this invoice was voided. Absent on a live invoice.' })
+  voidedAt?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Who voided it (username/email).' })
+  voidedBy?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Why it was voided. Required when voiding.' })
+  voidReason?: string;
+
+  /**
+   * Set on every earlier invoice when a newer version is issued: only one
+   * invoice per job stands at a time. A superseded invoice is history, not
+   * payable, and stays downloadable as the copy that was sent.
+   */
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'When a newer version replaced this invoice. Absent on the current one.' })
+  supersededAt?: Date;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'The invoice number of the version that replaced this one.' })
+  supersededByNumber?: string;
 
   @Prop({ required: true, default: new Date() })
   @Field({ description: 'Date when the invoice record was created' })

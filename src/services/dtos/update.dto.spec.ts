@@ -85,6 +85,6 @@ describe('partial-update input types carry no default values', () => {
   it('reaches the fields it is meant to be checking', () => {
     // Guards the assertion above from passing vacuously if the input type ever
     // stops being built, or the fields are renamed.
-    expect(Object.keys(inputFields('ServiceChange'))).toEqual(expect.arrayContaining(['pricingMode', 'allowMultipleRuns', 'deliverables', 'parameters']));
+    expect(Object.keys(inputFields('ServiceChange'))).toEqual(expect.arrayContaining(['pricingMode', 'allowMultipleRuns', 'equipmentUse', 'deliverables', 'parameters']));
   });
 });

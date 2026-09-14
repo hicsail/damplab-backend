@@ -1,4 +1,4 @@
-import { Injectable, Logger, Inject, forwardRef, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { CustomerActionRequired, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
@@ -149,6 +149,24 @@ export class JobService {
     // which would leave the audit fields behind and make a restored job still
     // look archived-by-someone.
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { isArchived: false }, $unset: { archivedAt: '', archivedBy: '', archivedFromState: '' } }, { new: true }).exec();
+  }
+
+  /**
+   * Pause or resume equipment booking on a job.
+   *
+   * Never touches existing bookings: a pause stops new reservations and moves, and
+   * leaves what is already on the calendar alone — the lab's lever is "no more
+   * time on this job", not "give back the time you have". The reason is required
+   * on the way in because the customer reads it verbatim; a blank one would render
+   * as "paused by the lab: ." on their job page.
+   */
+  async setBookingBlock(jobId: string, blocked: boolean, reason: string | undefined, by?: string): Promise<Job | null> {
+    const trimmed = reason?.trim();
+    if (blocked && !trimmed) throw new BadRequestException('A reason is required to pause booking on a job.');
+    const update: Record<string, unknown> = blocked
+      ? { $set: { bookingBlocked: true, bookingBlockedReason: trimmed, bookingBlockedBy: by, bookingBlockedAt: new Date() } }
+      : { $set: { bookingBlocked: false, bookingBlockedBy: by, bookingBlockedAt: new Date() }, $unset: { bookingBlockedReason: 1 } };
+    return this.jobModel.findByIdAndUpdate(jobId, update, { new: true }).exec();
   }
 
   async updateState(job: Job, newState: JobState, customerActionRequired?: CustomerActionRequired | null): Promise<Job | null> {

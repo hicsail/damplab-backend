@@ -55,6 +55,30 @@ export class UsageBillingService {
       if (b.status === BookingStatus.CANCELLED) throw new BadRequestException('A selected booking is cancelled.');
       if (!b.usageConfirmed) throw new BadRequestException(`Usage for "${b.inventoryName}" must be confirmed before billing.`);
       if (b.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException(`"${b.inventoryName}" has already been billed.`);
+      // The picker and the "pick a user" list already exclude job-scoped bookings
+      // (`jobId: null` in `BookingService.findBillableForOwner`/`getBillableOwners`),
+      // but `bookingIds` here is client-supplied and re-fetched by id alone
+      // (`getByIds`, no `jobId` filter) — so this is the actual enforcement point.
+      // A job-scoped booking is billed to the JOB through an equipment invoice on
+      // its own page; billing it here too would double-bill the same hours to two
+      // different parties.
+      if (b.jobId) {
+        throw new BadRequestException(`"${b.inventoryName}" is booked against a job and is billed through that job's equipment invoices.`);
+      }
+      // A booking whose rate never resolved has no cost, and `toLineItem` reads
+      // `b.cost ?? 0` — so without this it was billed at **$0, silently**. That
+      // happens when the owner is in no Keycloak pricing group, or was booked while
+      // the Admin API was unreachable; `rateSnapshot` is written once at creation
+      // and never revisited, so nothing later would have corrected it.
+      //
+      // Refused here rather than at booking time on purpose: a Keycloak outage must
+      // not stop someone booking a machine, and by the time anyone bills there is a
+      // person reading the message who can fix the owner's group.
+      if (b.rateSnapshot == null) {
+        throw new BadRequestException(
+          `"${b.inventoryName}" has no rate, so it cannot be billed. Its owner was in no pricing group when it was booked — assign one and re-book, or record the charge manually.`
+        );
+      }
     }
 
     const first = bookings[0];

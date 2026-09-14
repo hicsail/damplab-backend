@@ -46,6 +46,12 @@ export enum Permission {
   BenchUse = 'bench:use',
 
   BillingView = 'billing:view',
+  /**
+   * Reverse a financial record: voiding an invoice. Above `billing:view` and above
+   * generating one, because a void un-bills work that has already been charged and
+   * releases those lines for re-invoicing.
+   */
+  BillingWrite = 'billing:write',
   CustomersManage = 'customers:manage',
   ApiKeysManage = 'apikeys:manage',
   DataTranslationUse = 'datatranslation:use',

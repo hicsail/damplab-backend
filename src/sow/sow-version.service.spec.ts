@@ -147,6 +147,22 @@ describe('billingFingerprint', () => {
     const changed = SowVersionService.deriveInputs(sow({ resources: { projectManager: 'Someone Else', projectLead: 'X' } } as any), { customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC' });
     expect(SowVersionService.billingFingerprint(changed)).toBe(SowVersionService.billingFingerprint(base));
   });
+
+  it('re-fingerprints when only the equipment estimate moves', () => {
+    const base2 = { services: [], adjustments: [], baseCost: 350, totalCost: 350, customerCategory: 'INTERNAL_CUSTOMERS' } as any;
+    expect(SowVersionService.billingFingerprint({ ...base2, estimatedEquipmentCost: 45 })).not.toBe(SowVersionService.billingFingerprint({ ...base2, estimatedEquipmentCost: 90 }));
+  });
+
+  it('does not invent staleness for a document written before the field existed', () => {
+    // Line ~987 compares billingFingerprint(liveInputs) with
+    // billingFingerprint(version.inputs). A legacy version has no
+    // estimatedEquipmentCost, and deriveInputs reads none off a SOW whose
+    // pricing predates it — both sides must hash the same "0.00", or every
+    // legacy SOW in the lab lights up its stale banner on deploy.
+    const base2 = { services: [], adjustments: [], baseCost: 350, totalCost: 350, customerCategory: 'INTERNAL_CUSTOMERS' } as any;
+    expect(SowVersionService.billingFingerprint({ ...base2, estimatedEquipmentCost: undefined })).toBe(SowVersionService.billingFingerprint(base2));
+    expect(SowVersionService.billingFingerprint({ ...base2, estimatedEquipmentCost: 0 })).toBe(SowVersionService.billingFingerprint(base2));
+  });
 });
 
 describe('version number encoding', () => {
@@ -254,6 +270,17 @@ describe('previewCalculatedValues — prose blocks', () => {
  * agreement to the spec.
  */
 describe('jobBillingFingerprint', () => {
+  it('encodes a line as serviceId:name:cost:unitCost:multiplier, the exact format already stamped on accepted jobs', () => {
+    // Pinned, not merely exercised. `acceptedBillingFingerprint` is a stored
+    // string compared against a freshly computed one, so any change to this
+    // format makes every in-flight accepted job report drift it does not have
+    // and locks its SOW from being sent. See the note in SOWService.jobBillingFingerprint
+    // on why the line total is fed into the unitCost slot.
+    expect(SowVersionService.jobBillingFingerprint([{ serviceId: 's1', name: 'PCR', cost: 350, unitCost: 350, multiplier: undefined }], 'INTERNAL_CUSTOMERS')).toBe(
+      's1:PCR:350.00:350.00:#INTERNAL_CUSTOMERS'
+    );
+  });
+
   const services = [{ serviceId: 's1', name: 'PCR', cost: 350, unitCost: 5, multiplier: 70 }];
 
   it('is stable for the same services and category', () => {
@@ -295,6 +322,8 @@ describe('jobBillingFingerprint', () => {
  * untouched — a staff member editing prose must not silently reprice the
  * document — and move only when staff explicitly refresh them.
  */
+const EQUIP = 'Plate reader — 10 hrs/wk x 4 wks (estimate; billed on actual hours)';
+
 describe('feeScheduleInputs', () => {
   const live: any = {
     services: [{ serviceId: 's1', name: 'PCR', cost: 420, unitCost: 6, multiplier: 70 }],
@@ -348,6 +377,42 @@ describe('feeScheduleInputs', () => {
     expect(after.services).toEqual(before.services);
     expect(after.baseCost).toBe(before.baseCost);
     expect(after.totalCost).toBe(375);
+  });
+
+  it('freezes the contracted subtotal, and the estimate beside it', () => {
+    const live2 = {
+      services: [
+        { serviceId: 's1', name: 'PCR', description: '', cost: 350 },
+        { serviceId: 'e1', name: 'Plate reader', description: EQUIP, cost: 45 }
+      ],
+      adjustments: []
+    } as any;
+    const out = SowVersionService.feeScheduleInputs(live2, null, true);
+    expect(out.baseCost).toBe(350);
+    expect(out.estimatedEquipmentCost).toBe(45);
+    expect(out.totalCost).toBe(350);
+  });
+
+  it('carries both figures forward from the previous version when not refreshing', () => {
+    const live2: any = {
+      services: [{ serviceId: 's1', name: 'PCR', description: '', cost: 500 }],
+      adjustments: [],
+      customerCategory: 'EXTERNAL_CUSTOMER_MARKET'
+    };
+    const previous2: any = {
+      services: [
+        { serviceId: 's1', name: 'PCR', description: '', cost: 350 },
+        { serviceId: 'e1', name: 'Plate reader', description: EQUIP, cost: 45 }
+      ],
+      adjustments: [],
+      customerCategory: 'INTERNAL_CUSTOMERS'
+    };
+
+    const out = SowVersionService.feeScheduleInputs(live2, previous2, false);
+
+    expect(out.baseCost).toBe(350);
+    expect(out.estimatedEquipmentCost).toBe(45);
+    expect(out.totalCost).toBe(350);
   });
 });
 

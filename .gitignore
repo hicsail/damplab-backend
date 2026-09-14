@@ -2,6 +2,7 @@
 /node_modules/
 /dist/
 /coverage/
+/.vscode/
 
 # Scripts
 /scripts/node_modules/
@@ -12,3 +13,10 @@
 
 # Build artifacts
 *.tsbuildinfo
+
+# Deployment exports (tools/). catalog-export.json is schema/pricing data;
+# jobs-export.json additionally holds real customer PII — subs, emails, names,
+# institutions, signatures, free-text notes. Neither belongs in git.
+/*-export.json
+# Certs
+/secure_dna/certs/

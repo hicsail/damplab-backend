@@ -606,3 +606,75 @@ describe('prose blocks', () => {
     expect(fieldByKey(merged, 'invoiceProcedures').value).toBe('Fresh wording.');
   });
 });
+
+describe('Fee Schedule: what a parameter-priced line was made of', () => {
+  const line = (pricingDetails?: unknown): string =>
+    calculateFieldValues(
+      inputs({
+        services: [{ serviceId: 's1', name: 'Equipment use', description: '', cost: 220, unitCost: 220, multiplier: 1, pricingDetails } as any],
+        baseCost: 220,
+        totalCost: 220
+      }),
+      ctx
+    ).feeSchedule;
+
+  it('itemises the selections under the line', () => {
+    const v = line([
+      { label: 'Instrument: Bioanalyzer', quantity: 1, unitPrice: 100, total: 100 },
+      { label: 'Hours in use', quantity: 3, unitPrice: 40, total: 120 }
+    ]);
+    expect(v).toContain('- Equipment use — $220.00');
+    expect(v).toContain('    - Instrument: Bioanalyzer — 1 x $100.00 = $100.00');
+    expect(v).toContain('    - Hours in use — 3 x $40.00 = $120.00');
+  });
+
+  it('leaves a line with nothing to itemise exactly as it read before', () => {
+    // The rule that keeps already-issued documents from moving: no details, no
+    // change to the text.
+    expect(line(undefined)).toContain('- Equipment use — $220.00');
+    expect(line(undefined)).not.toContain('    - ');
+  });
+});
+
+describe('the Fee Schedule and equipment-use lines', () => {
+  const equipmentLine = { serviceId: 'e1', name: 'Plate reader time', description: 'Plate reader — 10 hrs/wk x 4 wks (estimate; billed on actual hours)', cost: 400, unitCost: 10, multiplier: 40 };
+  const plainLine = { serviceId: 's1', name: 'PCR', description: 'Amplification', cost: 350, unitCost: 175, multiplier: 2 };
+
+  const feeScheduleFor = (overrides: Partial<SowVersionInputs>): string => calculateFieldValues(inputs(overrides as any), ctx).feeSchedule;
+
+  it('gives equipment lines their own heading rather than a note per line', () => {
+    const text = feeScheduleFor({ services: [equipmentLine as any] });
+    expect(text).toContain('Estimated equipment usage — billed at actual booked hours');
+    expect(text).not.toContain('Estimated · billed at actual booked hours');
+  });
+
+  it('lists contracted lines first, then the heading, then the equipment ones', () => {
+    const lines = feeScheduleFor({ services: [equipmentLine as any, plainLine as any] }).split('\n');
+    const pcrAt = lines.findIndex((l) => l.includes('PCR'));
+    const headingAt = lines.findIndex((l) => l.includes('Estimated equipment usage — billed at actual booked hours'));
+    const readerAt = lines.findIndex((l) => l.includes('Plate reader time'));
+    expect(pcrAt).toBeLessThan(headingAt);
+    expect(headingAt).toBeLessThan(readerAt);
+  });
+
+  it('renders an equipment line in the same row format as any other', () => {
+    expect(feeScheduleFor({ services: [equipmentLine as any] })).toContain('- Plate reader time — $10.00 x 40 = $400.00');
+  });
+
+  it('states the estimate under the total, and excludes it from the total', () => {
+    const text = feeScheduleFor({ services: [equipmentLine as any, plainLine as any], totalCost: 350 });
+    expect(text).toContain('Total: $350.00');
+    expect(text).toContain('Estimated equipment usage (not included in Total): $400.00');
+  });
+
+  it('says nothing about estimates when there is no equipment line', () => {
+    const text = feeScheduleFor({ services: [plainLine as any], totalCost: 350 });
+    expect(text).not.toContain('Estimated equipment usage');
+  });
+
+  it('still says "No services listed" when a document has no contracted lines but does have an estimate', () => {
+    const text = feeScheduleFor({ services: [equipmentLine as any], totalCost: 0 });
+    expect(text).toContain('- No services listed');
+    expect(text).toContain('Total: $0.00');
+  });
+});

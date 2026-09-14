@@ -4,6 +4,7 @@ import { JwtModule, JwtSecretRequestType } from '@nestjs/jwt';
 import * as jwksClient from 'jwks-rsa';
 import * as jwt from 'jsonwebtoken';
 import { PermissionsResolver } from './permissions/permissions.resolver';
+import { KeycloakModule } from '../keycloak/keycloak.module';
 
 /*
 This auth module extracts JWTs from request headers and verifies them with
@@ -36,7 +37,10 @@ the configured keys endpoint. It does not issue tokens or deal with IdPs.
         };
       },
       inject: [ConfigService]
-    })
+    }),
+    // myPermissions resolves the caller's pricing category, which lives on their
+    // Keycloak groups rather than in their token.
+    KeycloakModule
   ],
   providers: [PermissionsResolver]
 })

@@ -18,7 +18,7 @@ export class JobInvoiceFieldsResolver {
   constructor(private readonly invoiceService: InvoiceService) {}
 
   @ResolveField(() => Int, {
-    description: 'How many invoices have been generated for this job. 0 before any billing has happened.'
+    description: 'How many invoices stand against this job: 1 once one is issued (only the current version stands), 0 before that or once it is voided.'
   })
   async invoiceCount(@Parent() job: Job): Promise<number> {
     return this.invoiceService.countByJobId(String((job as any)._id));

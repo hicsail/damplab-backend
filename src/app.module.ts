@@ -24,6 +24,7 @@ import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
 import { ActivityModule } from './activity/activity.module';
 import { InvoiceModule } from './invoice/invoice.module';
+import { JobPaymentModule } from './job-payment/job-payment.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { AgentModule } from './agent/agent.module';
 import { ProtocolsModule } from './protocols/protocols.module';
@@ -77,6 +78,7 @@ import { NotificationModule } from './notification/notification.module';
     CustomerManagementModule,
     ActivityModule,
     InvoiceModule,
+    JobPaymentModule,
     InventoryModule,
     AgentModule,
     ProtocolsModule,

@@ -1,17 +1,15 @@
-import { getModelToken } from '@nestjs/mongoose';
-import mongoose from 'mongoose';
-import { gql, gqlError, resetDb, seedService, startTestApp, stopTestApp, TestApp } from './harness';
+import { gql, resetDb, seedService, startTestApp, stopTestApp, TestApp } from './harness';
 import * as F from './sow-flow';
-import { Invoice } from '../../src/invoice/invoice.model';
 
 /**
  * Invoicing a job that uses the same catalog service twice.
  *
  * This needs a database because the shape only exists end to end: two workflow
  * nodes of one service, priced differently by their own parameters, become two
- * SOW lines with one shared `serviceId`. Selection used to resolve those through
- * a map keyed on that id, so the second line overwrote the first and picking
- * both billed the last one twice.
+ * SOW lines with one shared `serviceId`. Both have to reach the invoice at their
+ * own prices — a map keyed on that shared id once made the second overwrite the
+ * first, and a version restates every contracted line, so one of them being lost
+ * would be lost on every version.
  */
 
 jest.setTimeout(60000);
@@ -74,6 +72,13 @@ describe('invoicing a job that uses one service twice', () => {
     await F.saveSowVersion(ctx, 'staff', sow.id, fresh.currentVersion, { note: 'Filled in' });
     await F.sendSowToCustomer(ctx, 'staff', sow.id);
 
+    // Signed and countersigned, because invoicing now requires a FINAL version in
+    // force. These tests are about which service *lines* an invoice covers, not
+    // about that gate — see invoice-countersign-gate.spec.ts for the gate itself.
+    const sent = await F.readSow(ctx, 'staff', sow.id);
+    await F.signSow(ctx, 'customer', sow.id, F.signatureFor(sent.activeVersion, 'Cara Client'));
+    await F.finalizeSow(ctx, 'staff', sow.id, 'Tess Technician');
+
     const billable = await billableServices(sow.id);
     return { jobId: job.id, sowId: sow.id, billable };
   }
@@ -83,20 +88,11 @@ describe('invoicing a job that uses one service twice', () => {
     return data.sowById.billableServices;
   }
 
-  async function createInvoice(services: Array<{ index: number; serviceId: string }>, jobId: string): Promise<any> {
+  async function createInvoice(jobId: string): Promise<any> {
     const data = await gql(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id subtotal totalCost services { serviceId name cost } } }`, {
-      input: { jobId, services }
+      input: { jobId }
     });
     return data.createInvoice;
-  }
-
-  async function createInvoiceError(input: Record<string, unknown>): Promise<string> {
-    return gqlError(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id } }`, { input });
-  }
-
-  async function invoiceCount(): Promise<number> {
-    const model = ctx.app.get<mongoose.Model<any>>(getModelToken(Invoice.name));
-    return model.countDocuments({}).exec();
   }
 
   it('exposes both lines separately, sharing one service id', async () => {
@@ -108,44 +104,11 @@ describe('invoicing a job that uses one service twice', () => {
   });
 
   it('bills both at their own prices rather than one of them twice', async () => {
-    const { jobId, billable } = await jobWithTwoLines();
+    const { jobId } = await jobWithTwoLines();
 
-    const invoice = await createInvoice(
-      billable.map((s, index) => ({ index, serviceId: s.serviceId })),
-      jobId
-    );
+    const invoice = await createInvoice(jobId);
 
     expect(invoice.services.map((s: any) => s.cost)).toEqual([100, 250]);
     expect({ subtotal: invoice.subtotal, totalCost: invoice.totalCost }).toEqual({ subtotal: 350, totalCost: 350 });
-  });
-
-  it('can bill only the second line, which sharing an id used to make impossible', async () => {
-    const { jobId, billable } = await jobWithTwoLines();
-
-    const invoice = await createInvoice([{ index: 1, serviceId: billable[1].serviceId }], jobId);
-
-    expect(invoice.services).toHaveLength(1);
-    expect(invoice.services[0].cost).toBe(250);
-    expect(invoice.subtotal).toBe(250);
-  });
-
-  it('refuses a stale position instead of writing a wrong invoice', async () => {
-    const { jobId, billable } = await jobWithTwoLines();
-    const before = await invoiceCount();
-
-    expect(await createInvoiceError({ jobId, services: [{ index: 7, serviceId: billable[0].serviceId }] })).toMatch(/no longer part of this Statement of Work/);
-    expect(await createInvoiceError({ jobId, services: [{ index: 0, serviceId: 'not-the-service' }] })).toMatch(/changed while the invoice was being prepared/);
-    expect(await invoiceCount()).toBe(before);
-  });
-
-  it('still honours the deprecated id contract, one line per entry', async () => {
-    const { jobId, billable } = await jobWithTwoLines();
-
-    const data = await gql(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { subtotal services { cost } } }`, {
-      input: { jobId, serviceIds: [billable[0].serviceId, billable[1].serviceId] }
-    });
-
-    expect(data.createInvoice.services.map((s: any) => s.cost)).toEqual([100, 250]);
-    expect(data.createInvoice.subtotal).toBe(350);
   });
 });
