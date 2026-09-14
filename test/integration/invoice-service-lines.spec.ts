@@ -1,17 +1,15 @@
-import { getModelToken } from '@nestjs/mongoose';
-import mongoose from 'mongoose';
-import { gql, gqlError, resetDb, seedService, startTestApp, stopTestApp, TestApp } from './harness';
+import { gql, resetDb, seedService, startTestApp, stopTestApp, TestApp } from './harness';
 import * as F from './sow-flow';
-import { Invoice } from '../../src/invoice/invoice.model';
 
 /**
  * Invoicing a job that uses the same catalog service twice.
  *
  * This needs a database because the shape only exists end to end: two workflow
  * nodes of one service, priced differently by their own parameters, become two
- * SOW lines with one shared `serviceId`. Selection used to resolve those through
- * a map keyed on that id, so the second line overwrote the first and picking
- * both billed the last one twice.
+ * SOW lines with one shared `serviceId`. Both have to reach the invoice at their
+ * own prices — a map keyed on that shared id once made the second overwrite the
+ * first, and a version restates every contracted line, so one of them being lost
+ * would be lost on every version.
  */
 
 jest.setTimeout(60000);
@@ -90,20 +88,11 @@ describe('invoicing a job that uses one service twice', () => {
     return data.sowById.billableServices;
   }
 
-  async function createInvoice(releaseServiceLines: Array<{ sourceIndex: number; serviceId: string }>, jobId: string): Promise<any> {
+  async function createInvoice(jobId: string): Promise<any> {
     const data = await gql(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id subtotal totalCost services { serviceId name cost } } }`, {
-      input: { jobId, releaseServiceLines }
+      input: { jobId }
     });
     return data.createInvoice;
-  }
-
-  async function createInvoiceError(input: Record<string, unknown>): Promise<string> {
-    return gqlError(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id } }`, { input });
-  }
-
-  async function invoiceCount(): Promise<number> {
-    const model = ctx.app.get<mongoose.Model<any>>(getModelToken(Invoice.name));
-    return model.countDocuments({}).exec();
   }
 
   it('exposes both lines separately, sharing one service id', async () => {
@@ -115,33 +104,11 @@ describe('invoicing a job that uses one service twice', () => {
   });
 
   it('bills both at their own prices rather than one of them twice', async () => {
-    const { jobId, billable } = await jobWithTwoLines();
+    const { jobId } = await jobWithTwoLines();
 
-    const invoice = await createInvoice(
-      billable.map((s, sourceIndex) => ({ sourceIndex, serviceId: s.serviceId })),
-      jobId
-    );
+    const invoice = await createInvoice(jobId);
 
     expect(invoice.services.map((s: any) => s.cost)).toEqual([100, 250]);
     expect({ subtotal: invoice.subtotal, totalCost: invoice.totalCost }).toEqual({ subtotal: 350, totalCost: 350 });
-  });
-
-  it('can bill only the second line, which sharing an id used to make impossible', async () => {
-    const { jobId, billable } = await jobWithTwoLines();
-
-    const invoice = await createInvoice([{ sourceIndex: 1, serviceId: billable[1].serviceId }], jobId);
-
-    expect(invoice.services).toHaveLength(1);
-    expect(invoice.services[0].cost).toBe(250);
-    expect(invoice.subtotal).toBe(250);
-  });
-
-  it('refuses a stale position instead of writing a wrong invoice', async () => {
-    const { jobId, billable } = await jobWithTwoLines();
-    const before = await invoiceCount();
-
-    expect(await createInvoiceError({ jobId, releaseServiceLines: [{ sourceIndex: 7, serviceId: billable[0].serviceId }] })).toBe('Selected line is not on the Statement of Work.');
-    expect(await createInvoiceError({ jobId, releaseServiceLines: [{ sourceIndex: 0, serviceId: 'not-the-service' }] })).toBe('Selected line is not on the Statement of Work.');
-    expect(await invoiceCount()).toBe(before);
   });
 });

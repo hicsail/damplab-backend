@@ -51,18 +51,14 @@ describe('invoicing is gated on a countersigned SOW', () => {
 
   const COUNTERSIGNED_MESSAGE = 'Cannot generate an invoice until the Statement of Work is countersigned.';
 
+  // A version restates the whole job, so the job is the whole input: there are
+  // no lines to pick, and nothing to read off the SOW before asking.
   async function invoiceError(jobId: string): Promise<string> {
-    const { sowByJobId } = await gql(ctx, 'staff', `query ($jobId: ID!) { sowByJobId(jobId: $jobId) { billableServices { serviceId } } }`, { jobId });
-    return gqlError(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id } }`, {
-      input: { jobId, releaseServiceLines: [{ sourceIndex: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }
-    });
+    return gqlError(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id } }`, { input: { jobId } });
   }
 
   async function invoice(jobId: string): Promise<any> {
-    const { sowByJobId } = await gql(ctx, 'staff', `query ($jobId: ID!) { sowByJobId(jobId: $jobId) { billableServices { serviceId } } }`, { jobId });
-    const data = await gql(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id invoiceNumber sowVersionNumber } }`, {
-      input: { jobId, releaseServiceLines: [{ sourceIndex: 0, serviceId: sowByJobId.billableServices[0].serviceId }] }
-    });
+    const data = await gql(ctx, 'staff', `mutation ($input: CreateInvoiceInput!) { createInvoice(input: $input) { id invoiceNumber sowVersionNumber } }`, { input: { jobId } });
     return data.createInvoice;
   }
 
