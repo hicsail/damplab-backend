@@ -86,10 +86,7 @@ export function assertSynthclientScreenResponse(raw: unknown): asserts raw is Sy
   // Unknown paths come back 200 with denied + not_found. That is a routing miss,
   // not a hazard — JobScreeningService maps this throw to UNAVAILABLE.
   if (isSynthclientNotFoundBody(raw)) {
-    throw new HttpException(
-      'SecureDNA returned not_found — set SECUREDNA_API_URL to the synthclient origin (e.g. http://127.0.0.1:8787), not a path',
-      HttpStatus.BAD_GATEWAY
-    );
+    throw new HttpException('SecureDNA returned not_found — set SECUREDNA_API_URL to the synthclient origin (e.g. http://127.0.0.1:8787), not a path', HttpStatus.BAD_GATEWAY);
   }
 }
 
@@ -133,10 +130,7 @@ export function mapHitsBySequenceId(sequenceIds: string[], hitsByRecord?: Synthc
 export class SecureDnaService {
   private readonly logger = new Logger(SecureDnaService.name);
 
-  constructor(
-    @InjectModel('ScreeningBatch') private readonly screeningBatchModel: Model<Document>,
-    @InjectModel('Sequence') private readonly sequenceModel: Model<Document>
-  ) {}
+  constructor(@InjectModel('ScreeningBatch') private readonly screeningBatchModel: Model<Document>, @InjectModel('Sequence') private readonly sequenceModel: Model<Document>) {}
 
   /** True when a synthclient URL is configured at all. */
   isConfigured(): boolean {

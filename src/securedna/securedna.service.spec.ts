@@ -112,4 +112,3 @@ describe('createSequencesBatch', () => {
     expect(sequenceModel.create).not.toHaveBeenCalled();
   });
 });
-
