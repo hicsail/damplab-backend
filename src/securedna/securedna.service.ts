@@ -246,7 +246,9 @@ export class SecureDnaService {
 
   async findBatchById(id: string): Promise<Record<string, unknown> | null> {
     if (!mongoose.Types.ObjectId.isValid(id)) return null;
-    return this.screeningBatchModel.findById(id).lean().exec() as Promise<Record<string, unknown> | null>;
+    const doc = await this.screeningBatchModel.findById(id).populate('sequences.sequence').exec();
+    if (!doc) return null;
+    return (doc as unknown as { toJSON: () => Record<string, unknown> }).toJSON();
   }
 
   async createSequence(input: CreateSequenceInput, userId?: string): Promise<Sequence> {

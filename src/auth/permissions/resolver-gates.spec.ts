@@ -93,6 +93,7 @@ const GATES: Row[] = [
   [JobResolver, 'jobClients', Permission.JobsViewAll],
   [JobResolver, 'rerunJobHomologyScreening', Permission.JobsViewAll],
   [SecureDnaResolver, 'screeningBatches', Permission.JobsViewAll],
+  [SecureDnaResolver, 'screeningBatch', Permission.JobsViewAll],
   [SecureDnaResolver, 'createSequencesBatch', Permission.JobsViewAll],
   [SecureDnaResolver, 'screenSequencesBatch', Permission.JobsViewAll],
   // The merged jobs page. Deliberately the BASELINE permission: this one query

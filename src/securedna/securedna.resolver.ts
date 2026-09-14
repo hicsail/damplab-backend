@@ -1,4 +1,4 @@
-import { Args, Mutation, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import { Injectable, UseGuards } from '@nestjs/common';
 import { SecureDnaService } from './securedna.service';
 import { Sequence, ScreeningBatch } from './models/securedna-graphql.model';
@@ -23,6 +23,17 @@ export class SecureDnaResolver {
   async screeningBatches(): Promise<ScreeningBatch[]> {
     const batches = await this.secureDnaService.listScreeningBatches();
     return batches.map((b) => normalizeScreeningBatchForGraphql(b as unknown as Record<string, unknown>));
+  }
+
+  @Query(() => ScreeningBatch, {
+    nullable: true,
+    description: 'One stored screening batch by id, including job homology runs that the standalone list omits.'
+  })
+  @RequirePermission(Permission.JobsViewAll)
+  async screeningBatch(@Args('id', { type: () => ID }) id: string): Promise<ScreeningBatch | null> {
+    const batch = await this.secureDnaService.findBatchById(id);
+    if (!batch) return null;
+    return normalizeScreeningBatchForGraphql(batch);
   }
 
   @Mutation(() => [Sequence])
