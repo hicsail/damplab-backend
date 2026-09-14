@@ -24,6 +24,7 @@ import { JobAttachmentsService } from './job-attachments.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
+import { JobScreeningService } from './job-screening.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
 import { jobVersionAuthorOrg } from '../job-version/author-org';
@@ -98,7 +99,8 @@ export class JobResolver {
     private readonly jobVersionService: JobVersionService,
     private readonly jobReviewService: JobReviewService,
     private readonly keycloakService: KeycloakService,
-    private readonly notificationDispatch: NotificationDispatchService
+    private readonly notificationDispatch: NotificationDispatchService,
+    private readonly jobScreeningService: JobScreeningService
   ) {}
 
   /**
@@ -299,6 +301,11 @@ export class JobResolver {
       actorSub: user.sub,
       actorDisplayName: user.preferred_username ?? user.email ?? undefined
     });
+
+    // Deliberately not awaited: SecureDNA is a third party, and a slow or down
+    // synthclient must not be able to hang a customer's checkout. The job
+    // carries IN_PROGRESS until the run records a verdict.
+    this.jobScreeningService.screenJobInBackground(String(created._id), user.sub);
 
     return created;
   }
@@ -545,6 +552,12 @@ export class JobResolver {
     const historyNote = note?.trim() || (wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState]);
     if (historyNote) {
       await this.jobVersionService.appendStateEvent(updated, newState, this.versionAuthor(user, updated), historyNote);
+    }
+
+    // A resubmission is the one transition that can carry changed sequences, so
+    // it re-screens. Same fire-and-forget rule as the original submission.
+    if (wasResubmission) {
+      this.jobScreeningService.screenJobInBackground(String(updated._id), user.sub);
     }
 
     return updated;

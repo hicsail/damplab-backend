@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { CustomerActionRequired, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
+import { CustomerActionRequired, HomologyScreening, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
@@ -194,6 +194,15 @@ export class JobService {
     if (!sub) return [];
     await this.jobModel.updateMany({ sub }, { $set: { customerCategory } }).exec();
     return this.jobModel.find({ sub }).exec();
+  }
+
+  async appendScreeningBatchId(jobId: string, screeningBatchId: mongoose.Types.ObjectId): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $push: { screeningBatchIds: screeningBatchId } }, { new: true }).exec();
+  }
+
+  /** Latest homology screening verdict. Replaces whatever the previous run left. */
+  async setHomologyScreening(jobId: string, homologyScreening: HomologyScreening): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { homologyScreening } }, { new: true }).exec();
   }
 
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {

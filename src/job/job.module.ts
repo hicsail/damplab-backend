@@ -12,6 +12,9 @@ import { SOWModule } from '../sow/sow.module';
 import { JobAttachmentsService } from './job-attachments.service';
 import { JobFeedStatusEntity, JobFeedStatusEntitySchema } from './job-feed-status.model';
 import { ActivityModule } from '../activity/activity.module';
+import { SecureDnaModule } from '../securedna/securedna.module';
+import { DampLabServicesModule } from '../services/damplab-services.module';
+import { JobScreeningService } from './job-screening.service';
 import { JobVersionModule } from '../job-version/job-version.module';
 import { KeycloakModule } from '../keycloak/keycloak.module';
 import { JobReviewService } from './job-review.service';
@@ -30,11 +33,13 @@ import { NotificationModule } from '../notification/notification.module';
     forwardRef(() => CommentModule),
     forwardRef(() => SOWModule),
     ActivityModule,
+    SecureDnaModule,
+    DampLabServicesModule,
     JobVersionModule,
     KeycloakModule,
     forwardRef(() => NotificationModule)
   ],
-  providers: [JobService, JobResolver, JobReviewService, CreateJobPipe, CommentService, JobAttachmentsService],
+  providers: [JobService, JobResolver, JobReviewService, CreateJobPipe, CommentService, JobAttachmentsService, JobScreeningService],
   exports: [JobService, JobAttachmentsService]
 })
 export class JobModule {}
