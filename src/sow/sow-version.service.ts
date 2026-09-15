@@ -16,6 +16,7 @@ import { JobState } from '../job/job.model';
 import { SowTextPresetService } from '../sow-preset/sow-text-preset.service';
 import { JobVersionService } from '../job-version/job-version.service';
 import { ActivityService } from '../activity/activity.service';
+import { ActivityEventType } from '../activity/activity-event.model';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { CommentService } from '../comment/comment.service';
 import { CommentAuthorType } from '../comment/comment.model';
@@ -467,7 +468,7 @@ export class SowVersionService {
       staffSignature?: SowConsent;
       sentToCustomerAt?: Date;
       makeActive: boolean;
-      activityEventType?: 'SOW_SENT' | 'SOW_SIGNED' | 'SOW_FINALIZED';
+      activityEventType?: ActivityEventType.SOW_SENT | ActivityEventType.SOW_SIGNED | ActivityEventType.SOW_FINALIZED;
     },
     author: { sub: string; name: string }
   ): Promise<SowVersionDocument> {
@@ -555,11 +556,11 @@ export class SowVersionService {
   private activityMessage(version: SowVersionDocument, sow: SOW): string {
     const label = sow.sowNumber || String((sow as any)._id);
     switch (version.activityEventType) {
-      case 'SOW_SENT':
+      case ActivityEventType.SOW_SENT:
         return `SOW "${label}" was sent to the customer`;
-      case 'SOW_SIGNED':
+      case ActivityEventType.SOW_SIGNED:
         return `SOW "${label}" was signed by the customer`;
-      case 'SOW_FINALIZED':
+      case ActivityEventType.SOW_FINALIZED:
         return `SOW "${label}" was finalized`;
       default:
         return `SOW "${label}" lifecycle changed`;
@@ -599,13 +600,13 @@ export class SowVersionService {
     }
   }
 
-  private notificationTitle(eventType: string, sowLabel: string): string {
+  private notificationTitle(eventType: ActivityEventType, sowLabel: string): string {
     switch (eventType) {
-      case 'SOW_SENT':
+      case ActivityEventType.SOW_SENT:
         return `SOW "${sowLabel}" ready for signature`;
-      case 'SOW_SIGNED':
+      case ActivityEventType.SOW_SIGNED:
         return `SOW "${sowLabel}" signed by customer`;
-      case 'SOW_FINALIZED':
+      case ActivityEventType.SOW_FINALIZED:
         return `SOW "${sowLabel}" finalized`;
       default:
         return `SOW "${sowLabel}" updated`;
@@ -1249,7 +1250,7 @@ export class SowVersionService {
         sourcePointer: 'currentVersionNumber',
         sentToCustomerAt: now,
         makeActive: true,
-        activityEventType: 'SOW_SENT',
+        activityEventType: ActivityEventType.SOW_SENT,
         note: 'Sent to customer'
       },
       author
@@ -1329,7 +1330,7 @@ export class SowVersionService {
         sourcePointer: 'activeVersionNumber',
         clientSignature: signature,
         makeActive: true,
-        activityEventType: 'SOW_SIGNED',
+        activityEventType: ActivityEventType.SOW_SIGNED,
         note: `Signed by ${signature.name}`
       },
       { sub: user.sub, name: signature.name }
@@ -1385,7 +1386,7 @@ export class SowVersionService {
         sourcePointer: 'activeVersionNumber',
         staffSignature: signature,
         makeActive: true,
-        activityEventType: 'SOW_FINALIZED',
+        activityEventType: ActivityEventType.SOW_FINALIZED,
         note: `Countersigned by ${signature.name}`
       },
       author
