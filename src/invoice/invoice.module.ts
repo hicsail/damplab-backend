@@ -8,6 +8,7 @@ import { JobModule } from '../job/job.module';
 import { SOWModule } from '../sow/sow.module';
 import { JobPaymentModule } from '../job-payment/job-payment.module';
 import { NotificationModule } from '../notification/notification.module';
+import { ActivityModule } from '../activity/activity.module';
 
 @Module({
   imports: [
@@ -15,7 +16,8 @@ import { NotificationModule } from '../notification/notification.module';
     forwardRef(() => JobModule),
     forwardRef(() => SOWModule),
     forwardRef(() => JobPaymentModule),
-    forwardRef(() => NotificationModule)
+    forwardRef(() => NotificationModule),
+    ActivityModule
   ],
   providers: [InvoiceService, InvoiceResolver, JobInvoiceFieldsResolver],
   exports: [InvoiceService]

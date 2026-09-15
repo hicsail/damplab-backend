@@ -13,11 +13,13 @@ import { Role } from '../auth/roles/roles.enum';
 import { RequirePermission } from '../auth/permissions/permissions.decorator';
 import { Permission } from '../auth/permissions/permission.enum';
 import { JobPaymentService } from '../job-payment/job-payment.service';
+import { ActivityService } from '../activity/activity.service';
+import { ActivityEventType } from '../activity/activity-event.model';
 
 @Resolver(() => Invoice)
 @UseGuards(AuthRolesGuard)
 export class InvoiceResolver {
-  constructor(private readonly invoiceService: InvoiceService, private readonly jobService: JobService, private readonly payments: JobPaymentService) {}
+  constructor(private readonly invoiceService: InvoiceService, private readonly jobService: JobService, private readonly payments: JobPaymentService, private readonly activityService: ActivityService) {}
 
   @Query(() => [Invoice], { description: "A job's invoices, newest first: the current version and its history. Staff can view any; clients can view their own." })
   async invoicesByJobId(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Invoice[]> {
@@ -36,7 +38,16 @@ export class InvoiceResolver {
 
   @Mutation(() => Invoice, { description: "Staff-only. Issue a new version of the job's invoice, superseding the previous one." })
   async createInvoice(@Args('input', { type: () => CreateInvoiceInput }) input: CreateInvoiceInput, @CurrentUser() user: User): Promise<Invoice> {
-    return this.invoiceService.createForJob(input, user);
+    const invoice = await this.invoiceService.createForJob(input, user);
+    await this.activityService.createEvent({
+      type: ActivityEventType.INVOICE_GENERATED,
+      message: `Invoice ${(invoice as any).invoiceNumber ?? ''} generated`,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      jobId: (invoice as any).jobId,
+      invoiceId: String((invoice as any)._id),
+      invoiceNumber: (invoice as any).invoiceNumber
+    });
+    return invoice;
   }
 
   /**
@@ -64,7 +75,16 @@ export class InvoiceResolver {
   @Mutation(() => Invoice, { description: "Void the job's current invoice. The record is kept and renumbering never happens." })
   @RequirePermission(Permission.BillingWrite)
   async voidInvoice(@Args('invoiceId', { type: () => ID }) invoiceId: string, @Args('reason', { type: () => String }) reason: string, @CurrentUser() user: User): Promise<Invoice> {
-    return this.invoiceService.voidInvoice(invoiceId, reason, user);
+    const invoice = await this.invoiceService.voidInvoice(invoiceId, reason, user);
+    await this.activityService.createEvent({
+      type: ActivityEventType.INVOICE_VOIDED,
+      message: `Invoice ${(invoice as any).invoiceNumber ?? ''} voided`,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      jobId: (invoice as any).jobId,
+      invoiceId: String((invoice as any)._id),
+      invoiceNumber: (invoice as any).invoiceNumber
+    });
+    return invoice;
   }
 
   @ResolveField(() => Job, { description: 'Job this invoice is associated with' })
