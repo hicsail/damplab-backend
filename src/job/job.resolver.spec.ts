@@ -278,12 +278,14 @@ function kycHarness(job: any): {
   createVerificationUrl: jest.Mock;
   getScreen: jest.Mock;
   setAclidScreening: jest.Mock;
+  setHomologyScreening: jest.Mock;
   screenJob: jest.Mock;
   screenJobInBackground: jest.Mock;
 } {
   const findById = jest.fn(async () => job);
   const setAclidScreening = jest.fn(async (_id: string, aclidScreening: any) => ({ ...job, aclidScreening }));
-  const jobService: any = { findById, setAclidScreening };
+  const setHomologyScreening = jest.fn(async (_id: string, homologyScreening: any) => ({ ...job, homologyScreening }));
+  const jobService: any = { findById, setAclidScreening, setHomologyScreening };
   const createVerificationUrl = jest.fn(async () => 'https://verify.aclid.bio/session/abc');
   const getScreen = jest.fn();
   const aclidService: any = { createVerificationUrl, getScreen };
@@ -291,7 +293,7 @@ function kycHarness(job: any): {
   const screenJobInBackground = jest.fn();
   const jobScreeningService: any = { screenJob, screenJobInBackground };
   const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, jobScreeningService, aclidService);
-  return { resolver, createVerificationUrl, getScreen, setAclidScreening, screenJob, screenJobInBackground };
+  return { resolver, createVerificationUrl, getScreen, setAclidScreening, setHomologyScreening, screenJob, screenJobInBackground };
 }
 
 const screenedJob = (): any => ({
@@ -311,6 +313,15 @@ const screenedJob = (): any => ({
     completedAt: new Date('2026-09-01T00:01:00Z'),
     detail: null,
     customerStatus: HomologyScreeningStatus.IN_PROGRESS
+  },
+  // The stored rollup. SecureDNA's leg is not recoverable from it.
+  homologyScreening: {
+    status: HomologyScreeningStatus.PASSED,
+    startedAt: new Date('2026-09-01T00:00:00Z'),
+    completedAt: new Date('2026-09-01T00:02:00Z'),
+    batchId: 'batch-1',
+    sequenceCount: 2,
+    detail: 'SecureDNA backup after Aclid error: screen failed without a regulatory status'
   }
 });
 
@@ -434,6 +445,70 @@ describe('JobResolver.refreshJobAclidScreening', () => {
       'job-1',
       expect.objectContaining({ homologyStatus: HomologyScreeningStatus.FAILED, customerStatus: HomologyScreeningStatus.FAILED, decisionStatus: 'rejected' })
     );
+  });
+
+  /**
+   * The rollup is stored, not derived, and SecureDNA's leg cannot be recovered
+   * from it. So a screen that first came back with no regulatory status (and got
+   * a SecureDNA backup Passed) and later reads `controlled` has to fail the
+   * Homology row here, without re-screening anything.
+   */
+  it('fails the stored Homology rollup when Aclid now says controlled, without re-screening', async () => {
+    const job = screenedJob();
+    job.homologyScreening.status = HomologyScreeningStatus.PASSED;
+    const { resolver, getScreen, setHomologyScreening, screenJob, screenJobInBackground } = kycHarness(job);
+    getScreen.mockResolvedValue({ ...approvedScreen, regulatoryStatus: 'controlled' });
+
+    const updated = await resolver.refreshJobAclidScreening('job-1', owner);
+
+    expect(setHomologyScreening).toHaveBeenCalledTimes(1);
+    expect(setHomologyScreening).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        status: HomologyScreeningStatus.FAILED,
+        detail: expect.stringMatching(/Aclid.*controlled/),
+        // The SecureDNA run that produced the row is still the row's provenance.
+        batchId: 'batch-1',
+        startedAt: new Date('2026-09-01T00:00:00Z'),
+        sequenceCount: 2
+      })
+    );
+    expect(updated.homologyScreening?.status).toBe(HomologyScreeningStatus.FAILED);
+    expect(screenJob).not.toHaveBeenCalled();
+    expect(screenJobInBackground).not.toHaveBeenCalled();
+  });
+
+  it('never promotes the Homology rollup from a later Aclid grant', async () => {
+    // A FAILED rollup may be SecureDNA's verdict, which this refresh knows
+    // nothing about. Only Aclid's own FAILED is allowed to move the row.
+    const job = screenedJob();
+    job.homologyScreening.status = HomologyScreeningStatus.FAILED;
+    const { resolver, getScreen, setHomologyScreening } = kycHarness(job);
+    getScreen.mockResolvedValue(approvedScreen);
+
+    await resolver.refreshJobAclidScreening('job-1', owner);
+
+    expect(setHomologyScreening).not.toHaveBeenCalled();
+  });
+
+  it('leaves the Homology rollup alone when Aclid still has no verdict', async () => {
+    const { resolver, getScreen, setHomologyScreening } = kycHarness(screenedJob());
+    getScreen.mockResolvedValue({ ...approvedScreen, status: 'failed', regulatoryStatus: null });
+
+    await resolver.refreshJobAclidScreening('job-1', owner);
+
+    expect(setHomologyScreening).not.toHaveBeenCalled();
+  });
+
+  it('writes a FAILED Homology row even when the job never had one', async () => {
+    const job = screenedJob();
+    delete job.homologyScreening;
+    const { resolver, getScreen, setHomologyScreening } = kycHarness(job);
+    getScreen.mockResolvedValue({ ...approvedScreen, regulatoryStatus: 'controlled' });
+
+    await resolver.refreshJobAclidScreening('job-1', owner);
+
+    expect(setHomologyScreening).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: HomologyScreeningStatus.FAILED, sequenceCount: 2, batchId: null }));
   });
 
   it('refuses a stranger without calling Aclid', async () => {

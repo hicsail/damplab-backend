@@ -3,7 +3,7 @@ import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
-import { AclidScreening, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
+import { AclidScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { matchesClientEmail } from './client-email';
 import { callerMayAccessJob } from './job-access';
 import { JobService } from './job.service';
@@ -409,7 +409,26 @@ export class JobResolver {
         screenHomologyStatus: homologyStatus
       })
     });
-    return updated ?? job;
+
+    // The Homology row is a stored rollup, and SecureDNA's leg cannot be read
+    // back out of it. So this is one-directional: a screen that had no verdict
+    // at run time (and got a SecureDNA backup Passed) and now reads
+    // `controlled` fails the row here; a later Aclid grant never lifts it,
+    // because a FAILED row may be SecureDNA's, which this refresh knows nothing
+    // about. Anything other than a new FAILED leaves the row exactly as it was.
+    if (homologyStatus !== HomologyScreeningStatus.FAILED) {
+      return updated ?? job;
+    }
+    const rollup = job.homologyScreening;
+    const failed = await this.jobService.setHomologyScreening(jobId, {
+      status: HomologyScreeningStatus.FAILED,
+      startedAt: rollup?.startedAt ?? existing.startedAt,
+      completedAt: new Date(),
+      batchId: rollup?.batchId ?? null,
+      sequenceCount: rollup?.sequenceCount ?? existing.sequenceCount,
+      detail: `Aclid now reports controlled${rollup?.detail ? ` (was: ${rollup.detail})` : ''}`
+    });
+    return failed ?? updated ?? job;
   }
 
   @Mutation(() => Job, {
