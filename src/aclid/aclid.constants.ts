@@ -1,0 +1,3 @@
+export const ACLID_MIN_SEQUENCE_LENGTH = 30;
+export const ACLID_POLL_INTERVAL_MS = 3000;
+export const ACLID_POLL_TIMEOUT_MS = 120_000;
