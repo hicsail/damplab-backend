@@ -83,6 +83,42 @@ export class HomologyScreening {
   detail?: string | null;
 }
 
+@ObjectType({ description: 'Aclid sequence screen and KYC state for the Biosecurity card' })
+export class AclidScreening {
+  @Field(() => String, { nullable: true })
+  screenId?: string | null;
+
+  @Field(() => HomologyScreeningStatus)
+  homologyStatus: HomologyScreeningStatus;
+
+  @Field(() => String, { nullable: true })
+  regulatoryStatus?: string | null;
+
+  @Field(() => String, { nullable: true })
+  verificationStatus?: string | null;
+
+  @Field(() => String, { nullable: true })
+  decisionStatus?: string | null;
+
+  @Field(() => Date, { nullable: true })
+  verificationCompletedAt?: Date | null;
+
+  @Field(() => Int)
+  sequenceCount: number;
+
+  @Field(() => Date)
+  startedAt: Date;
+
+  @Field(() => Date, { nullable: true })
+  completedAt?: Date | null;
+
+  @Field(() => String, { nullable: true })
+  detail?: string | null;
+
+  @Field(() => HomologyScreeningStatus)
+  customerStatus: HomologyScreeningStatus;
+}
+
 @ObjectType({ description: 'File attached to a job for additional context or requirements' })
 export class JobAttachment {
   @Field({ description: 'Original filename of the uploaded document', nullable: true })
@@ -264,6 +300,10 @@ export class Job {
   @Prop({ type: Object, required: false })
   @Field(() => HomologyScreening, { nullable: true })
   homologyScreening?: HomologyScreening;
+
+  @Prop({ type: Object, required: false })
+  @Field(() => AclidScreening, { nullable: true })
+  aclidScreening?: AclidScreening;
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ScreeningBatch' }], default: [] })
   @Field(() => [ID], {

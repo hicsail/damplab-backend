@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { CustomerActionRequired, HomologyScreening, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
+import { AclidScreening, CustomerActionRequired, HomologyScreening, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
@@ -203,6 +203,11 @@ export class JobService {
   /** Latest homology screening verdict. Replaces whatever the previous run left. */
   async setHomologyScreening(jobId: string, homologyScreening: HomologyScreening): Promise<Job | null> {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { homologyScreening } }, { new: true }).exec();
+  }
+
+  /** Latest Aclid screening and KYC state. Replaces whatever the previous run left. */
+  async setAclidScreening(jobId: string, aclidScreening: AclidScreening): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { aclidScreening } }, { new: true }).exec();
   }
 
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {
