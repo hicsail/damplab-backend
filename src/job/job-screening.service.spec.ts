@@ -1,3 +1,4 @@
+import { HttpException, HttpStatus } from '@nestjs/common';
 import { JobScreeningService } from './job-screening.service';
 import { HomologyScreeningStatus, Job } from './job.model';
 import { GIBSON_ASSEMBLY_SERVICE_NAME, M_CLONING_SERVICE_NAME } from './job-screening.constants';
@@ -5,6 +6,8 @@ import { GIBSON_ASSEMBLY_SERVICE_NAME, M_CLONING_SERVICE_NAME } from './job-scre
 const WORKFLOW_ID = '65a1b2c3d4e5f60718293a4b';
 const DNA_A = 'ATGGCGCGTACGTAGCTAGCTAGCATCGATCGATCGTAGCTAGCTAGCTAGCATCGATCGG';
 const DNA_B = 'TTTACGCGTACGTAGCTAGCTAGCATCGATCGATCGTAGCTAGCTAGCTAGCATCGAAAA';
+/** 23 bp: long enough to look like DNA, too short for Aclid's 30 bp floor. */
+const DNA_SHORT = 'ATGGCGCGTACGTAGCTAGCTAG';
 
 /**
  * A job whose single workflow holds `nodes`, each bound to a named service with
@@ -16,21 +19,27 @@ function harness(
   overrides: Partial<{
     screenSequences: jest.Mock;
     setHomologyScreening: jest.Mock;
+    setAclidScreening: jest.Mock;
     appendScreeningBatchId: jest.Mock;
+    aclidConfigured: boolean;
+    screenInline: jest.Mock;
     job: Partial<Job> | null;
   }> = {}
 ): {
   service: JobScreeningService;
   job: Job | null;
   setHomologyScreening: jest.Mock;
+  setAclidScreening: jest.Mock;
   appendScreeningBatchId: jest.Mock;
   screenSequences: jest.Mock;
+  screenInline: jest.Mock;
 } {
   const job = overrides.job === undefined ? ({ _id: 'job-1', workflows: [WORKFLOW_ID] } as unknown as Job) : (overrides.job as Job | null);
 
   const setHomologyScreening = overrides.setHomologyScreening ?? jest.fn(async () => job);
+  const setAclidScreening = overrides.setAclidScreening ?? jest.fn(async () => job);
   const appendScreeningBatchId = overrides.appendScreeningBatchId ?? jest.fn(async () => job);
-  const jobService: any = { findById: jest.fn(async () => job), setHomologyScreening, appendScreeningBatchId };
+  const jobService: any = { findById: jest.fn(async () => job), setHomologyScreening, setAclidScreening, appendScreeningBatchId };
 
   const workflowService: any = {
     findByIds: jest.fn(async () => [{ _id: WORKFLOW_ID, nodes: nodes.map((n) => ({ _id: n.id })) }])
@@ -47,11 +56,37 @@ function harness(
   const screenSequences = overrides.screenSequences ?? jest.fn();
   const secureDnaService: any = { screenSequences };
 
-  const service = new JobScreeningService(jobService, workflowService, workflowNodeService, dampLabServices, secureDnaService);
-  return { service, job, setHomologyScreening, appendScreeningBatchId, screenSequences };
+  const screenInline = overrides.screenInline ?? jest.fn();
+  const aclidService: any = { isConfigured: () => overrides.aclidConfigured ?? false, screenInline, getScreen: jest.fn() };
+
+  const service = new JobScreeningService(jobService, workflowService, workflowNodeService, dampLabServices, secureDnaService, aclidService);
+  return { service, job, setHomologyScreening, setAclidScreening, appendScreeningBatchId, screenSequences, screenInline };
 }
 
-const lastStatus = (setHomologyScreening: jest.Mock): { status: string } => setHomologyScreening.mock.calls[setHomologyScreening.mock.calls.length - 1][1];
+const lastCall = (mock: jest.Mock): any => mock.mock.calls[mock.mock.calls.length - 1][1];
+const firstArg = (mock: jest.Mock): any => mock.mock.calls[0][0];
+const lastStatus = (setHomologyScreening: jest.Mock): { status: string } => lastCall(setHomologyScreening);
+
+/** A finished Aclid screen, with only the fields a test cares about overridden. */
+function aclidScreen(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    id: 'scr_1',
+    status: 'succeeded',
+    regulatoryStatus: 'not_controlled',
+    verificationStatus: 'pending',
+    decisionStatus: null,
+    verificationCompletedAt: null,
+    findings: null,
+    ...overrides
+  };
+}
+
+const granted = {
+  id: '65a1b2c3d4e5f60718293a4c',
+  synthesisPermission: 'granted',
+  errors: [],
+  sequences: [{ threats: [] }]
+};
 
 describe('collectScreeningTargets', () => {
   it('takes only the insert from Gibson Assembly — its vector is a file upload', async () => {
@@ -215,5 +250,127 @@ describe('screenJob', () => {
     });
     const { service } = harness(gibson, { screenSequences });
     await expect(service.screenJob('job-1', 'user-1')).resolves.toBeDefined();
+  });
+});
+
+describe('screenJob homology mode', () => {
+  const gibson = [{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_A }] }];
+  const originalMode = process.env.BIOSECURITY_HOMOLOGY_MODE;
+
+  afterEach(() => {
+    if (originalMode === undefined) delete process.env.BIOSECURITY_HOMOLOGY_MODE;
+    else process.env.BIOSECURITY_HOMOLOGY_MODE = originalMode;
+  });
+
+  it('in aclid mode records Passed from not_controlled and does not call SecureDNA', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn(async () => aclidScreen());
+    const screenSequences = jest.fn();
+    const { service, setHomologyScreening, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    expect(screenSequences).not.toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(result.batchId).toBeNull();
+    expect(result.detail).toContain('Aclid not_controlled');
+    expect(lastStatus(setHomologyScreening).status).toBe(HomologyScreeningStatus.PASSED);
+
+    const aclid = lastCall(setAclidScreening);
+    expect(aclid.screenId).toBe('scr_1');
+    expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.PASSED);
+    expect(aclid.sequenceCount).toBe(1);
+    // Verification is pending, so the customer still has KYC to do.
+    expect(aclid.customerStatus).toBe(HomologyScreeningStatus.IN_PROGRESS);
+  });
+
+  it('in aclid mode runs SecureDNA when screenInline throws', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn(async () => {
+      throw new HttpException('Could not reach Aclid at https://api.aclid.bio/v2/screen_inline: fetch failed', HttpStatus.SERVICE_UNAVAILABLE);
+    });
+    const screenSequences = jest.fn(async () => granted);
+    const { service, setAclidScreening, appendScreeningBatchId } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    expect(screenSequences).toHaveBeenCalled();
+    expect(appendScreeningBatchId).toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(result.detail).toContain('SecureDNA backup after Aclid error');
+    expect(result.detail).toContain('Could not reach Aclid');
+
+    // A transport failure is never a verdict: the Aclid row is Unavailable.
+    const aclid = lastCall(setAclidScreening);
+    expect(aclid.screenId).toBeNull();
+    expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(aclid.customerStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
+  });
+
+  it('in both mode Fails homology if Aclid is controlled even when SecureDNA grants', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'both';
+    const screenInline = jest.fn(async () => aclidScreen({ regulatoryStatus: 'controlled' }));
+    const screenSequences = jest.fn(async () => granted);
+    const { service, setHomologyScreening, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    expect(screenInline).toHaveBeenCalled();
+    expect(screenSequences).toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.FAILED);
+    expect(result.detail).toContain('Aclid controlled');
+    expect(lastStatus(setHomologyScreening).status).toBe(HomologyScreeningStatus.FAILED);
+    expect(lastCall(setAclidScreening).homologyStatus).toBe(HomologyScreeningStatus.FAILED);
+  });
+
+  it('in securedna mode still creates an Aclid screen when configured', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'securedna';
+    // Controlled, and yet the Homology row is SecureDNA's alone in this mode:
+    // the screen exists here only so the customer has a KYC target.
+    const screenInline = jest.fn(async () => aclidScreen({ regulatoryStatus: 'controlled' }));
+    const screenSequences = jest.fn(async () => granted);
+    const { service, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    expect(screenInline).toHaveBeenCalled();
+    expect(screenSequences).toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(result.detail).toBeNull();
+    expect(lastCall(setAclidScreening).screenId).toBe('scr_1');
+  });
+
+  it('omits sequences shorter than 30 bp from the Aclid payload', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn(async () => aclidScreen());
+    const { service, setAclidScreening } = harness(
+      [
+        { id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_A }] },
+        { id: 'n2', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_SHORT }] }
+      ],
+      { aclidConfigured: true, screenInline }
+    );
+
+    await service.screenJob('job-1', 'user-1');
+
+    expect(screenInline).toHaveBeenCalledTimes(1);
+    expect(firstArg(screenInline).sequences).toEqual([{ name: `${WORKFLOW_ID}_n1_insert`, sequence: DNA_A }]);
+    expect(lastCall(setAclidScreening).sequenceCount).toBe(1);
+  });
+
+  it('records the Aclid row Unavailable when every sequence is shorter than 30 bp', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn();
+    const { service, setAclidScreening } = harness([{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_SHORT }] }], {
+      aclidConfigured: true,
+      screenInline
+    });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    expect(screenInline).not.toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(result.detail).toContain('shorter than 30 bp');
+    expect(lastCall(setAclidScreening).homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
   });
 });

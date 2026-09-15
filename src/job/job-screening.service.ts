@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import mongoose from 'mongoose';
-import { HomologyScreening, HomologyScreeningStatus, Job } from './job.model';
+import { AclidScreening, HomologyScreening, HomologyScreeningStatus, Job } from './job.model';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
@@ -8,6 +8,8 @@ import { DampLabServices } from '../services/damplab-services.services';
 import { SecureDnaService } from '../securedna/securedna.service';
 import { Region } from '../securedna/region';
 import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
+import { AclidScreenRecord, AclidService } from '../aclid/aclid.service';
+import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidRegulatory, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { SCREENED_FIELDS_BY_SERVICE } from './job-screening.constants';
 import { getFormStringFromEntries, looksLikeNucleotideSequence, normalizeFormDataToArray, ScreeningTarget } from './job-screening.util';
@@ -15,11 +17,18 @@ import { screeningSliceName } from './job-screening-name.util';
 
 /**
  * Homology screening for a job: find the customer-supplied sequences, send them
- * to SecureDNA, record the verdict on the job.
+ * to a screening provider, record the verdict on the job.
+ *
+ * Two providers, selected by `BIOSECURITY_HOMOLOGY_MODE` (see
+ * `parseHomologyMode`): Aclid, which also gives us the screen the customer's KYC
+ * hangs off, and SecureDNA. `aclid` uses SecureDNA only as a backup when Aclid
+ * errors; `both` runs them independently and rolls the two verdicts into one
+ * Homology row; `securedna` keeps the Homology row SecureDNA's alone but still
+ * creates an Aclid screen when Aclid is keyed, because KYC needs one.
  *
  * Screening runs on submission and is never awaited by the caller — a slow or
- * unreachable synthclient must not be able to hold up a customer's checkout.
- * That is the whole reason the job carries an IN_PROGRESS state.
+ * unreachable provider must not be able to hold up a customer's checkout. That
+ * is the whole reason the job carries an IN_PROGRESS state.
  */
 @Injectable()
 export class JobScreeningService {
@@ -30,7 +39,8 @@ export class JobScreeningService {
     private readonly workflowService: WorkflowService,
     private readonly workflowNodeService: WorkflowNodeService,
     private readonly dampLabServices: DampLabServices,
-    private readonly secureDnaService: SecureDnaService
+    private readonly secureDnaService: SecureDnaService,
+    private readonly aclidService: AclidService
   ) {}
 
   /**
@@ -95,6 +105,16 @@ export class JobScreeningService {
     }
 
     if (targets.length === 0) {
+      if (this.aclidService.isConfigured()) {
+        await this.recordAclid(jobId, {
+          screenId: null,
+          homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+          sequenceCount: 0,
+          startedAt: new Date(),
+          completedAt: new Date(),
+          detail: 'No screenable sequences'
+        });
+      }
       return this.record(jobId, {
         status: HomologyScreeningStatus.UNAVAILABLE,
         startedAt: new Date(),
@@ -110,6 +130,109 @@ export class JobScreeningService {
     const startedAt = new Date();
     await this.record(jobId, { status: HomologyScreeningStatus.IN_PROGRESS, startedAt, sequenceCount: targets.length });
 
+    const aclidConfigured = this.aclidService.isConfigured();
+    const mode = parseHomologyMode(process.env.BIOSECURITY_HOMOLOGY_MODE, aclidConfigured);
+
+    // Whenever Aclid is keyed we screen with it, whatever the mode: the screen
+    // is what the customer's KYC hangs off. `parseHomologyMode` has already
+    // forced `securedna` when it is not keyed.
+    const aclid = aclidConfigured
+      ? await this.runAclid(
+          jobId,
+          targets.filter((t) => isAclidLengthEligible(t.seq)),
+          startedAt
+        )
+      : null;
+
+    // In `aclid` mode SecureDNA is the backup, and only for an Aclid that
+    // errored; a real `controlled` verdict is an answer, not a reason to ask again.
+    const secureDna = mode === 'aclid' && !aclid?.error ? null : await this.runSecureDna(jobId, userSub, targets, startedAt);
+
+    // `securedna` mode keeps the Homology row SecureDNA's alone even though an
+    // Aclid screen exists for KYC.
+    const aclidLeg = mode === 'securedna' ? null : aclid;
+
+    const statuses: HomologyScreeningStatus[] = [];
+    if (aclidLeg) statuses.push(aclidLeg.homologyStatus);
+    if (secureDna) statuses.push(secureDna.status);
+
+    const details: string[] = [];
+    if (aclidLeg) {
+      details.push(mode === 'aclid' && aclidLeg.error && secureDna ? `SecureDNA backup after Aclid error: ${aclidLeg.error}` : aclidLeg.detail);
+    }
+    if (secureDna?.detail) details.push(secureDna.detail);
+
+    return this.record(jobId, {
+      status: rollupHomologyStatuses(statuses),
+      startedAt,
+      completedAt: new Date(),
+      batchId: secureDna?.batchId ?? null,
+      sequenceCount: secureDna?.sequenceCount ?? aclidLeg?.sequenceCount ?? targets.length,
+      detail: details.length ? details.join('; ') : null
+    });
+  }
+
+  /**
+   * Screen with Aclid and record `job.aclidScreening`. Returns what the Homology
+   * row needs from this leg; `error` is set only when we never got a verdict, and
+   * a leg that errored is never Passed or Failed.
+   */
+  private async runAclid(jobId: string, aclidTargets: ScreeningTarget[], startedAt: Date): Promise<AclidLeg> {
+    if (aclidTargets.length === 0) {
+      const detail = `Sequences shorter than ${ACLID_MIN_SEQUENCE_LENGTH} bp`;
+      await this.recordAclid(jobId, {
+        screenId: null,
+        homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+        sequenceCount: 0,
+        startedAt,
+        completedAt: new Date(),
+        detail
+      });
+      return { homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail: `Aclid skipped: ${detail.toLowerCase()}`, error: null, sequenceCount: 0 };
+    }
+
+    let screen: AclidScreenRecord;
+    try {
+      screen = await this.aclidService.screenInline({
+        name: `damplab-job-${jobId}`,
+        sequences: aclidTargets.map((t) => ({ name: t.name, sequence: t.seq }))
+      });
+    } catch (error) {
+      const reason = messageOf(error);
+      this.logger.error(`Aclid screening failed for job ${jobId}: ${reason}`);
+      await this.recordAclid(jobId, {
+        screenId: null,
+        homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+        sequenceCount: aclidTargets.length,
+        startedAt,
+        completedAt: new Date(),
+        detail: `Aclid unavailable: ${reason}`
+      });
+      return { homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail: `Aclid unavailable: ${reason}`, error: reason, sequenceCount: aclidTargets.length };
+    }
+
+    const homologyStatus = homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
+    const verdict = screen.regulatoryStatus ?? `screen ${screen.status} without a regulatory status`;
+    await this.recordAclid(jobId, {
+      screenId: screen.id,
+      homologyStatus,
+      regulatoryStatus: screen.regulatoryStatus,
+      verificationStatus: screen.verificationStatus,
+      decisionStatus: screen.decisionStatus,
+      verificationCompletedAt: parseTimestamp(screen.verificationCompletedAt),
+      sequenceCount: aclidTargets.length,
+      startedAt,
+      completedAt: new Date(),
+      detail: screen.regulatoryStatus ? null : `Aclid ${verdict}`
+    });
+    return { homologyStatus, detail: `Aclid ${verdict}`, error: null, sequenceCount: aclidTargets.length };
+  }
+
+  /**
+   * Screen with SecureDNA. Returns the row it would write rather than writing it,
+   * so the caller can roll it up with Aclid's verdict first.
+   */
+  private async runSecureDna(jobId: string, userSub: string, targets: ScreeningTarget[], startedAt: Date): Promise<HomologyScreening> {
     try {
       const batch = await this.secureDnaService.screenSequences({
         sequences: targets,
@@ -129,20 +252,34 @@ export class JobScreeningService {
       // batch that errored did not really screen, so it is unavailable rather
       // than a failure attributable to the customer's sequence.
       if (errorCount > 0 && !denied) {
-        return this.unavailable(jobId, targets.length, `SecureDNA reported ${errorCount} error(s)`, batch.id, startedAt);
+        return {
+          status: HomologyScreeningStatus.UNAVAILABLE,
+          startedAt,
+          completedAt: new Date(),
+          batchId: batch.id,
+          sequenceCount: targets.length,
+          detail: `SecureDNA reported ${errorCount} error(s)`
+        };
       }
 
-      return this.record(jobId, {
+      return {
         status: denied ? HomologyScreeningStatus.FAILED : HomologyScreeningStatus.PASSED,
         startedAt,
         completedAt: new Date(),
         batchId: batch.id,
         sequenceCount: targets.length,
         detail: denied ? `SecureDNA denied synthesis${flaggedSequences ? ` — ${flaggedSequences} of ${targets.length} sequence(s) flagged` : ''}` : null
-      });
+      };
     } catch (error) {
       this.logger.error(`Homology screening failed for job ${jobId}: ${messageOf(error)}`);
-      return this.unavailable(jobId, targets.length, messageOf(error), undefined, startedAt);
+      return {
+        status: HomologyScreeningStatus.UNAVAILABLE,
+        startedAt,
+        completedAt: new Date(),
+        batchId: null,
+        sequenceCount: targets.length,
+        detail: messageOf(error)
+      };
     }
   }
 
@@ -168,6 +305,33 @@ export class JobScreeningService {
     await this.jobService.setHomologyScreening(jobId, screening);
     return screening;
   }
+
+  /** `customerStatus` is stored, not resolved, so the UI reads one field. */
+  private async recordAclid(jobId: string, screening: Omit<AclidScreening, 'customerStatus'>): Promise<void> {
+    await this.jobService.setAclidScreening(jobId, {
+      ...screening,
+      customerStatus: customerStatusFromAclid({
+        screenId: screening.screenId,
+        decisionStatus: screening.decisionStatus,
+        verificationStatus: screening.verificationStatus,
+        screenHomologyStatus: screening.homologyStatus
+      })
+    });
+  }
+}
+
+/** What the Homology row takes from the Aclid leg. `error` set ⇒ no verdict. */
+interface AclidLeg {
+  homologyStatus: HomologyScreeningStatus;
+  detail: string;
+  error: string | null;
+  sequenceCount: number;
+}
+
+function parseTimestamp(raw: string | null): Date | null {
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function messageOf(error: unknown): string {

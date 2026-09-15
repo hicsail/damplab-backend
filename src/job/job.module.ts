@@ -13,6 +13,7 @@ import { JobAttachmentsService } from './job-attachments.service';
 import { JobFeedStatusEntity, JobFeedStatusEntitySchema } from './job-feed-status.model';
 import { ActivityModule } from '../activity/activity.module';
 import { SecureDnaModule } from '../securedna/securedna.module';
+import { AclidModule } from '../aclid/aclid.module';
 import { DampLabServicesModule } from '../services/damplab-services.module';
 import { JobScreeningService } from './job-screening.service';
 import { JobVersionModule } from '../job-version/job-version.module';
@@ -34,6 +35,7 @@ import { NotificationModule } from '../notification/notification.module';
     forwardRef(() => SOWModule),
     ActivityModule,
     SecureDnaModule,
+    AclidModule,
     DampLabServicesModule,
     JobVersionModule,
     KeycloakModule,
