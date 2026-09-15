@@ -66,12 +66,7 @@ export class ActivityService {
     return this.activityModel.find(filter).sort({ createdAt: -1 }).limit(limit).lean().exec();
   }
 
-  async listEventsForJob(input: {
-    jobId: string;
-    limit?: number | null;
-    before?: Date | null;
-    types?: ActivityEventType[] | null;
-  }): Promise<ActivityEventEntity[]> {
+  async listEventsForJob(input: { jobId: string; limit?: number | null; before?: Date | null; types?: ActivityEventType[] | null }): Promise<ActivityEventEntity[]> {
     const limit = Math.min(200, Math.max(1, input.limit ?? 50));
     const filter: Record<string, unknown> = { jobId: input.jobId };
     if (input.before) filter.createdAt = { $lt: input.before };

@@ -61,7 +61,6 @@ export class WorkflowNodeResolver {
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState
   ): Promise<WorkflowNode> {
-    const previousState = workflowNode.state;
     const updated = (await this.nodeService.updateState(workflowNode, newState))!;
     const serviceName = this.nodeDisplayName(updated);
     const jobId = await this.resolveJobId(String(updated._id));
@@ -84,7 +83,6 @@ export class WorkflowNodeResolver {
     @Args('assigneeId', { type: () => String, nullable: true }) assigneeId: string | null,
     @Args('assigneeDisplayName', { type: () => String, nullable: true }) assigneeDisplayName: string | null
   ): Promise<WorkflowNode> {
-    const previousAssigneeName = (workflowNode as any).assigneeDisplayName ?? null;
     const updated = (await this.nodeService.updateAssignee(workflowNode, assigneeId, assigneeDisplayName))!;
     const serviceName = this.nodeDisplayName(updated);
     const jobId = await this.resolveJobId(String(updated._id));

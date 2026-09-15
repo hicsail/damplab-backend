@@ -52,7 +52,7 @@ export enum ActivityEventType {
   // Comments
   COMMENT_CREATED = 'COMMENT_CREATED',
   COMMENT_UPDATED = 'COMMENT_UPDATED',
-  COMMENT_DELETED = 'COMMENT_DELETED',
+  COMMENT_DELETED = 'COMMENT_DELETED'
 }
 registerEnumType(ActivityEventType, { name: 'ActivityEventType' });
 

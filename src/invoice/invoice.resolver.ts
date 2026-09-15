@@ -19,7 +19,12 @@ import { ActivityEventType } from '../activity/activity-event.model';
 @Resolver(() => Invoice)
 @UseGuards(AuthRolesGuard)
 export class InvoiceResolver {
-  constructor(private readonly invoiceService: InvoiceService, private readonly jobService: JobService, private readonly payments: JobPaymentService, private readonly activityService: ActivityService) {}
+  constructor(
+    private readonly invoiceService: InvoiceService,
+    private readonly jobService: JobService,
+    private readonly payments: JobPaymentService,
+    private readonly activityService: ActivityService
+  ) {}
 
   @Query(() => [Invoice], { description: "A job's invoices, newest first: the current version and its history. Staff can view any; clients can view their own." })
   async invoicesByJobId(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Invoice[]> {
