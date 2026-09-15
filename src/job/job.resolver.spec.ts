@@ -1,6 +1,6 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JobResolver } from './job.resolver';
-import { JobState } from './job.model';
+import { HomologyScreeningStatus, JobState } from './job.model';
 import { Role } from '../auth/roles/roles.enum';
 
 describe('JobResolver.saveJobWorkflows customer edit gate', () => {
@@ -25,7 +25,7 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
     const jobVersionService: any = { saveWorkflows };
     const activityService: any = { createEvent: jest.fn(async () => undefined) };
     const sowService: any = { findByJobId: jest.fn(async () => null), syncServicesFromJobWorkflows: jest.fn(async () => undefined) };
-    const resolver = new JobResolver(jobService, {} as any, {} as any, activityService, {} as any, sowService, {} as any, jobVersionService, {} as any, {} as any, {} as any, {} as any);
+    const resolver = new JobResolver(jobService, {} as any, {} as any, activityService, {} as any, sowService, {} as any, jobVersionService, {} as any, {} as any, {} as any, {} as any, {} as any);
     return { resolver, saveWorkflows };
   }
 
@@ -69,6 +69,7 @@ describe('JobResolver.restoreJobVersion', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
 
@@ -91,6 +92,7 @@ describe('JobResolver.restoreJobVersion', () => {
       { syncServicesFromJobWorkflows } as any,
       {} as any,
       { restoreVersion } as any,
+      {} as any,
       {} as any,
       {} as any,
       {} as any,
@@ -118,7 +120,7 @@ describe('JobResolver.jobsForViewer — scope is enforced, not offered', () => {
   // these tests are actually about — is reachable.
   const harness = (): { resolver: JobResolver; findJobsForViewer: jest.Mock } => {
     const findJobsForViewer: jest.Mock = jest.fn().mockResolvedValue({ items: [], totalCount: 0 });
-    const resolver = new JobResolver({ findJobsForViewer } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    const resolver = new JobResolver({ findJobsForViewer } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
     return { resolver, findJobsForViewer };
   };
 
@@ -210,7 +212,8 @@ function screeningHarness(overrides: { created?: { _id: string; name: string }; 
     {} as any,
     keycloakService,
     notificationDispatch,
-    jobScreeningService
+    jobScreeningService,
+    {} as any
   );
   return { resolver, screenJobInBackground, screenJob, findById };
 }
@@ -262,5 +265,192 @@ describe('JobResolver.rerunJobHomologyScreening', () => {
 
     await expect(resolver.rerunJobHomologyScreening('missing', staff)).rejects.toBeInstanceOf(NotFoundException);
     expect(screenJob).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The customer's KYC path. Both mutations are gated on the baseline `jobs:view`
+ * (see resolver-gates.spec.ts), so the access rule lives inside: the job's owner,
+ * the client named on it, or anyone holding jobs:view-all.
+ */
+function kycHarness(job: any): {
+  resolver: JobResolver;
+  createVerificationUrl: jest.Mock;
+  getScreen: jest.Mock;
+  setAclidScreening: jest.Mock;
+  screenJob: jest.Mock;
+  screenJobInBackground: jest.Mock;
+} {
+  const findById = jest.fn(async () => job);
+  const setAclidScreening = jest.fn(async (_id: string, aclidScreening: any) => ({ ...job, aclidScreening }));
+  const jobService: any = { findById, setAclidScreening };
+  const createVerificationUrl = jest.fn(async () => 'https://verify.aclid.bio/session/abc');
+  const getScreen = jest.fn();
+  const aclidService: any = { createVerificationUrl, getScreen };
+  const screenJob = jest.fn();
+  const screenJobInBackground = jest.fn();
+  const jobScreeningService: any = { screenJob, screenJobInBackground };
+  const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, jobScreeningService, aclidService);
+  return { resolver, createVerificationUrl, getScreen, setAclidScreening, screenJob, screenJobInBackground };
+}
+
+const screenedJob = (): any => ({
+  _id: 'job-1',
+  name: 'Job',
+  sub: 'customer-1',
+  clientEmail: 'named@bu.edu',
+  aclidScreening: {
+    screenId: 'scr_123',
+    homologyStatus: HomologyScreeningStatus.PASSED,
+    regulatoryStatus: 'not_controlled',
+    verificationStatus: 'pending',
+    decisionStatus: 'pending',
+    verificationCompletedAt: null,
+    sequenceCount: 2,
+    startedAt: new Date('2026-09-01T00:00:00Z'),
+    completedAt: new Date('2026-09-01T00:01:00Z'),
+    detail: null,
+    customerStatus: HomologyScreeningStatus.IN_PROGRESS
+  }
+});
+
+const owner: any = { sub: 'customer-1', email: 'owner@example.org', preferred_username: 'Owner', realm_access: { roles: [] } };
+const namedClient: any = { sub: 'client-7', email: 'Named@BU.edu', preferred_username: 'Named', realm_access: { roles: [] } };
+const technician: any = { sub: 'tech-1', email: 'tech@example.org', preferred_username: 'Tech', realm_access: { roles: [Role.Technician] } };
+const stranger: any = { sub: 'stranger', email: 'stranger@example.org', preferred_username: 'Stranger', realm_access: { roles: [] } };
+
+describe('JobResolver.startJobCustomerVerification', () => {
+  const previousBase = process.env.APP_BASE_URL;
+  afterEach(() => {
+    if (previousBase === undefined) delete process.env.APP_BASE_URL;
+    else process.env.APP_BASE_URL = previousBase;
+  });
+
+  it('mints a verification url for the owner, sending the customer back to their job page', async () => {
+    process.env.APP_BASE_URL = 'https://canvas.example.org/';
+    const { resolver, createVerificationUrl } = kycHarness(screenedJob());
+
+    const session = await resolver.startJobCustomerVerification('job-1', owner);
+
+    expect(session).toEqual({ url: 'https://verify.aclid.bio/session/abc' });
+    expect(createVerificationUrl).toHaveBeenCalledWith({ screenId: 'scr_123', redirectUrl: 'https://canvas.example.org/client_view/job-1' });
+  });
+
+  it('sends a relative redirect when APP_BASE_URL is not set', async () => {
+    delete process.env.APP_BASE_URL;
+    const { resolver, createVerificationUrl } = kycHarness(screenedJob());
+
+    await resolver.startJobCustomerVerification('job-1', owner);
+
+    expect(createVerificationUrl).toHaveBeenCalledWith({ screenId: 'scr_123', redirectUrl: '/client_view/job-1' });
+  });
+
+  it('admits the client named on a staff-submitted job, and anyone with jobs:view-all', async () => {
+    const named = kycHarness(screenedJob());
+    await expect(named.resolver.startJobCustomerVerification('job-1', namedClient)).resolves.toEqual({ url: expect.any(String) });
+
+    const staff = kycHarness(screenedJob());
+    await expect(staff.resolver.startJobCustomerVerification('job-1', technician)).resolves.toEqual({ url: expect.any(String) });
+  });
+
+  it('refuses a stranger without touching Aclid', async () => {
+    const { resolver, createVerificationUrl } = kycHarness(screenedJob());
+
+    await expect(resolver.startJobCustomerVerification('job-1', stranger)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(createVerificationUrl).not.toHaveBeenCalled();
+  });
+
+  it('404s on a missing job', async () => {
+    const { resolver, createVerificationUrl } = kycHarness(null);
+
+    await expect(resolver.startJobCustomerVerification('missing', owner)).rejects.toBeInstanceOf(NotFoundException);
+    expect(createVerificationUrl).not.toHaveBeenCalled();
+  });
+
+  it('refuses a job with no Aclid screen to hang the verification off', async () => {
+    const job = screenedJob();
+    job.aclidScreening.screenId = null;
+    const { resolver, createVerificationUrl } = kycHarness(job);
+
+    await expect(resolver.startJobCustomerVerification('job-1', owner)).rejects.toThrow(new BadRequestException('No Aclid screen on this job'));
+    expect(createVerificationUrl).not.toHaveBeenCalled();
+  });
+
+  it('refuses a job that was never screened by Aclid', async () => {
+    const unscreened = screenedJob();
+    delete unscreened.aclidScreening;
+    const { resolver } = kycHarness(unscreened);
+
+    await expect(resolver.startJobCustomerVerification('job-1', owner)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('JobResolver.refreshJobAclidScreening', () => {
+  const approvedScreen = {
+    id: 'scr_123',
+    status: 'succeeded',
+    regulatoryStatus: 'not_controlled',
+    verificationStatus: 'verified',
+    decisionStatus: 'approved',
+    verificationCompletedAt: '2026-09-02T10:00:00.000Z',
+    findings: null
+  };
+
+  it('re-reads the screen and rewrites the KYC fields, homology and customer status', async () => {
+    const { resolver, getScreen, setAclidScreening, screenJob, screenJobInBackground } = kycHarness(screenedJob());
+    getScreen.mockResolvedValue(approvedScreen);
+
+    const updated = await resolver.refreshJobAclidScreening('job-1', owner);
+
+    expect(getScreen).toHaveBeenCalledWith('scr_123');
+    expect(setAclidScreening).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({
+        screenId: 'scr_123',
+        regulatoryStatus: 'not_controlled',
+        verificationStatus: 'verified',
+        decisionStatus: 'approved',
+        verificationCompletedAt: new Date('2026-09-02T10:00:00.000Z'),
+        homologyStatus: HomologyScreeningStatus.PASSED,
+        customerStatus: HomologyScreeningStatus.PASSED,
+        // Untouched: these describe the screen that was created, not its outcome.
+        sequenceCount: 2,
+        startedAt: new Date('2026-09-01T00:00:00Z')
+      })
+    );
+    expect(updated.aclidScreening?.decisionStatus).toBe('approved');
+    // A refresh is a read of Aclid's state, never a new screen.
+    expect(screenJob).not.toHaveBeenCalled();
+    expect(screenJobInBackground).not.toHaveBeenCalled();
+  });
+
+  it('records a rejection as FAILED for the customer and a controlled verdict as FAILED homology', async () => {
+    const { resolver, getScreen, setAclidScreening } = kycHarness(screenedJob());
+    getScreen.mockResolvedValue({ ...approvedScreen, regulatoryStatus: 'controlled', decisionStatus: 'rejected' });
+
+    await resolver.refreshJobAclidScreening('job-1', owner);
+
+    expect(setAclidScreening).toHaveBeenCalledWith(
+      'job-1',
+      expect.objectContaining({ homologyStatus: HomologyScreeningStatus.FAILED, customerStatus: HomologyScreeningStatus.FAILED, decisionStatus: 'rejected' })
+    );
+  });
+
+  it('refuses a stranger without calling Aclid', async () => {
+    const { resolver, getScreen, setAclidScreening } = kycHarness(screenedJob());
+
+    await expect(resolver.refreshJobAclidScreening('job-1', stranger)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(getScreen).not.toHaveBeenCalled();
+    expect(setAclidScreening).not.toHaveBeenCalled();
+  });
+
+  it('404s on a missing job and rejects a job with no screen', async () => {
+    await expect(kycHarness(null).resolver.refreshJobAclidScreening('missing', owner)).rejects.toBeInstanceOf(NotFoundException);
+
+    const job = screenedJob();
+    job.aclidScreening.screenId = null;
+    const { resolver, getScreen } = kycHarness(job);
+    await expect(resolver.refreshJobAclidScreening('job-1', owner)).rejects.toThrow(new BadRequestException('No Aclid screen on this job'));
+    expect(getScreen).not.toHaveBeenCalled();
   });
 });

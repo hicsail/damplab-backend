@@ -2,8 +2,10 @@ import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundExce
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
-import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
+import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
+import { AclidScreening, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { matchesClientEmail } from './client-email';
+import { callerMayAccessJob } from './job-access';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { Comment } from '../comment/comment.model';
@@ -35,6 +37,8 @@ import { KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
+import { AclidService } from '../aclid/aclid.service';
+import { customerStatusFromAclid, homologyStatusFromAclidRegulatory } from '../aclid/aclid-status.util';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -100,7 +104,8 @@ export class JobResolver {
     private readonly jobReviewService: JobReviewService,
     private readonly keycloakService: KeycloakService,
     private readonly notificationDispatch: NotificationDispatchService,
-    private readonly jobScreeningService: JobScreeningService
+    private readonly jobScreeningService: JobScreeningService,
+    private readonly aclidService: AclidService
   ) {}
 
   /**
@@ -325,6 +330,86 @@ export class JobResolver {
     }
     await this.jobScreeningService.screenJob(jobId, user.sub);
     return (await this.jobService.findById(jobId)) ?? job;
+  }
+
+  /**
+   * The job behind a customer KYC act, or the refusal. 404 before Forbidden:
+   * the caller is on their own job page, so "not found" is the honest answer
+   * to a stale id, and "forbidden" the honest answer to someone else's.
+   *
+   * Both KYC mutations are gated on the baseline `jobs:view`, so this is where
+   * scope is enforced — the owner, the client named on a staff-submitted job,
+   * or anyone holding `jobs:view-all`.
+   */
+  private async jobForCustomerVerification(jobId: string, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    if (!callerMayAccessJob(job, user, hasPermission(user, Permission.JobsViewAll))) {
+      throw new ForbiddenException('You do not have permission to access this job');
+    }
+    const screening = job.aclidScreening;
+    if (!screening?.screenId) {
+      throw new BadRequestException('No Aclid screen on this job');
+    }
+    return { job, screening, screenId: screening.screenId };
+  }
+
+  /**
+   * Mint Aclid's hosted verification page for this job's screen. KYC is Aclid's
+   * flow end to end — we never create Aclid customers ourselves — so all that
+   * is ours is the screen id and where to send the customer afterwards.
+   */
+  @Mutation(() => CustomerVerificationSession, {
+    description: "Mint an Aclid hosted-KYC session for this job's screen. Requires being on the job (owner, named client, or jobs:view-all)."
+  })
+  @RequirePermission(Permission.JobsView)
+  async startJobCustomerVerification(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<CustomerVerificationSession> {
+    const { screenId } = await this.jobForCustomerVerification(jobId, user);
+    const redirectUrl = `${process.env.APP_BASE_URL?.replace(/\/+$/, '') || ''}/client_view/${jobId}`;
+    const url = await this.aclidService.createVerificationUrl({ screenId, redirectUrl });
+    return { url };
+  }
+
+  /**
+   * Re-read the job's Aclid screen and rewrite what KYC can change on it. The
+   * customer lands back on the job page after verifying, and Aclid's decision
+   * has moved without anything on our side having been told; this is that
+   * "anything".
+   *
+   * A read, not a re-screen: the screen id, the sequences behind it and the
+   * SecureDNA leg are all left exactly as they were. Re-running the screen is
+   * `rerunJobHomologyScreening`, which is staff-only.
+   */
+  @Mutation(() => Job, {
+    description: "Re-read this job's Aclid screen and record its current regulatory, verification and decision status. Does not re-screen. Requires being on the job."
+  })
+  @RequirePermission(Permission.JobsView)
+  async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
+    const { job, screening: existing, screenId } = await this.jobForCustomerVerification(jobId, user);
+    const screen = await this.aclidService.getScreen(screenId);
+
+    const homologyStatus = homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
+    const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
+    const updated = await this.jobService.setAclidScreening(jobId, {
+      ...existing,
+      homologyStatus,
+      regulatoryStatus: screen.regulatoryStatus,
+      verificationStatus: screen.verificationStatus,
+      decisionStatus: screen.decisionStatus,
+      verificationCompletedAt: verificationCompletedAt && !Number.isNaN(verificationCompletedAt.getTime()) ? verificationCompletedAt : null,
+      // Same wording the screening run writes: a verdict clears the line, no
+      // verdict names what Aclid did say.
+      detail: screen.regulatoryStatus ? null : `Aclid screen ${screen.status} without a regulatory status`,
+      customerStatus: customerStatusFromAclid({
+        screenId,
+        decisionStatus: screen.decisionStatus,
+        verificationStatus: screen.verificationStatus,
+        screenHomologyStatus: homologyStatus
+      })
+    });
+    return updated ?? job;
   }
 
   @Mutation(() => Job, {
