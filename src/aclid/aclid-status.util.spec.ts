@@ -1,11 +1,5 @@
 import { HomologyScreeningStatus } from '../job/job.model';
-import {
-  parseHomologyMode,
-  homologyStatusFromAclidRegulatory,
-  customerStatusFromAclid,
-  rollupHomologyStatuses,
-  isAclidLengthEligible
-} from './aclid-status.util';
+import { parseHomologyMode, homologyStatusFromAclidRegulatory, customerStatusFromAclid, rollupHomologyStatuses, isAclidLengthEligible } from './aclid-status.util';
 
 describe('parseHomologyMode', () => {
   it('defaults to aclid when Aclid is configured and the env is unset or unknown', () => {

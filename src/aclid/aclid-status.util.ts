@@ -19,9 +19,7 @@ export function parseHomologyMode(raw: string | undefined, aclidConfigured: bool
   return 'aclid';
 }
 
-export function homologyStatusFromAclidRegulatory(
-  regulatoryStatus: string | null | undefined
-): HomologyScreeningStatus {
+export function homologyStatusFromAclidRegulatory(regulatoryStatus: string | null | undefined): HomologyScreeningStatus {
   if (regulatoryStatus === 'controlled') {
     return HomologyScreeningStatus.FAILED;
   }
