@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { CustomerActionRequired, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
+import { AclidScreening, CustomerActionRequired, HomologyScreening, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
@@ -194,6 +194,50 @@ export class JobService {
     if (!sub) return [];
     await this.jobModel.updateMany({ sub }, { $set: { customerCategory } }).exec();
     return this.jobModel.find({ sub }).exec();
+  }
+
+  async appendScreeningBatchId(jobId: string, screeningBatchId: mongoose.Types.ObjectId): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $push: { screeningBatchIds: screeningBatchId } }, { new: true }).exec();
+  }
+
+  /** Latest homology screening verdict. Replaces whatever the previous run left. */
+  async setHomologyScreening(jobId: string, homologyScreening: HomologyScreening): Promise<Job | null> {
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { homologyScreening } }, { new: true }).exec();
+  }
+
+  /**
+   * Latest Aclid screening and KYC state.
+   *
+   * A write carrying a screen id owns the whole subdocument: it is a new screen,
+   * and the verification that belonged to the old one is legitimately orphaned.
+   *
+   * A write without one — an Aclid error, or a run with nothing eligible to
+   * screen — is merged instead, keeping the screen id and the KYC fields the
+   * customer earned. Staff "Run screening" is a normal rail action, and a
+   * transient Aclid failure during it must not unlearn a completed
+   * verification: the screen still exists, and without its id the customer
+   * cannot reach it again.
+   */
+  async setAclidScreening(jobId: string, aclidScreening: AclidScreening): Promise<Job | null> {
+    const next = aclidScreening.screenId ? aclidScreening : await this.mergeAclidScreening(jobId, aclidScreening);
+    return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { aclidScreening: next } }, { new: true }).exec();
+  }
+
+  private async mergeAclidScreening(jobId: string, incoming: AclidScreening): Promise<AclidScreening> {
+    const existing = (await this.findById(jobId))?.aclidScreening;
+    if (!existing?.screenId) {
+      return incoming;
+    }
+    // Everything else — homology status, detail, counts, timings — describes
+    // the run that just happened and is the incoming record's to say.
+    return {
+      ...incoming,
+      screenId: existing.screenId,
+      verificationStatus: existing.verificationStatus ?? null,
+      decisionStatus: existing.decisionStatus ?? null,
+      verificationCompletedAt: existing.verificationCompletedAt ?? null,
+      customerStatus: existing.customerStatus ?? incoming.customerStatus
+    };
   }
 
   async addAttachments(jobId: string, attachments: JobAttachment[]): Promise<Job | null> {

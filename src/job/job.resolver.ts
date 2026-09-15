@@ -2,8 +2,10 @@ import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundExce
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
-import { Job, JobAttachment, JobState, CustomerCategory } from './job.model';
+import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
+import { AclidScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { matchesClientEmail } from './client-email';
+import { callerMayAccessJob } from './job-access';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { Comment } from '../comment/comment.model';
@@ -24,6 +26,7 @@ import { JobAttachmentsService } from './job-attachments.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
+import { JobScreeningService } from './job-screening.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
 import { jobVersionAuthorOrg } from '../job-version/author-org';
@@ -34,6 +37,8 @@ import { KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
+import { AclidService } from '../aclid/aclid.service';
+import { customerStatusFromAclid, homologyStatusFromAclidRegulatory } from '../aclid/aclid-status.util';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -98,7 +103,9 @@ export class JobResolver {
     private readonly jobVersionService: JobVersionService,
     private readonly jobReviewService: JobReviewService,
     private readonly keycloakService: KeycloakService,
-    private readonly notificationDispatch: NotificationDispatchService
+    private readonly notificationDispatch: NotificationDispatchService,
+    private readonly jobScreeningService: JobScreeningService,
+    private readonly aclidService: AclidService
   ) {}
 
   /**
@@ -300,7 +307,134 @@ export class JobResolver {
       actorDisplayName: user.preferred_username ?? user.email ?? undefined
     });
 
+    // Deliberately not awaited: SecureDNA is a third party, and a slow or down
+    // synthclient must not be able to hang a customer's checkout. The job
+    // carries IN_PROGRESS until the run records a verdict.
+    this.jobScreeningService.screenJobInBackground(String(created._id), user.sub);
+
     return created;
+  }
+
+  /**
+   * Staff-only. Re-run homology screening on an existing job and wait for the
+   * verdict so the Biosecurity card can show it without a second refresh.
+   * Checkout still fires screening in the background; this is the explicit
+   * "Run screening" path.
+   *
+   * The wait is bounded: each provider caps its own call (Aclid at
+   * ACLID_POLL_TIMEOUT_MS for the create and every poll together, SecureDNA at
+   * its own request timeout), and an Aclid screen that outruns its budget is
+   * recorded In Progress rather than waited on. Staff get an answer, or a
+   * bounded "still running", not an open-ended hold on the connection.
+   */
+  @Mutation(() => Job, { description: 'Staff-only. Re-run SecureDNA homology screening on a job and return the recorded verdict.' })
+  @RequirePermission(Permission.JobsViewAll)
+  async rerunJobHomologyScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    await this.jobScreeningService.screenJob(jobId, user.sub);
+    return (await this.jobService.findById(jobId)) ?? job;
+  }
+
+  /**
+   * The job behind a customer KYC act, or the refusal. 404 before Forbidden:
+   * the caller is on their own job page, so "not found" is the honest answer
+   * to a stale id, and "forbidden" the honest answer to someone else's.
+   *
+   * Both KYC mutations are gated on the baseline `jobs:view`, so this is where
+   * scope is enforced — the owner, the client named on a staff-submitted job,
+   * or anyone holding `jobs:view-all`.
+   */
+  private async jobForCustomerVerification(jobId: string, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) {
+      throw new NotFoundException(`Job with ID ${jobId} not found`);
+    }
+    if (!callerMayAccessJob(job, user, hasPermission(user, Permission.JobsViewAll))) {
+      throw new ForbiddenException('You do not have permission to access this job');
+    }
+    const screening = job.aclidScreening;
+    if (!screening?.screenId) {
+      throw new BadRequestException('No Aclid screen on this job');
+    }
+    return { job, screening, screenId: screening.screenId };
+  }
+
+  /**
+   * Mint Aclid's hosted verification page for this job's screen. KYC is Aclid's
+   * flow end to end — we never create Aclid customers ourselves — so all that
+   * is ours is the screen id and where to send the customer afterwards.
+   */
+  @Mutation(() => CustomerVerificationSession, {
+    description: "Mint an Aclid hosted-KYC session for this job's screen. Requires being on the job (owner, named client, or jobs:view-all)."
+  })
+  @RequirePermission(Permission.JobsView)
+  async startJobCustomerVerification(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<CustomerVerificationSession> {
+    const { screenId } = await this.jobForCustomerVerification(jobId, user);
+    const redirectUrl = `${process.env.APP_BASE_URL?.replace(/\/+$/, '') || ''}/client_view/${jobId}`;
+    const url = await this.aclidService.createVerificationUrl({ screenId, redirectUrl });
+    return { url };
+  }
+
+  /**
+   * Re-read the job's Aclid screen and rewrite what KYC can change on it. The
+   * customer lands back on the job page after verifying, and Aclid's decision
+   * has moved without anything on our side having been told; this is that
+   * "anything".
+   *
+   * A read, not a re-screen: the screen id, the sequences behind it and the
+   * SecureDNA leg are all left exactly as they were. Re-running the screen is
+   * `rerunJobHomologyScreening`, which is staff-only.
+   */
+  @Mutation(() => Job, {
+    description: "Re-read this job's Aclid screen and record its current regulatory, verification and decision status. Does not re-screen. Requires being on the job."
+  })
+  @RequirePermission(Permission.JobsView)
+  async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
+    const { job, screening: existing, screenId } = await this.jobForCustomerVerification(jobId, user);
+    const screen = await this.aclidService.getScreen(screenId);
+
+    const homologyStatus = homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
+    const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
+    const updated = await this.jobService.setAclidScreening(jobId, {
+      ...existing,
+      homologyStatus,
+      regulatoryStatus: screen.regulatoryStatus,
+      verificationStatus: screen.verificationStatus,
+      decisionStatus: screen.decisionStatus,
+      verificationCompletedAt: verificationCompletedAt && !Number.isNaN(verificationCompletedAt.getTime()) ? verificationCompletedAt : null,
+      // Same wording the screening run writes: a verdict clears the line, no
+      // verdict names what Aclid did say.
+      detail: screen.regulatoryStatus ? null : `Aclid screen ${screen.status} without a regulatory status`,
+      customerStatus: customerStatusFromAclid({
+        screenId,
+        decisionStatus: screen.decisionStatus,
+        verificationStatus: screen.verificationStatus,
+        screenHomologyStatus: homologyStatus
+      })
+    });
+
+    // The Homology row is a stored rollup, and SecureDNA's leg cannot be read
+    // back out of it. So this is one-directional: a screen that had no verdict
+    // at run time (and got a SecureDNA backup Passed) and now reads
+    // `controlled` fails the row here; a later Aclid grant never lifts it,
+    // because a FAILED row may be SecureDNA's, which this refresh knows nothing
+    // about. Anything other than a new FAILED leaves the row exactly as it was.
+    if (homologyStatus !== HomologyScreeningStatus.FAILED) {
+      return updated ?? job;
+    }
+    const rollup = job.homologyScreening;
+    const failed = await this.jobService.setHomologyScreening(jobId, {
+      status: HomologyScreeningStatus.FAILED,
+      startedAt: rollup?.startedAt ?? existing.startedAt,
+      completedAt: new Date(),
+      batchId: rollup?.batchId ?? null,
+      sequenceCount: rollup?.sequenceCount ?? existing.sequenceCount,
+      detail: `Aclid now reports controlled${rollup?.detail ? ` (was: ${rollup.detail})` : ''}`
+    });
+    return failed ?? updated ?? job;
   }
 
   @Mutation(() => Job, {
@@ -545,6 +679,12 @@ export class JobResolver {
     const historyNote = note?.trim() || (wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState]);
     if (historyNote) {
       await this.jobVersionService.appendStateEvent(updated, newState, this.versionAuthor(user, updated), historyNote);
+    }
+
+    // A resubmission is the one transition that can carry changed sequences, so
+    // it re-screens. Same fire-and-forget rule as the original submission.
+    if (wasResubmission) {
+      this.jobScreeningService.screenJobInBackground(String(updated._id), user.sub);
     }
 
     return updated;

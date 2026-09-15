@@ -45,6 +45,80 @@ export enum CustomerActionRequired {
 }
 registerEnumType(CustomerActionRequired, { name: 'CustomerActionRequired' });
 
+/**
+ * Homology screening verdict for a job, from SecureDNA.
+ *
+ * Four states because the Biosecurity card has four icons, and the distinction
+ * that matters is between a sequence that failed and a screen that never
+ * happened: `FAILED` means SecureDNA denied synthesis, `UNAVAILABLE` means we
+ * could not get an answer (no screenable sequences, SecureDNA unreachable, or a
+ * job submitted before screening existed).
+ */
+export enum HomologyScreeningStatus {
+  IN_PROGRESS = 'IN_PROGRESS',
+  PASSED = 'PASSED',
+  FAILED = 'FAILED',
+  UNAVAILABLE = 'UNAVAILABLE'
+}
+registerEnumType(HomologyScreeningStatus, { name: 'HomologyScreeningStatus' });
+
+@ObjectType({ description: 'SecureDNA homology screening state for the job page Biosecurity card' })
+export class HomologyScreening {
+  @Field(() => HomologyScreeningStatus)
+  status: HomologyScreeningStatus;
+
+  @Field(() => Date, { description: 'When the screening run was dispatched' })
+  startedAt: Date;
+
+  @Field(() => Date, { nullable: true, description: 'When a verdict was recorded; null while in progress' })
+  completedAt?: Date | null;
+
+  @Field(() => ID, { nullable: true, description: 'Stored ScreeningBatch holding the hazard hits and diagnostics' })
+  batchId?: string | null;
+
+  @Field(() => Int, { description: 'How many sequences were sent to SecureDNA' })
+  sequenceCount: number;
+
+  @Field(() => String, { nullable: true, description: 'Why, in one line, for a status that is not PASSED' })
+  detail?: string | null;
+}
+
+@ObjectType({ description: 'Aclid sequence screen and KYC state for the Biosecurity card' })
+export class AclidScreening {
+  @Field(() => String, { nullable: true })
+  screenId?: string | null;
+
+  @Field(() => HomologyScreeningStatus)
+  homologyStatus: HomologyScreeningStatus;
+
+  @Field(() => String, { nullable: true })
+  regulatoryStatus?: string | null;
+
+  @Field(() => String, { nullable: true })
+  verificationStatus?: string | null;
+
+  @Field(() => String, { nullable: true })
+  decisionStatus?: string | null;
+
+  @Field(() => Date, { nullable: true })
+  verificationCompletedAt?: Date | null;
+
+  @Field(() => Int)
+  sequenceCount: number;
+
+  @Field(() => Date)
+  startedAt: Date;
+
+  @Field(() => Date, { nullable: true })
+  completedAt?: Date | null;
+
+  @Field(() => String, { nullable: true })
+  detail?: string | null;
+
+  @Field(() => HomologyScreeningStatus)
+  customerStatus: HomologyScreeningStatus;
+}
+
 @ObjectType({ description: 'File attached to a job for additional context or requirements' })
 export class JobAttachment {
   @Field({ description: 'Original filename of the uploaded document', nullable: true })
@@ -217,6 +291,26 @@ export class Job {
     nullable: 'itemsAndList'
   })
   attachments?: JobAttachment[];
+
+  /**
+   * Latest homology screening run. Written to IN_PROGRESS before SecureDNA is
+   * called, so the card never has to infer "running" from an absent field —
+   * absent means a job that predates screening, which reads UNAVAILABLE.
+   */
+  @Prop({ type: Object, required: false })
+  @Field(() => HomologyScreening, { nullable: true })
+  homologyScreening?: HomologyScreening;
+
+  @Prop({ type: Object, required: false })
+  @Field(() => AclidScreening, { nullable: true })
+  aclidScreening?: AclidScreening;
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ScreeningBatch' }], default: [] })
+  @Field(() => [ID], {
+    nullable: 'itemsAndList',
+    description: 'Every SecureDNA screening batch run for this job, oldest first.'
+  })
+  screeningBatchIds?: string[];
 
   /**
    * Archived jobs are hidden from the default jobs dashboard and from the live

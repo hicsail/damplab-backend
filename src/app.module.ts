@@ -35,6 +35,8 @@ import { StationModule } from './station/station.module';
 import { ProtocolMapModule } from './protocol-map/protocol-map.module';
 import { ClickUpModule } from './clickup/clickup.module';
 import { NotificationModule } from './notification/notification.module';
+import { SecureDnaModule } from './securedna/securedna.module';
+import { AclidModule } from './aclid/aclid.module';
 
 @Module({
   imports: [
@@ -88,7 +90,9 @@ import { NotificationModule } from './notification/notification.module';
     StationModule,
     ProtocolMapModule,
     ClickUpModule,
-    NotificationModule
+    NotificationModule,
+    SecureDnaModule,
+    AclidModule
   ],
   controllers: [AppController],
   providers: [AppService]
