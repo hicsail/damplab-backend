@@ -115,7 +115,9 @@ export class AclidService {
       res = await fetch(url, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body)
+        body: body === undefined ? undefined : JSON.stringify(body),
+        // A single hung socket must not outlive the poll deadline.
+        signal: AbortSignal.timeout(ACLID_POLL_TIMEOUT_MS)
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
