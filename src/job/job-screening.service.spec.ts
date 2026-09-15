@@ -307,6 +307,30 @@ describe('screenJob homology mode', () => {
     expect(aclid.customerStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
   });
 
+  /**
+   * `failed`, `deleted` and `archived` are terminal, so `screenInline` resolves
+   * with such a screen rather than throwing. No regulatory status is no verdict,
+   * which is exactly what the backup exists for.
+   */
+  it('in aclid mode runs SecureDNA when Aclid finishes without a regulatory status', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn(async () => aclidScreen({ status: 'failed', regulatoryStatus: null }));
+    const screenSequences = jest.fn(async () => granted);
+    const { service, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    expect(screenSequences).toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(result.detail).toContain('SecureDNA backup after Aclid error');
+    expect(result.detail).toContain('screen failed without a regulatory status');
+
+    // The screen still exists, so KYC still has something to hang off.
+    const aclid = lastCall(setAclidScreening);
+    expect(aclid.screenId).toBe('scr_1');
+    expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
+  });
+
   it('in both mode Fails homology if Aclid is controlled even when SecureDNA grants', async () => {
     process.env.BIOSECURITY_HOMOLOGY_MODE = 'both';
     const screenInline = jest.fn(async () => aclidScreen({ regulatoryStatus: 'controlled' }));
@@ -358,19 +382,30 @@ describe('screenJob homology mode', () => {
     expect(lastCall(setAclidScreening).sequenceCount).toBe(1);
   });
 
-  it('records the Aclid row Unavailable when every sequence is shorter than 30 bp', async () => {
+  /**
+   * Nothing for Aclid to screen is not a verdict either: the Aclid row says so,
+   * and SecureDNA — which has no 30 bp floor — still screens the job.
+   */
+  it('in aclid mode runs SecureDNA when no sequence is long enough for Aclid', async () => {
     process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
     const screenInline = jest.fn();
+    const screenSequences = jest.fn(async () => granted);
     const { service, setAclidScreening } = harness([{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_SHORT }] }], {
       aclidConfigured: true,
-      screenInline
+      screenInline,
+      screenSequences
     });
 
     const result = await service.screenJob('job-1', 'user-1');
 
     expect(screenInline).not.toHaveBeenCalled();
-    expect(result.status).toBe(HomologyScreeningStatus.UNAVAILABLE);
-    expect(result.detail).toContain('shorter than 30 bp');
-    expect(lastCall(setAclidScreening).homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(firstArg(screenSequences).sequences).toEqual([{ name: `${WORKFLOW_ID}_n1_insert`, seq: DNA_SHORT }]);
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(result.detail).toBe('SecureDNA (no Aclid-eligible sequences)');
+    expect(result.detail).not.toContain('after Aclid error');
+
+    const aclid = lastCall(setAclidScreening);
+    expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(aclid.detail).toContain('shorter than 30 bp');
   });
 });

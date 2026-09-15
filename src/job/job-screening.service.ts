@@ -21,10 +21,11 @@ import { screeningSliceName } from './job-screening-name.util';
  *
  * Two providers, selected by `BIOSECURITY_HOMOLOGY_MODE` (see
  * `parseHomologyMode`): Aclid, which also gives us the screen the customer's KYC
- * hangs off, and SecureDNA. `aclid` uses SecureDNA only as a backup when Aclid
- * errors; `both` runs them independently and rolls the two verdicts into one
- * Homology row; `securedna` keeps the Homology row SecureDNA's alone but still
- * creates an Aclid screen when Aclid is keyed, because KYC needs one.
+ * hangs off, and SecureDNA. `aclid` uses SecureDNA only as a backup, for an
+ * Aclid that produced no verdict; `both` runs them independently and rolls the
+ * two verdicts into one Homology row; `securedna` keeps the Homology row
+ * SecureDNA's alone but still creates an Aclid screen when Aclid is keyed,
+ * because KYC needs one.
  *
  * Screening runs on submission and is never awaited by the caller — a slow or
  * unreachable provider must not be able to hold up a customer's checkout. That
@@ -144,9 +145,11 @@ export class JobScreeningService {
         )
       : null;
 
-    // In `aclid` mode SecureDNA is the backup, and only for an Aclid that
-    // errored; a real `controlled` verdict is an answer, not a reason to ask again.
-    const secureDna = mode === 'aclid' && !aclid?.error ? null : await this.runSecureDna(jobId, userSub, targets, startedAt);
+    // In `aclid` mode SecureDNA backs Aclid up whenever Aclid produced no
+    // verdict: it errored, it finished without a regulatory status, or it had
+    // nothing long enough to screen. A real `controlled` / `not_controlled`
+    // verdict is an answer, not a reason to ask a second provider.
+    const secureDna = mode === 'aclid' && aclid?.outcome === 'verdict' ? null : await this.runSecureDna(jobId, userSub, targets, startedAt);
 
     // `securedna` mode keeps the Homology row SecureDNA's alone even though an
     // Aclid screen exists for KYC.
@@ -158,7 +161,7 @@ export class JobScreeningService {
 
     const details: string[] = [];
     if (aclidLeg) {
-      details.push(mode === 'aclid' && aclidLeg.error && secureDna ? `SecureDNA backup after Aclid error: ${aclidLeg.error}` : aclidLeg.detail);
+      details.push(secureDna && mode === 'aclid' ? backupLine(aclidLeg) : aclidLeg.detail);
     }
     if (secureDna?.detail) details.push(secureDna.detail);
 
@@ -174,8 +177,8 @@ export class JobScreeningService {
 
   /**
    * Screen with Aclid and record `job.aclidScreening`. Returns what the Homology
-   * row needs from this leg; `error` is set only when we never got a verdict, and
-   * a leg that errored is never Passed or Failed.
+   * row needs from this leg. Only `outcome: 'verdict'` means Aclid answered; the
+   * other outcomes are never Passed or Failed.
    */
   private async runAclid(jobId: string, aclidTargets: ScreeningTarget[], startedAt: Date): Promise<AclidLeg> {
     if (aclidTargets.length === 0) {
@@ -188,7 +191,13 @@ export class JobScreeningService {
         completedAt: new Date(),
         detail
       });
-      return { homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail: `Aclid skipped: ${detail.toLowerCase()}`, error: null, sequenceCount: 0 };
+      return {
+        outcome: 'no-eligible-sequences',
+        homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+        detail: `Aclid skipped: ${detail.toLowerCase()}`,
+        error: null,
+        sequenceCount: 0
+      };
     }
 
     let screen: AclidScreenRecord;
@@ -208,7 +217,13 @@ export class JobScreeningService {
         completedAt: new Date(),
         detail: `Aclid unavailable: ${reason}`
       });
-      return { homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail: `Aclid unavailable: ${reason}`, error: reason, sequenceCount: aclidTargets.length };
+      return {
+        outcome: 'error',
+        homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+        detail: `Aclid unavailable: ${reason}`,
+        error: reason,
+        sequenceCount: aclidTargets.length
+      };
     }
 
     const homologyStatus = homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
@@ -225,7 +240,17 @@ export class JobScreeningService {
       completedAt: new Date(),
       detail: screen.regulatoryStatus ? null : `Aclid ${verdict}`
     });
-    return { homologyStatus, detail: `Aclid ${verdict}`, error: null, sequenceCount: aclidTargets.length };
+
+    // A terminal screen can come back with no `regulatory_status` at all —
+    // `failed`, `deleted` and `archived` all resolve rather than throw. That is
+    // no verdict, so it wants a backup just as much as an error does.
+    return {
+      outcome: screen.regulatoryStatus ? 'verdict' : 'error',
+      homologyStatus,
+      detail: `Aclid ${verdict}`,
+      error: screen.regulatoryStatus ? null : verdict,
+      sequenceCount: aclidTargets.length
+    };
   }
 
   /**
@@ -320,12 +345,19 @@ export class JobScreeningService {
   }
 }
 
-/** What the Homology row takes from the Aclid leg. `error` set ⇒ no verdict. */
+/** What the Homology row takes from the Aclid leg. Only `verdict` is an answer. */
 interface AclidLeg {
+  outcome: 'verdict' | 'error' | 'no-eligible-sequences';
   homologyStatus: HomologyScreeningStatus;
   detail: string;
+  /** Why there is no verdict, when the reason is a failure rather than a skip. */
   error: string | null;
   sequenceCount: number;
+}
+
+/** Homology-row wording for a SecureDNA run that stood in for Aclid. */
+function backupLine(aclid: AclidLeg): string {
+  return aclid.outcome === 'error' ? `SecureDNA backup after Aclid error: ${aclid.error}` : 'SecureDNA (no Aclid-eligible sequences)';
 }
 
 function parseTimestamp(raw: string | null): Date | null {
