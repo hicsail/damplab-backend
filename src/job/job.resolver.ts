@@ -320,6 +320,12 @@ export class JobResolver {
    * verdict so the Biosecurity card can show it without a second refresh.
    * Checkout still fires screening in the background; this is the explicit
    * "Run screening" path.
+   *
+   * The wait is bounded: each provider caps its own call (Aclid at
+   * ACLID_POLL_TIMEOUT_MS for the create and every poll together, SecureDNA at
+   * its own request timeout), and an Aclid screen that outruns its budget is
+   * recorded In Progress rather than waited on. Staff get an answer, or a
+   * bounded "still running", not an open-ended hold on the connection.
    */
   @Mutation(() => Job, { description: 'Staff-only. Re-run SecureDNA homology screening on a job and return the recorded verdict.' })
   @RequirePermission(Permission.JobsViewAll)

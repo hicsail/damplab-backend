@@ -8,7 +8,7 @@ import { DampLabServices } from '../services/damplab-services.services';
 import { SecureDnaService } from '../securedna/securedna.service';
 import { Region } from '../securedna/region';
 import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
-import { AclidScreenRecord, AclidService } from '../aclid/aclid.service';
+import { AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
 import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidRegulatory, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { SCREENED_FIELDS_BY_SERVICE } from './job-screening.constants';
@@ -209,25 +209,47 @@ export class JobScreeningService {
     } catch (error) {
       const reason = messageOf(error);
       this.logger.error(`Aclid screening failed for job ${jobId}: ${reason}`);
+
+      // A screen we created but stopped watching is still a screen. Record its
+      // id and call the record In Progress, so KYC can start and a later
+      // refresh can finish the verdict; throwing the id away strands both.
+      const pending = error instanceof AclidScreenPendingError ? error.screen : null;
+      const detail = pending ? 'Aclid screen still running' : `Aclid unavailable: ${reason}`;
       await this.recordAclid(jobId, {
-        screenId: null,
-        homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+        screenId: pending?.id ?? null,
+        homologyStatus: pending ? HomologyScreeningStatus.IN_PROGRESS : HomologyScreeningStatus.UNAVAILABLE,
+        regulatoryStatus: pending?.regulatoryStatus ?? null,
+        verificationStatus: pending?.verificationStatus ?? null,
+        decisionStatus: pending?.decisionStatus ?? null,
+        verificationCompletedAt: parseTimestamp(pending?.verificationCompletedAt ?? null),
         sequenceCount: aclidTargets.length,
         startedAt,
-        completedAt: new Date(),
-        detail: `Aclid unavailable: ${reason}`
+        completedAt: pending ? null : new Date(),
+        detail
       });
       return {
+        // The Homology row takes UNAVAILABLE either way: a screen that has not
+        // answered yet contributes no verdict, and a row left In Progress by
+        // this leg would have nothing to complete it.
         outcome: 'error',
         homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
-        detail: `Aclid unavailable: ${reason}`,
+        detail,
         error: reason,
         sequenceCount: aclidTargets.length
       };
     }
 
     const homologyStatus = homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
-    const verdict = screen.regulatoryStatus ?? `screen ${screen.status} without a regulatory status`;
+
+    // Only a regulatory status we can map is a verdict. A terminal screen can
+    // come back with no `regulatory_status` at all — `failed`, `deleted` and
+    // `archived` all resolve rather than throw — and it can come back with one
+    // we do not recognise, say a future Aclid enum. Neither is an answer, and
+    // both want the backup just as much as an error does.
+    const answered = homologyStatus !== HomologyScreeningStatus.UNAVAILABLE;
+    const reason = screen.regulatoryStatus ? `screen ${screen.status} reported ${screen.regulatoryStatus}` : `screen ${screen.status} without a regulatory status`;
+    const verdictLine = answered ? `Aclid ${screen.regulatoryStatus}` : `Aclid ${reason}`;
+
     await this.recordAclid(jobId, {
       screenId: screen.id,
       homologyStatus,
@@ -238,17 +260,14 @@ export class JobScreeningService {
       sequenceCount: aclidTargets.length,
       startedAt,
       completedAt: new Date(),
-      detail: screen.regulatoryStatus ? null : `Aclid ${verdict}`
+      detail: answered ? null : verdictLine
     });
 
-    // A terminal screen can come back with no `regulatory_status` at all —
-    // `failed`, `deleted` and `archived` all resolve rather than throw. That is
-    // no verdict, so it wants a backup just as much as an error does.
     return {
-      outcome: screen.regulatoryStatus ? 'verdict' : 'error',
+      outcome: answered ? 'verdict' : 'error',
       homologyStatus,
-      detail: `Aclid ${verdict}`,
-      error: screen.regulatoryStatus ? null : verdict,
+      detail: verdictLine,
+      error: answered ? null : reason,
       sequenceCount: aclidTargets.length
     };
   }

@@ -1,4 +1,5 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
+import { AclidScreenPendingError } from '../aclid/aclid.service';
 import { JobScreeningService } from './job-screening.service';
 import { HomologyScreeningStatus, Job } from './job.model';
 import { GIBSON_ASSEMBLY_SERVICE_NAME, M_CLONING_SERVICE_NAME } from './job-screening.constants';
@@ -329,6 +330,58 @@ describe('screenJob homology mode', () => {
     const aclid = lastCall(setAclidScreening);
     expect(aclid.screenId).toBe('scr_1');
     expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
+  });
+
+  /**
+   * A regulatory status we cannot map is no more an answer than a missing one.
+   * Without this, a new Aclid enum would quietly disable the backup fleet-wide.
+   */
+  it('in aclid mode runs SecureDNA when Aclid reports a regulatory status we do not recognise', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn(async () => aclidScreen({ regulatoryStatus: 'pending_review' }));
+    const screenSequences = jest.fn(async () => granted);
+    const { service, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    expect(screenSequences).toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(result.detail).toContain('SecureDNA backup after Aclid error');
+    expect(result.detail).toContain('screen succeeded reported pending_review');
+
+    const aclid = lastCall(setAclidScreening);
+    expect(aclid.screenId).toBe('scr_1');
+    expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(aclid.detail).toContain('pending_review');
+  });
+
+  /**
+   * "Took longer than two minutes" is an expected outcome from an asynchronous
+   * provider, not an exceptional one. The screen exists, so the record keeps its
+   * id and says In Progress — KYC can start, and a refresh can finish it.
+   */
+  it('in aclid mode records the screen id and In Progress when the poll budget runs out', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn(async () => {
+      throw new AclidScreenPendingError(aclidScreen({ status: 'running', regulatoryStatus: null }) as any, 'did not finish within 120000 ms');
+    });
+    const screenSequences = jest.fn(async () => granted);
+    const { service, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    const aclid = lastCall(setAclidScreening);
+    expect(aclid.screenId).toBe('scr_1');
+    expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.IN_PROGRESS);
+    expect(aclid.completedAt).toBeNull();
+    expect(aclid.detail).toBe('Aclid screen still running');
+    // The screen id is what KYC hangs off, so the customer can verify now.
+    expect(aclid.customerStatus).toBe(HomologyScreeningStatus.IN_PROGRESS);
+
+    // No verdict yet, so the backup still runs and the Homology row settles.
+    expect(screenSequences).toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(result.detail).toContain('SecureDNA backup after Aclid error');
   });
 
   it('in both mode Fails homology if Aclid is controlled even when SecureDNA grants', async () => {

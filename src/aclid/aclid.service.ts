@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
-import { ACLID_POLL_INTERVAL_MS, ACLID_POLL_TIMEOUT_MS } from './aclid.constants';
+import { ACLID_POLL_INTERVAL_MS, ACLID_POLL_TIMEOUT_MS, ACLID_REQUEST_TIMEOUT_MS } from './aclid.constants';
 
 /**
  * Talks to Aclid (https://api.aclid.bio) over HTTP.
@@ -77,6 +77,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * A screen Aclid created that we stopped watching before it finished — the poll
+ * budget ran out, or a poll request failed.
+ *
+ * Distinct from every other failure because the screen is real: it exists at
+ * Aclid, it will reach a verdict, and the customer's KYC hangs off its id. The
+ * caller must persist that id rather than record a null one, or the screen
+ * becomes unreachable from our side.
+ */
+export class AclidScreenPendingError extends HttpException {
+  constructor(readonly screen: AclidScreenRecord, reason: string) {
+    super(`Aclid screen ${screen.id} ${reason}`, HttpStatus.SERVICE_UNAVAILABLE);
+  }
+}
+
+/** Time left on a deadline, clamped so a request always gets a live signal. */
+function remainingMs(deadline: number): number {
+  return Math.max(1, Math.min(ACLID_REQUEST_TIMEOUT_MS, deadline - Date.now()));
+}
+
 @Injectable()
 export class AclidService {
   private readonly logger = new Logger(AclidService.name);
@@ -103,7 +123,7 @@ export class AclidService {
    * One request to Aclid. Transport failures are SERVICE_UNAVAILABLE; anything
    * Aclid answered with that we cannot use (non-2xx, non-JSON) is BAD_GATEWAY.
    */
-  private async request(method: 'GET' | 'POST', path: string, body?: JsonObject): Promise<unknown> {
+  private async request(method: 'GET' | 'POST', path: string, body?: JsonObject, timeoutMs: number = ACLID_REQUEST_TIMEOUT_MS): Promise<unknown> {
     const url = `${this.baseUrl()}${path}`;
     const headers: Record<string, string> = { Authorization: this.apiKey() };
     if (body !== undefined) {
@@ -116,8 +136,9 @@ export class AclidService {
         method,
         headers,
         body: body === undefined ? undefined : JSON.stringify(body),
-        // A single hung socket must not outlive the poll deadline.
-        signal: AbortSignal.timeout(ACLID_POLL_TIMEOUT_MS)
+        // A single hung socket must not outlive the poll deadline: callers
+        // polling a screen pass what is left of it.
+        signal: AbortSignal.timeout(Math.max(1, timeoutMs))
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -140,8 +161,8 @@ export class AclidService {
   }
 
   /** `GET /v2/screens/{id}` — the current state of one screen. */
-  async getScreen(screenId: string): Promise<AclidScreenRecord> {
-    const raw = await this.request('GET', `/v2/screens/${encodeURIComponent(screenId)}`);
+  async getScreen(screenId: string, timeoutMs?: number): Promise<AclidScreenRecord> {
+    const raw = await this.request('GET', `/v2/screens/${encodeURIComponent(screenId)}`, undefined, timeoutMs);
     return mapAclidScreen(raw);
   }
 
@@ -150,17 +171,30 @@ export class AclidService {
    * `GET /v2/screens/{id}` until the status is terminal or
    * ACLID_POLL_TIMEOUT_MS passes. The first poll is immediate; the interval
    * only applies between polls.
+   *
+   * The deadline covers the create POST too, because a staff rerun awaits this
+   * call: the bound has to be the whole operation's, not each half's.
+   *
+   * A screen that outlives the deadline raises `AclidScreenPendingError`, which
+   * carries the id — see that class for why losing it is worse than losing the
+   * verdict.
    */
   async screenInline(args: AclidScreenInlineArgs): Promise<AclidScreenRecord> {
     if (args.sequences.length === 0) {
       throw new HttpException('No sequences to screen', HttpStatus.BAD_REQUEST);
     }
 
-    const created = await this.request('POST', '/v2/screen_inline', {
-      name: args.name,
-      asynchronous: true,
-      sequences: args.sequences.map((s) => ({ name: s.name, sequence: s.sequence }))
-    });
+    const deadline = Date.now() + ACLID_POLL_TIMEOUT_MS;
+    const created = await this.request(
+      'POST',
+      '/v2/screen_inline',
+      {
+        name: args.name,
+        asynchronous: true,
+        sequences: args.sequences.map((s) => ({ name: s.name, sequence: s.sequence }))
+      },
+      remainingMs(deadline)
+    );
 
     const firstItem = isJsonObject(created) && Array.isArray(created.items) ? created.items[0] : created;
     const initial = mapAclidScreen(firstItem);
@@ -168,18 +202,22 @@ export class AclidService {
       return initial;
     }
 
-    const deadline = Date.now() + ACLID_POLL_TIMEOUT_MS;
+    let latest = initial;
     for (;;) {
-      const current = await this.getScreen(initial.id);
-      if (ACLID_TERMINAL_STATUSES.has(current.status)) {
-        return current;
+      try {
+        latest = await this.getScreen(initial.id, remainingMs(deadline));
+      } catch (error) {
+        throw new AclidScreenPendingError(latest, `could not be read back: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (ACLID_TERMINAL_STATUSES.has(latest.status)) {
+        return latest;
       }
       if (Date.now() + ACLID_POLL_INTERVAL_MS > deadline) {
         break;
       }
       await sleep(ACLID_POLL_INTERVAL_MS);
     }
-    throw new HttpException(`Aclid screen ${initial.id} did not finish within ${ACLID_POLL_TIMEOUT_MS} ms`, HttpStatus.SERVICE_UNAVAILABLE);
+    throw new AclidScreenPendingError(latest, `did not finish within ${ACLID_POLL_TIMEOUT_MS} ms`);
   }
 
   /**
