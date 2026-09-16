@@ -1,9 +1,9 @@
 import { UseGuards } from '@nestjs/common';
-import { Args, Int, Query, Resolver } from '@nestjs/graphql';
+import { Args, ID, Int, Query, Resolver } from '@nestjs/graphql';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { RequirePermission } from '../auth/permissions/permissions.decorator';
 import { Permission } from '../auth/permissions/permission.enum';
-import { ActivityEvent, ActivityEventEntity } from './activity-event.model';
+import { ActivityEvent, ActivityEventEntity, ActivityEventType } from './activity-event.model';
 import { ActivityService } from './activity.service';
 
 @Resolver(() => ActivityEvent)
@@ -18,5 +18,16 @@ export class ActivityResolver {
     @Args('since', { type: () => Date, nullable: true }) since?: Date | null
   ): Promise<ActivityEventEntity[]> {
     return this.activityService.listEvents({ limit, since });
+  }
+
+  @Query(() => [ActivityEvent], { description: 'Chronological activity timeline for a single job. Powers the per-job history drawer.' })
+  @RequirePermission(Permission.JobsView)
+  async jobActivityTimeline(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @Args('limit', { type: () => Int, nullable: true }) limit?: number | null,
+    @Args('before', { type: () => Date, nullable: true }) before?: Date | null,
+    @Args('types', { type: () => [ActivityEventType], nullable: true }) types?: ActivityEventType[] | null
+  ): Promise<ActivityEventEntity[]> {
+    return this.activityService.listEventsForJob({ jobId, limit, before, types });
   }
 }

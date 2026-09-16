@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { Field, ObjectType, ID, Int, Float, registerEnumType } from '@nestjs/graphql';
 import { SOWStatus, SOWAdjustmentType, SOWAdjustmentCategory } from './sow.model';
 import { PricingDetail } from '../pricing/pricing.model';
+import { ActivityEventType } from '../activity/activity-event.model';
 
 /**
  * A SOW version is an immutable snapshot of the document. Save, send, sign,
@@ -375,8 +376,8 @@ export class SowVersion {
   note?: string;
 
   /** Durable lifecycle activity intent; delivery metadata may change without changing the document snapshot. */
-  @Prop({ type: String, required: false, enum: ['SOW_SENT', 'SOW_SIGNED', 'SOW_FINALIZED'] })
-  activityEventType?: 'SOW_SENT' | 'SOW_SIGNED' | 'SOW_FINALIZED';
+  @Prop({ type: String, required: false, enum: [ActivityEventType.SOW_SENT, ActivityEventType.SOW_SIGNED, ActivityEventType.SOW_FINALIZED] })
+  activityEventType?: ActivityEventType.SOW_SENT | ActivityEventType.SOW_SIGNED | ActivityEventType.SOW_FINALIZED;
 
   @Prop({ type: String, required: false })
   activityOperationId?: string;

@@ -9,6 +9,7 @@ import { JobVersionService } from '../job-version/job-version.service';
 import { SOWStatus } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
 import { ActivityService } from '../activity/activity.service';
+import { ActivityEventType } from '../activity/activity-event.model';
 import { CancelJobInput, JobReviewDecision, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { customerMayEdit } from './job-editing';
 import { CustomerActionRequired, Job, JobDocument, JobState } from './job.model';
@@ -479,7 +480,7 @@ export class JobReviewService {
     if (operation.activityWrittenAt) return;
     const decision = operation.decision === JobReviewDecision.ACCEPT ? 'Accepted' : this.reviewMapping(operation.decision as Exclude<JobReviewDecision, JobReviewDecision.ACCEPT>).heading;
     await this.activityService.createEventIdempotent({
-      type: 'JOB_REVIEWED',
+      type: ActivityEventType.JOB_REVIEWED,
       operationId: `JOB_REVIEWED:${operation.operationId}`,
       message: `Job review decision: ${decision}`,
       actorDisplayName: operation.actorName,
@@ -517,7 +518,7 @@ export class JobReviewService {
   private async writeResponseActivity(operation: JobReviewOperation): Promise<void> {
     if (operation.activityWrittenAt) return;
     await this.activityService.createEventIdempotent({
-      type: 'JOB_REVIEW_RESPONSE',
+      type: ActivityEventType.JOB_REVIEW_RESPONSE,
       operationId: `JOB_REVIEW_RESPONSE:${operation.operationId}`,
       message: `Customer completed requested action: ${operation.responseAction}`,
       actorDisplayName: operation.actorName,
@@ -815,7 +816,7 @@ export class JobReviewService {
 
   private async writeWithdrawalActivity(operation: JobReviewOperation, fromCustomer: boolean): Promise<void> {
     if (operation.activityWrittenAt) return;
-    const type = fromCustomer ? 'JOB_WITHDRAWN_FROM_CUSTOMER' : 'JOB_ACCEPTANCE_WITHDRAWN';
+    const type = fromCustomer ? ActivityEventType.JOB_WITHDRAWN_FROM_CUSTOMER : ActivityEventType.JOB_ACCEPTANCE_WITHDRAWN;
     await this.activityService.createEventIdempotent({
       type,
       operationId: `${type}:${operation.operationId}`,
@@ -956,7 +957,7 @@ export class JobReviewService {
     await this.updateOperationProgress(operation, { commentWrittenAt: new Date() });
   }
 
-  private async writeCustomerActivity(operation: JobReviewOperation, type: string, message: string): Promise<void> {
+  private async writeCustomerActivity(operation: JobReviewOperation, type: ActivityEventType, message: string): Promise<void> {
     if (operation.activityWrittenAt) return;
     await this.activityService.createEventIdempotent({
       type,
@@ -1023,7 +1024,7 @@ export class JobReviewService {
 
     this.assertOperationResumable(operation);
     if (operation.status === JobReviewOperationStatus.COMPLETE) {
-      await this.writeCustomerActivity(operation, 'JOB_REJECTED', 'Customer rejected the proposed workflow');
+      await this.writeCustomerActivity(operation, ActivityEventType.JOB_REJECTED, 'Customer rejected the proposed workflow');
       return this.completedJob(operation);
     }
 
@@ -1043,7 +1044,7 @@ export class JobReviewService {
     await this.writeRestore(operation, { role: JobVersionAuthorRole.CUSTOMER }, 'Rejected the lab’s changes');
     await this.writeCustomerHistory(operation, job, JobState.SUBMITTED, 'Rejected by the customer');
     await this.writeCustomerComment(operation, 'Customer rejected the proposed workflow');
-    await this.writeCustomerActivity(operation, 'JOB_REJECTED', 'Customer rejected the proposed workflow');
+    await this.writeCustomerActivity(operation, ActivityEventType.JOB_REJECTED, 'Customer rejected the proposed workflow');
 
     const completed = await this.casOperationStatus(operation, JobReviewOperationStatus.FINALIZING, JobReviewOperationStatus.COMPLETE, { completedAt: new Date() });
     if (!completed && (operation.status as JobReviewOperationStatus) !== JobReviewOperationStatus.COMPLETE) {
@@ -1108,7 +1109,7 @@ export class JobReviewService {
 
     this.assertOperationResumable(operation);
     if (operation.status === JobReviewOperationStatus.COMPLETE) {
-      await this.writeCustomerActivity(operation, 'JOB_CANCELLED', 'Customer cancelled the job');
+      await this.writeCustomerActivity(operation, ActivityEventType.JOB_CANCELLED, 'Customer cancelled the job');
       return this.completedJob(operation);
     }
 
@@ -1125,7 +1126,7 @@ export class JobReviewService {
     await this.sowService.cancelForCancelledJob(operation.jobId, operation.normalizedMessage, { sub: operation.actorSub, name: operation.actorName });
     await this.writeCustomerHistory(operation, job, JobState.CANCELLED, 'Cancelled by the customer');
     await this.writeCustomerComment(operation, 'Customer cancelled this job');
-    await this.writeCustomerActivity(operation, 'JOB_CANCELLED', 'Customer cancelled the job');
+    await this.writeCustomerActivity(operation, ActivityEventType.JOB_CANCELLED, 'Customer cancelled the job');
 
     const completed = await this.casOperationStatus(operation, JobReviewOperationStatus.FINALIZING, JobReviewOperationStatus.COMPLETE, { completedAt: new Date() });
     if (!completed && (operation.status as JobReviewOperationStatus) !== JobReviewOperationStatus.COMPLETE) {
@@ -1162,7 +1163,7 @@ export class JobReviewService {
 
     this.assertOperationResumable(operation);
     if (operation.status === JobReviewOperationStatus.COMPLETE) {
-      await this.writeCustomerActivity(operation, 'JOB_EDIT_ACCESS_REQUESTED', 'Customer requested edit access');
+      await this.writeCustomerActivity(operation, ActivityEventType.JOB_EDIT_ACCESS_REQUESTED, 'Customer requested edit access');
       return this.completedJob(operation);
     }
 
@@ -1180,7 +1181,7 @@ export class JobReviewService {
     }
 
     await this.writeCustomerComment(operation, 'Customer requested access to edit this job');
-    await this.writeCustomerActivity(operation, 'JOB_EDIT_ACCESS_REQUESTED', 'Customer requested edit access');
+    await this.writeCustomerActivity(operation, ActivityEventType.JOB_EDIT_ACCESS_REQUESTED, 'Customer requested edit access');
 
     const completed = await this.casOperationStatus(operation, JobReviewOperationStatus.FINALIZING, JobReviewOperationStatus.COMPLETE, { completedAt: new Date() });
     if (!completed && (operation.status as JobReviewOperationStatus) !== JobReviewOperationStatus.COMPLETE) {

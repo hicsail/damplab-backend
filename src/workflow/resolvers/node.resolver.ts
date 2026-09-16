@@ -20,6 +20,7 @@ import { User } from '../../auth/user.interface';
 import { WorkflowParameterFileUpload, WorkflowParameterFileUploadRequest } from '../dtos/workflow-parameter-file.dto';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { ActivityService } from '../../activity/activity.service';
+import { ActivityEventType } from '../../activity/activity-event.model';
 import { WorkflowNodeJob } from '../dtos/workflow-node-job.dto';
 import { AvailabilityService, InventoryConflict } from '../../availability/availability.service';
 import { NodeArchiveFilter } from '../dtos/node-archive-filter.dto';
@@ -47,6 +48,12 @@ export class WorkflowNodeResolver {
     private readonly availability: AvailabilityService
   ) {}
 
+  /** Resolve jobId from a node via node → workflow → job. Returns undefined if the chain is broken. */
+  private async resolveJobId(nodeId: string): Promise<string | undefined> {
+    const job = await this.nodeService.getJobForNode(nodeId);
+    return job ? String((job as any)._id) : undefined;
+  }
+
   @Mutation(() => WorkflowNode)
   @UseGuards(AuthRolesGuard)
   @RequirePermission(Permission.LabMonitorView)
@@ -55,11 +62,13 @@ export class WorkflowNodeResolver {
     @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState
   ): Promise<WorkflowNode> {
     const updated = (await this.nodeService.updateState(workflowNode, newState))!;
-    const serviceName = (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) || (updated as any)?.service?.name || 'Service';
+    const serviceName = this.nodeDisplayName(updated);
+    const jobId = await this.resolveJobId(String(updated._id));
     await this.activityService.createEvent({
-      type: 'LAB_NODE_STATE_CHANGED',
+      type: ActivityEventType.LAB_NODE_STATE_CHANGED,
       message: `Moved "${serviceName}" to ${newState}`,
       actorDisplayName: undefined,
+      jobId,
       workflowNodeId: String(updated._id),
       serviceName
     });
@@ -75,11 +84,13 @@ export class WorkflowNodeResolver {
     @Args('assigneeDisplayName', { type: () => String, nullable: true }) assigneeDisplayName: string | null
   ): Promise<WorkflowNode> {
     const updated = (await this.nodeService.updateAssignee(workflowNode, assigneeId, assigneeDisplayName))!;
-    const serviceName = (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) || (updated as any)?.service?.name || 'Service';
+    const serviceName = this.nodeDisplayName(updated);
+    const jobId = await this.resolveJobId(String(updated._id));
     await this.activityService.createEvent({
-      type: 'LAB_NODE_ASSIGNED',
+      type: ActivityEventType.LAB_NODE_ASSIGNED,
       message: assigneeDisplayName ? `Assigned "${serviceName}" to ${assigneeDisplayName}` : `Unassigned "${serviceName}"`,
       actorDisplayName: undefined,
+      jobId,
       workflowNodeId: String(updated._id),
       serviceName
     });
@@ -96,11 +107,13 @@ export class WorkflowNodeResolver {
     @Args('reservationEnd', { nullable: true }) reservationEnd?: Date
   ): Promise<WorkflowNode> {
     const updated = (await this.nodeService.setUsedInventory(workflowNode, inventoryIds, reservationStart ?? null, reservationEnd ?? null))!;
-    const serviceName = (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) || (updated as any)?.service?.name || 'Service';
+    const serviceName = this.nodeDisplayName(updated);
+    const jobId = await this.resolveJobId(String(updated._id));
     await this.activityService.createEvent({
-      type: 'LAB_NODE_INVENTORY_SET',
+      type: ActivityEventType.LAB_NODE_INVENTORY_SET,
       message: inventoryIds.length > 0 ? `Set inventory on "${serviceName}" (${inventoryIds.length} item${inventoryIds.length === 1 ? '' : 's'})` : `Cleared inventory on "${serviceName}"`,
       actorDisplayName: undefined,
+      jobId,
       workflowNodeId: String(updated._id),
       serviceName
     });
@@ -137,11 +150,13 @@ export class WorkflowNodeResolver {
     @Args('estimatedMinutes', { type: () => Float, nullable: true }) estimatedMinutes: number | null
   ): Promise<WorkflowNode> {
     const updated = (await this.nodeService.updateEstimatedMinutes(workflowNode, estimatedMinutes))!;
-    const serviceName = (typeof (updated as any)?.label === 'string' && String((updated as any).label).trim()) || (updated as any)?.service?.name || 'Service';
+    const serviceName = this.nodeDisplayName(updated);
+    const jobId = await this.resolveJobId(String(updated._id));
     await this.activityService.createEvent({
-      type: 'LAB_NODE_ESTIMATE_UPDATED',
+      type: ActivityEventType.LAB_NODE_ESTIMATE_UPDATED,
       message: estimatedMinutes != null ? `Updated estimate for "${serviceName}" to ${estimatedMinutes} min` : `Cleared estimate for "${serviceName}"`,
       actorDisplayName: undefined,
+      jobId,
       workflowNodeId: String(updated._id),
       serviceName
     });
@@ -183,10 +198,12 @@ export class WorkflowNodeResolver {
       throw new NotFoundException(`Workflow node with ID ${workflowNodeId} not found`);
     }
     const serviceName = this.nodeDisplayName(updated);
+    const jobId = await this.resolveJobId(String(updated._id));
     await this.activityService.createEvent({
-      type: 'LAB_NODE_ARCHIVED',
+      type: ActivityEventType.LAB_NODE_ARCHIVED,
       message: `Archived "${serviceName}" (state at archive: ${updated.archivedFromState ?? updated.state})`,
       actorDisplayName: actor,
+      jobId,
       workflowNodeId: String(updated._id),
       serviceName
     });
@@ -203,10 +220,12 @@ export class WorkflowNodeResolver {
       throw new NotFoundException(`Workflow node with ID ${workflowNodeId} not found`);
     }
     const serviceName = this.nodeDisplayName(updated);
+    const jobId = await this.resolveJobId(String(updated._id));
     await this.activityService.createEvent({
-      type: 'LAB_NODE_UNARCHIVED',
+      type: ActivityEventType.LAB_NODE_UNARCHIVED,
       message: `Restored "${serviceName}" to the board`,
       actorDisplayName: actor,
+      jobId,
       workflowNodeId: String(updated._id),
       serviceName
     });
