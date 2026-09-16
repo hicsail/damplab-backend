@@ -7,6 +7,7 @@ import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 import { ActivityService } from '../activity/activity.service';
+import { ActivityEventType } from '../activity/activity-event.model';
 import { JobAttachmentsService } from '../job/job-attachments.service';
 import { isStaff } from '../sow/sow-access';
 
@@ -71,10 +72,11 @@ export class CommentResolver {
       authorType
     });
     await this.activityService.createEvent({
-      type: 'COMMENT_CREATED',
+      type: ActivityEventType.COMMENT_CREATED,
       message: `${input.authorType === 'STAFF' ? 'Technician' : 'Client'} added a comment`,
       actorDisplayName: author,
-      jobId: input.jobId
+      jobId: input.jobId,
+      commentId: String((created as any)._id)
     });
     return created;
   }
@@ -84,10 +86,11 @@ export class CommentResolver {
   async updateComment(@Args('id', { type: () => ID }) id: string, @Args('input', { type: () => UpdateCommentInput }) input: UpdateCommentInput): Promise<Comment> {
     const updated = await this.commentService.update(id, input);
     await this.activityService.createEvent({
-      type: 'COMMENT_UPDATED',
+      type: ActivityEventType.COMMENT_UPDATED,
       message: `${updated.authorType === 'STAFF' ? 'Technician' : 'Client'} updated a comment`,
       actorDisplayName: updated.author,
-      jobId: updated.jobId
+      jobId: updated.jobId,
+      commentId: id
     });
     return updated;
   }
@@ -99,10 +102,11 @@ export class CommentResolver {
     const ok = await this.commentService.delete(id);
     if (ok && existing) {
       await this.activityService.createEvent({
-        type: 'COMMENT_DELETED',
+        type: ActivityEventType.COMMENT_DELETED,
         message: `${existing.authorType === 'STAFF' ? 'Technician' : 'Client'} deleted a comment`,
         actorDisplayName: existing.author,
-        jobId: existing.jobId
+        jobId: existing.jobId,
+        commentId: id
       });
     }
     return ok;

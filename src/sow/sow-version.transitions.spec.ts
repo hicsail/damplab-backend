@@ -4,6 +4,7 @@ import { SowVersionService } from './sow-version.service';
 import { SowFieldKind } from './sow-version.model';
 import { SOWStatus, DocumentBlocker, SOWAdjustmentType } from './sow.model';
 import { JobState } from '../job/job.model';
+import { ActivityEventType } from '../activity/activity-event.model';
 import { User } from '../auth/user.interface';
 import { JobVersionAuthorRole } from '../job-version/job-version.model';
 
@@ -30,7 +31,7 @@ interface FakeVersion {
   staffSignature?: any;
   sentToCustomerAt?: Date;
   sourceJobVersionNumber?: number;
-  activityEventType?: 'SOW_SENT' | 'SOW_SIGNED' | 'SOW_FINALIZED';
+  activityEventType?: ActivityEventType.SOW_SENT | ActivityEventType.SOW_SIGNED | ActivityEventType.SOW_FINALIZED;
   activityOperationId?: string;
   activityDeliveredAt?: Date;
   note?: string;
@@ -451,7 +452,7 @@ describe('sendToCustomer', () => {
 
     expect(sent).toMatchObject({
       status: SOWStatus.SENT,
-      activityEventType: 'SOW_SENT',
+      activityEventType: ActivityEventType.SOW_SENT,
       activityOperationId: `SOW_SENT:${SOW_ID}:${sent.versionNumber}`
     });
     expect((sent as any).activityDeliveredAt).toBeUndefined();

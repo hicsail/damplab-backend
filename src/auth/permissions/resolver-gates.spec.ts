@@ -217,6 +217,7 @@ const GATES: Row[] = [
 
   // Administrator-only surfaces, re-pointed off the role so there is one vocabulary.
   [ActivityResolver, 'activityEvents', Permission.LabStatusTvView],
+  [ActivityResolver, 'jobActivityTimeline', Permission.JobsView],
   [ApiKeyResolver, 'createApiKey', Permission.ApiKeysManage],
   [AgentController, 'labStatusChat', Permission.LabAssistantUse],
 

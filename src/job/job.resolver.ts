@@ -26,6 +26,7 @@ import { JobAttachmentsService } from './job-attachments.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
+import { ActivityEventType } from '../activity/activity-event.model';
 import { JobScreeningService } from './job-screening.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
@@ -292,10 +293,11 @@ export class JobResolver {
     });
 
     await this.activityService.createEvent({
-      type: 'JOB_SUBMITTED',
+      type: ActivityEventType.JOB_SUBMITTED,
       message: `Job "${created.name}" was submitted`,
       actorDisplayName: user.preferred_username ?? user.email ?? undefined,
-      jobId: String(created._id)
+      jobId: String(created._id),
+      jobVersionNumber: 1
     });
 
     this.notificationDispatch.dispatch({
@@ -449,7 +451,7 @@ export class JobResolver {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
     await this.activityService.createEvent({
-      type: 'JOB_ARCHIVED',
+      type: ActivityEventType.JOB_ARCHIVED,
       jobId,
       actorDisplayName: actor,
       message: `Job "${updated.name}" archived (state at archive: ${JobState[updated.archivedFromState ?? updated.state]})`
@@ -468,7 +470,7 @@ export class JobResolver {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
     await this.activityService.createEvent({
-      type: 'JOB_UNARCHIVED',
+      type: ActivityEventType.JOB_UNARCHIVED,
       jobId,
       actorDisplayName: actor,
       message: `Job "${updated.name}" restored from archive`
@@ -501,7 +503,7 @@ export class JobResolver {
     await this.sowService.syncServicesFromJobWorkflows(jobId);
 
     await this.activityService.createEvent({
-      type: 'JOB_UPDATED',
+      type: ActivityEventType.JOB_UPDATED,
       message: `Added workflow "${workflow?.name ?? 'Workflow'}" to job "${job.name}"`,
       actorDisplayName: user.preferred_username ?? user.email ?? undefined,
       jobId: String(job._id)
@@ -670,7 +672,8 @@ export class JobResolver {
       }
     }
 
-    const wasResubmission = job.state === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
+    const previousState = job.state;
+    const wasResubmission = previousState === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
     const updated = (await this.jobService.updateState(job, newState, null))!;
 
     // Recorded after the state actually moved, so a failed transition leaves no
@@ -679,6 +682,16 @@ export class JobResolver {
     const historyNote = note?.trim() || (wasResubmission ? 'Resubmitted' : JobResolver.STATE_EVENT_NOTES[newState]);
     if (historyNote) {
       await this.jobVersionService.appendStateEvent(updated, newState, this.versionAuthor(user, updated), historyNote);
+    }
+
+    // Activity event for state transitions not covered by createJob or reviewJob.
+    if (newState === JobState.CLOSED || wasResubmission) {
+      await this.activityService.createEvent({
+        type: wasResubmission ? ActivityEventType.JOB_SUBMITTED : ActivityEventType.JOB_CLOSED,
+        message: wasResubmission ? `Job "${updated.name}" resubmitted` : `Job "${updated.name}" closed`,
+        actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+        jobId: String(updated._id)
+      });
     }
 
     // A resubmission is the one transition that can carry changed sequences, so
@@ -820,7 +833,7 @@ export class JobResolver {
     await this.sowService.syncServicesFromJobWorkflows(input.jobId);
 
     await this.activityService.createEvent({
-      type: 'JOB_WORKFLOWS_EDITED',
+      type: ActivityEventType.JOB_WORKFLOWS_EDITED,
       message: `Workflows edited on job "${job.name}"${input.note ? `: ${input.note}` : ''}`,
       actorDisplayName: user.preferred_username ?? user.email ?? undefined,
       jobId: input.jobId
