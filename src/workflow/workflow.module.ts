@@ -18,6 +18,7 @@ import { KeycloakModule } from '../keycloak/keycloak.module';
 import { WorkflowParameterFilesService } from './services/workflow-parameter-files.service';
 import { ActivityModule } from '../activity/activity.module';
 import { AvailabilityModule } from '../availability/availability.module';
+import { SampleSheetResolver } from './resolvers/sample-sheet.resolver';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { AvailabilityModule } from '../availability/availability.module';
     WorkflowEdgeResolver,
     WorkflowPipe,
     WorkflowNodeResolver,
+    SampleSheetResolver,
     AddWorkflowInputPipe,
     AddNodeInputPipe,
     WorkflowParameterFilesService
