@@ -19,10 +19,12 @@ import { WorkflowParameterFilesService } from './services/workflow-parameter-fil
 import { ActivityModule } from '../activity/activity.module';
 import { AvailabilityModule } from '../availability/availability.module';
 import { SampleSheetResolver } from './resolvers/sample-sheet.resolver';
+import { SOWModule } from '../sow/sow.module';
 
 @Module({
   imports: [
     forwardRef(() => JobModule),
+    forwardRef(() => SOWModule),
     KeycloakModule,
     MongooseModule.forFeature([
       { name: Workflow.name, schema: WorkflowSchema },

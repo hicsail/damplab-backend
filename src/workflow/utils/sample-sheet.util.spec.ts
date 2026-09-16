@@ -1,7 +1,23 @@
 import { JobState } from '../../job/job.model';
-import { findSampleSheetParam, keyBelongsToUploader, sampleSheetReplaceBlockedReason, templateKeyOf } from './sample-sheet.util';
+import { findSampleSheetParam, keyBelongsToUploader, sampleCountFromValue, sampleSheetReplaceBlockedReason, templateKeyOf } from './sample-sheet.util';
 
 describe('sample-sheet.util', () => {
+  describe('sampleCountFromValue', () => {
+    it('reads the count off the stored JSON string and off a parsed object', () => {
+      expect(sampleCountFromValue(JSON.stringify({ filename: 'a.xlsx', key: 'k', sampleCount: 12 }))).toBe(12);
+      expect(sampleCountFromValue({ filename: 'a.xlsx', key: 'k', sampleCount: 0, url: 'u' })).toBe(0);
+    });
+
+    it('is undefined for no file, junk, or a count that is not a non-negative number', () => {
+      expect(sampleCountFromValue(null)).toBeUndefined();
+      expect(sampleCountFromValue('')).toBeUndefined();
+      expect(sampleCountFromValue('nope')).toBeUndefined();
+      expect(sampleCountFromValue({ filename: 'a.xlsx' })).toBeUndefined();
+      expect(sampleCountFromValue({ filename: 'a.xlsx', sampleCount: '5' })).toBeUndefined();
+      expect(sampleCountFromValue({ filename: 'a.xlsx', sampleCount: -1 })).toBeUndefined();
+    });
+  });
+
   describe('findSampleSheetParam', () => {
     const parameters = [
       { id: 'notes', type: 'string' },

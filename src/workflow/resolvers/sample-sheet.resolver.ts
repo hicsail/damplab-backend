@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, NotFoundException, UseGuards } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, NotFoundException, UseGuards, forwardRef } from '@nestjs/common';
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
 import mongoose from 'mongoose';
 import { AuthRolesGuard } from '../../auth/auth.guard';
@@ -14,6 +14,8 @@ import { WorkflowNode } from '../models/node.model';
 import { WorkflowNodeService } from '../services/node.service';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { getMultiValueParamIds } from '../utils/form-data.util';
+import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
+import { SOWService } from '../../sow/sow.service';
 import { ReplaceSampleSheetInput, SampleSheetTemplateUpload, SampleSheetTemplateUploadRequest } from '../dtos/sample-sheet.dto';
 import { findSampleSheetParam, keyBelongsToUploader, SAMPLE_SHEET_TEMPLATE_KEY_PREFIX, sampleSheetReplaceBlockedReason, templateKeyOf } from '../utils/sample-sheet.util';
 
@@ -31,7 +33,12 @@ import { findSampleSheetParam, keyBelongsToUploader, SAMPLE_SHEET_TEMPLATE_KEY_P
 @Resolver()
 @UseGuards(AuthRolesGuard)
 export class SampleSheetResolver {
-  constructor(private readonly files: WorkflowParameterFilesService, private readonly dampLabServices: DampLabServices, private readonly nodeService: WorkflowNodeService) {}
+  constructor(
+    private readonly files: WorkflowParameterFilesService,
+    private readonly dampLabServices: DampLabServices,
+    private readonly nodeService: WorkflowNodeService,
+    @Inject(forwardRef(() => SOWService)) private readonly sowService: SOWService
+  ) {}
 
   @Mutation(() => SampleSheetTemplateUpload, {
     description: 'Presign an upload for a blank samples-spreadsheet template. Store the returned key on the parameter as templateFile.key when saving the service.'
@@ -106,6 +113,17 @@ export class SampleSheetResolver {
       sampleCount: input.file.sampleCount,
       uploadedAt: new Date().toISOString()
     });
-    return this.nodeService.setFormDataValue(node, input.parameterId, value, getMultiValueParamIds(service?.parameters));
+    // Reprice from the job's category, never the caller's: a technician fixing a
+    // customer's list must not restamp the line at staff rates. The stored node
+    // price is only a fallback — the SOW reprices from the catalog — but it is
+    // what the job page quotes, so it has to move with the count.
+    const category = job.customerCategory as CustomerCategory | undefined;
+    const updated = await this.nodeService.setFormDataValue(node, input.parameterId, value, getMultiValueParamIds(service?.parameters), (formData) =>
+      service ? calculateServiceCost(service, formData, node.price, category) : node.price ?? 0
+    );
+    // No-op without a SOW; with one, the line is recomputed and the document
+    // flagged stale so staff decide whether to reissue it for signature.
+    await this.sowService.syncServicesFromJobWorkflows(String(job._id));
+    return updated;
   }
 }

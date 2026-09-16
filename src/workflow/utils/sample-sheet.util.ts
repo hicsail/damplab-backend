@@ -6,10 +6,11 @@ import { Job, JobState } from '../../job/job.model';
  * fills it in and attaches it to the operation, and the number of rows below
  * the header is shown as the sample count.
  *
- * The count is informational. It is read in the browser when the file is
- * picked (`damplab-ui/src/utils/sampleSheet.ts`) and stored alongside the file's
- * key; nothing here prices on it. Should it ever bill, the count moves
- * server-side — do not start trusting the stored number for money.
+ * The count is read in the browser when the file is picked
+ * (`damplab-ui/src/utils/sampleSheet.ts`) and stored alongside the file's key.
+ * On an operation priced "by parameter" it is the quantity the parameter's
+ * price is multiplied by — see `sampleCountFromValue` below for what that
+ * means for trust.
  *
  * The stored value is a JSON string in the node's formData, the same shape as a
  * `file` parameter plus `sampleCount`, so everything that already reads file
@@ -33,6 +34,29 @@ export interface SampleSheetParam {
   type: typeof SAMPLE_SHEET_PARAM_TYPE;
   name?: string;
   templateFile?: SampleSheetTemplateFile | null;
+}
+
+/**
+ * The row count stored with a sampleSheet value — a JSON string on the node,
+ * or the parsed object the resolver returns. Undefined when there is no file
+ * or no count. When the operation is priced by parameter this is the quantity
+ * the parameter's price is multiplied by (service-pricing.util.ts), so it is
+ * a billing input: the customer's browser wrote it, and staff can see the file
+ * and the number on the job page and replace the sheet to recount.
+ */
+export function sampleCountFromValue(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  let parsed: any = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const count = parsed.sampleCount;
+  return typeof count === 'number' && Number.isFinite(count) && count >= 0 ? count : undefined;
 }
 
 export const isSampleSheetParam = (param: unknown): param is SampleSheetParam =>
