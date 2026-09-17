@@ -48,6 +48,9 @@ interface BackfillEvent {
   invoiceId?: string;
   invoiceNumber?: string;
   commentId?: string;
+  workflowId?: string;
+  workflowNodeId?: string;
+  serviceName?: string;
 }
 
 interface MigrationReport {
@@ -57,6 +60,7 @@ interface MigrationReport {
   fromSowVersions: number;
   fromComments: number;
   fromInvoices: number;
+  fromWorkflowNodes: number;
   eventsCreated: number;
   eventsSkippedDuplicate: number;
   failed: string[];
@@ -112,6 +116,8 @@ export async function migrateActivityEvents(db: mongoose.Connection['db'], optio
   const sowVersions = db.collection('sow_versions');
   const comments = db.collection('comments');
   const invoices = db.collection('invoices');
+  const workflows = db.collection('workflows');
+  const workflowNodes = db.collection('workflownodes');
   const activityEvents = db.collection('activity_events');
 
   const report: MigrationReport = {
@@ -121,6 +127,7 @@ export async function migrateActivityEvents(db: mongoose.Connection['db'], optio
     fromSowVersions: 0,
     fromComments: 0,
     fromInvoices: 0,
+    fromWorkflowNodes: 0,
     eventsCreated: 0,
     eventsSkippedDuplicate: 0,
     failed: [],
@@ -297,6 +304,7 @@ export async function migrateActivityEvents(db: mongoose.Connection['db'], optio
           actorDisplayName: c.author ?? undefined,
           jobId,
           commentId: String(c._id),
+          workflowNodeId: c.nodeId ?? undefined,
           operationId: `BACKFILL:COMMENT:${c._id}`
         });
         report.fromComments++;
@@ -331,6 +339,89 @@ export async function migrateActivityEvents(db: mongoose.Connection['db'], optio
             operationId: `BACKFILL:INVOICE_VOIDED:${invId}`
           });
           report.fromInvoices++;
+        }
+      }
+
+      // ── 6. Workflow nodes ──
+      const jobWorkflowIds = (job.workflows ?? []).map((id: any) => new mongoose.Types.ObjectId(String(id)));
+      if (jobWorkflowIds.length > 0) {
+        const jobWorkflows = await workflows.find({ _id: { $in: jobWorkflowIds } }).toArray();
+        const fallbackDate = new Date(job.updatedAt ?? job.submitted ?? Date.now());
+
+        for (const wf of jobWorkflows) {
+          const wfId = String(wf._id);
+          const nodeIds = (wf.nodes ?? []).map((id: any) => new mongoose.Types.ObjectId(String(id)));
+          if (nodeIds.length === 0) continue;
+
+          const nodes = await workflowNodes.find({ _id: { $in: nodeIds } }).toArray();
+
+          for (const node of nodes) {
+            const nodeId = String(node._id);
+            const label = (typeof node.label === 'string' && node.label.trim()) || 'Service';
+            const common = { jobId, workflowId: wfId, workflowNodeId: nodeId, serviceName: label };
+
+            // Assignment
+            if (node.assigneeId) {
+              const displayName = node.assigneeDisplayName || node.assigneeId;
+              events.push({
+                ...common,
+                createdAt: node.startedAt ? new Date(node.startedAt) : fallbackDate,
+                type: 'LAB_NODE_ASSIGNED',
+                message: `Assigned "${label}" to ${displayName}`,
+                operationId: `BACKFILL:NODE_ASSIGNED:${nodeId}`
+              });
+              report.fromWorkflowNodes++;
+            }
+
+            // State → IN_PROGRESS
+            if (node.startedAt) {
+              events.push({
+                ...common,
+                createdAt: new Date(node.startedAt),
+                type: 'LAB_NODE_STATE_CHANGED',
+                message: `Moved "${label}" to IN_PROGRESS`,
+                operationId: `BACKFILL:NODE_IN_PROGRESS:${nodeId}`
+              });
+              report.fromWorkflowNodes++;
+            }
+
+            // State → COMPLETE (enum value 2)
+            if (node.state === 2) {
+              events.push({
+                ...common,
+                createdAt: fallbackDate,
+                type: 'LAB_NODE_STATE_CHANGED',
+                message: `Moved "${label}" to COMPLETE`,
+                operationId: `BACKFILL:NODE_COMPLETE:${nodeId}`
+              });
+              report.fromWorkflowNodes++;
+            }
+
+            // Archived
+            if (node.isArchived && node.archivedAt) {
+              events.push({
+                ...common,
+                createdAt: new Date(node.archivedAt),
+                type: 'LAB_NODE_ARCHIVED',
+                message: `Archived "${label}"`,
+                actorDisplayName: node.archivedBy ?? undefined,
+                operationId: `BACKFILL:NODE_ARCHIVED:${nodeId}`
+              });
+              report.fromWorkflowNodes++;
+            }
+
+            // Estimate
+            if (node.estimatedMinutes != null) {
+              events.push({
+                ...common,
+                createdAt: node.startedAt ? new Date(node.startedAt) : fallbackDate,
+                type: 'LAB_NODE_ESTIMATE_UPDATED',
+                message: `Updated estimate for "${label}" to ${node.estimatedMinutes} min`,
+                operationId: `BACKFILL:NODE_ESTIMATE:${nodeId}`
+              });
+              report.fromWorkflowNodes++;
+            }
+          }
         }
       }
 
