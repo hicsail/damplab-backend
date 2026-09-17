@@ -12,6 +12,7 @@ import { JobResolver } from '../../job/job.resolver';
 import { SecureDnaResolver } from '../../securedna/securedna.resolver';
 import { WorkflowResolver } from '../../workflow/workflow.resolver';
 import { WorkflowNodeResolver } from '../../workflow/resolvers/node.resolver';
+import { SampleSheetResolver } from '../../workflow/resolvers/sample-sheet.resolver';
 import { InventoryResolver } from '../../inventory/inventory.resolver';
 import { BookingResolver } from '../../booking/booking.resolver';
 import { DampLabServicesResolver } from '../../services/damplab-services.resolver';
@@ -181,6 +182,15 @@ const GATES: Row[] = [
   [CategoryResolver, 'createCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'updateCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'deleteCategory', Permission.CatalogEditorWrite],
+
+  // Samples spreadsheets. The blank template is catalog data — staff attach it,
+  // and anyone who can see the catalog may download it, because the canvas is
+  // where a customer picks it up. Replacing a filled-in sheet is open at the
+  // baseline and scoped *inside* the resolver to the job's own actors (owner,
+  // named client, jobs:view-all), the way the KYC mutations are.
+  [SampleSheetResolver, 'sampleSheetTemplateUploadUrl', Permission.CatalogEditorWrite],
+  [SampleSheetResolver, 'sampleSheetTemplateUrl', Permission.CatalogView],
+  [SampleSheetResolver, 'replaceSampleSheet', Permission.JobsView],
 
   // Learning Hub. `training:read` is baseline; whether *drafts* come back is
   // decided from the caller's training:write inside the resolver, not from an

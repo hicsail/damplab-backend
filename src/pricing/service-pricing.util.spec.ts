@@ -501,3 +501,46 @@ describe('sumLineCosts', () => {
     expect(sumLineCosts(null)).toBe(0);
   });
 });
+
+describe('samples spreadsheet pricing', () => {
+  const service = {
+    pricingMode: ServicePricingMode.PARAMETER,
+    parameters: [
+      { id: 'samples', name: 'Samples', type: 'sampleSheet', price: 3, pricing: { internal: 2 } },
+      { id: 'notes', name: 'Notes', type: 'string' }
+    ]
+  } as any;
+  const sheet = (sampleCount: number): string => JSON.stringify({ filename: 'samples.xlsx', key: 'workflow-parameters/u/x', sampleCount });
+
+  it('bills the parameter price once per sample row, at the customer’s category', () => {
+    const breakdown = calculateServiceCostBreakdown(service, [{ id: 'samples', value: sheet(12) }], undefined, CustomerCategory.INTERNAL_CUSTOMERS);
+    expect(breakdown.cost).toBe(24);
+    expect(breakdown.details).toEqual([{ label: 'Samples', quantity: 12, unitPrice: 2, total: 24 }]);
+    expect(calculateServiceCost(service, [{ id: 'samples', value: sheet(12) }])).toBe(36);
+  });
+
+  it('bills nothing for a sheet with no rows, no sheet, or no count', () => {
+    expect(calculateServiceCost(service, [{ id: 'samples', value: sheet(0) }])).toBe(0);
+    expect(
+      calculateServiceCost(service, [
+        { id: 'samples', value: null },
+        { id: 'notes', value: 'x' }
+      ])
+    ).toBe(0);
+    expect(calculateServiceCost(service, [{ id: 'samples', value: JSON.stringify({ filename: 'a.xlsx' }) }])).toBe(0);
+  });
+
+  it('does not multiply a service-priced operation by the count', () => {
+    const flat = { ...service, pricingMode: ServicePricingMode.SERVICE, price: 100 } as any;
+    expect(calculateServiceCost(flat, [{ id: 'samples', value: sheet(12) }])).toBe(100);
+  });
+
+  it('stacks with the run count', () => {
+    expect(
+      calculateServiceCost(service, [
+        { id: 'samples', value: sheet(4) },
+        { id: RUN_COUNT_PARAM_ID, value: 2 }
+      ])
+    ).toBe(24);
+  });
+});

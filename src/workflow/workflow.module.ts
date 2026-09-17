@@ -18,10 +18,13 @@ import { KeycloakModule } from '../keycloak/keycloak.module';
 import { WorkflowParameterFilesService } from './services/workflow-parameter-files.service';
 import { ActivityModule } from '../activity/activity.module';
 import { AvailabilityModule } from '../availability/availability.module';
+import { SampleSheetResolver } from './resolvers/sample-sheet.resolver';
+import { SOWModule } from '../sow/sow.module';
 
 @Module({
   imports: [
     forwardRef(() => JobModule),
+    forwardRef(() => SOWModule),
     KeycloakModule,
     MongooseModule.forFeature([
       { name: Workflow.name, schema: WorkflowSchema },
@@ -40,6 +43,7 @@ import { AvailabilityModule } from '../availability/availability.module';
     WorkflowEdgeResolver,
     WorkflowPipe,
     WorkflowNodeResolver,
+    SampleSheetResolver,
     AddWorkflowInputPipe,
     AddNodeInputPipe,
     WorkflowParameterFilesService

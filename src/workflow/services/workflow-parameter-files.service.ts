@@ -10,6 +10,13 @@ export interface WorkflowParameterPresignedUploadRequest {
   filename: string;
   contentType: string;
   size: number;
+  /**
+   * Where in the bucket the object lands. Defaults to the per-user
+   * `workflow-parameters/{sub}/` prefix that submission uploads use; the
+   * samples-spreadsheet template upload passes its own so a catalog template
+   * never sits under a customer's upload prefix.
+   */
+  keyPrefix?: string;
 }
 
 export interface WorkflowParameterPresignedUploadResponse {
@@ -51,7 +58,8 @@ export class WorkflowParameterFilesService {
         throw new InternalServerErrorException('Workflow parameter file storage is not configured on the server.');
       }
       const safeFilename = request.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const key = `workflow-parameters/${request.userSub}/${uuidv4()}-${safeFilename}`;
+      const prefix = request.keyPrefix ?? `workflow-parameters/${request.userSub}/`;
+      const key = `${prefix}${uuidv4()}-${safeFilename}`;
       const command = new PutObjectCommand({
         Bucket: this.bucket,
         Key: key,

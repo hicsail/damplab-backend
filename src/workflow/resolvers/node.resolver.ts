@@ -24,6 +24,7 @@ import { ActivityEventType } from '../../activity/activity-event.model';
 import { WorkflowNodeJob } from '../dtos/workflow-node-job.dto';
 import { AvailabilityService, InventoryConflict } from '../../availability/availability.service';
 import { NodeArchiveFilter } from '../dtos/node-archive-filter.dto';
+import { SAMPLE_SHEET_PARAM_TYPE } from '../utils/sample-sheet.util';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
@@ -338,24 +339,30 @@ export class WorkflowNodeResolver {
     const service = node.service instanceof mongoose.Types.ObjectId ? await this.damplabServices.findOne(node.service.toString()) : (node.service as DampLabService);
     const multiValueParamIds = service?.parameters ? getMultiValueParamIds(service.parameters) : new Set<string>();
     const normalized = normalizeFormDataToArray(node.formData, multiValueParamIds);
-    const fileParamIds = new Set<string>(Array.isArray(service?.parameters) ? service.parameters.filter((p: any) => p && typeof p.id === 'string' && p.type === 'file').map((p: any) => p.id) : []);
+    // `file` and `sampleSheet` values are stored the same way — a JSON string of
+    // { key, filename, contentType, size, ... } — and both get a short-lived
+    // download URL here. The value may also arrive as an already-parsed object:
+    // the job editor round-trips what this resolver returned, so a stale `url`
+    // from an earlier read is replaced rather than handed back.
+    const fileParamIds = new Set<string>(
+      Array.isArray(service?.parameters) ? service.parameters.filter((p: any) => p && typeof p.id === 'string' && (p.type === 'file' || p.type === SAMPLE_SHEET_PARAM_TYPE)).map((p: any) => p.id) : []
+    );
 
     const enrichFileMeta = async (raw: unknown): Promise<string | number | boolean | Record<string, unknown> | null> => {
       if (raw === null || raw === undefined) return null;
       if (typeof raw !== 'string' && (typeof raw !== 'object' || Array.isArray(raw))) {
         return null;
       }
-      if (typeof raw !== 'string') {
-        return raw as Record<string, unknown>;
+      let parsed: any = raw;
+      if (typeof raw === 'string') {
+        try {
+          parsed = globalThis.JSON.parse(raw);
+        } catch {
+          return raw;
+        }
       }
-      let parsed: any;
-      try {
-        parsed = globalThis.JSON.parse(raw);
-      } catch {
-        return raw;
-      }
-      if (!parsed || typeof parsed !== 'object' || typeof parsed.key !== 'string' || parsed.key.length === 0) {
-        return raw;
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || typeof parsed.key !== 'string' || parsed.key.length === 0) {
+        return typeof raw === 'string' ? raw : (raw as Record<string, unknown>);
       }
       const url = await this.workflowParameterFilesService.createPresignedDownload(parsed.key, parsed.contentType);
       return { ...parsed, url: url ?? undefined };

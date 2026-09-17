@@ -1,6 +1,7 @@
 import { DampLabService, ServicePricingMode } from '../services/models/damplab-service.model';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
 import { CustomerCategory } from './customer-category';
+import { SAMPLE_SHEET_PARAM_TYPE, sampleCountFromValue } from '../workflow/utils/sample-sheet.util';
 
 interface ServiceParameterOption {
   id?: unknown;
@@ -453,6 +454,8 @@ export function calculateServiceCost(service: DampLabService, rawFormData: unkno
  *    $220. Unflagging the parameter was no better — it billed a flat $140
  *    however many hours were entered, because "quantity" below counts selected
  *    values rather than reading the number;
+ *  - **samples spreadsheets** — billed `price x sample count`, the count being the
+ *    rows below the header stored with the uploaded file;
  *  - **everything else priced** — `price x (number of values selected)`.
  */
 function calculateParameterCostWithCategory(parameters: unknown, rawFormData: unknown, customerCategory?: CustomerCategory): { total: number; details: ServicePricingDetail[] } {
@@ -507,6 +510,15 @@ function calculateParameterCostWithCategory(parameters: unknown, rawFormData: un
 
     const unitPrice = resolveCategoryPrice(param, customerCategory);
     if (unitPrice === undefined) return;
+
+    // A samples spreadsheet bills per row. Only here, in parameter pricing: a
+    // service-priced operation with a sheet on it is not multiplied by the count.
+    if (param.type === SAMPLE_SHEET_PARAM_TYPE) {
+      const count = sampleCountFromValue(rawValue);
+      if (count === undefined || count === 0) return;
+      record(paramLabel, count, unitPrice);
+      return;
+    }
 
     // A priced multiplier reads its number rather than counting it: "8" hours at
     // $40 is $320, not one selection at $40.

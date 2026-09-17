@@ -7,6 +7,7 @@ import { AddNodeInputFull } from '../dtos/add-node.input';
 import { Workflow, WorkflowDocument } from '../models/workflow.model';
 import { WorkflowEdge, WorkflowEdgeDocument } from '../models/edge.model';
 import { readyOperationIds } from '../utils/operation-readiness';
+import { FormDataEntry, normalizeFormDataToArray } from '../utils/form-data.util';
 import { JobService } from '../../job/job.service';
 import { archiveQuery, NodeArchiveFilter } from '../dtos/node-archive-filter.dto';
 import { Job } from '../../job/job.model';
@@ -203,6 +204,30 @@ export class WorkflowNodeService {
   }
 
   /** Persist the protocols.io step ids a technician has checked off for an operation. */
+  /**
+   * Overwrite one parameter's value on a node, leaving every other entry as it
+   * was. `multiValueParamIds` must come from the node's service: normalising
+   * without it would collapse a multi-value parameter to its first value.
+   */
+  async setFormDataValue(
+    node: WorkflowNode,
+    parameterId: string,
+    value: string,
+    multiValueParamIds: Set<string>,
+    /** The node's new fallback price, given the formData as it will be stored. */
+    priceFor?: (formData: FormDataEntry[]) => number
+  ): Promise<WorkflowNode> {
+    const entries = normalizeFormDataToArray(node.formData, multiValueParamIds);
+    const index = entries.findIndex((entry) => entry.id === parameterId);
+    if (index === -1) entries.push({ id: parameterId, value });
+    else entries[index] = { ...entries[index], value };
+    const $set: Record<string, unknown> = { formData: entries };
+    if (priceFor) $set.price = priceFor(entries);
+    const updated = await this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set }, { new: true });
+    if (!updated) throw new NotFoundException(`WorkflowNode with ID ${node._id} not found`);
+    return updated;
+  }
+
   async setCompletedSteps(node: WorkflowNode, completedSteps: string[]): Promise<WorkflowNode | null> {
     const unique = Array.from(new Set((completedSteps ?? []).map((s) => String(s))));
     return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { completedSteps: unique } }, { new: true }).exec();
