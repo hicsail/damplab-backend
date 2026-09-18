@@ -279,6 +279,8 @@ describe('Phase 2b widening — the gate on each operation', () => {
     }
     expect(permissionOn(JobChargeResolver, 'jobCharges')).toBeUndefined();
     expect(rolesOn(JobChargeResolver, 'jobCharges')).toBeUndefined();
+    expect(permissionOn(InvoiceResolver, 'invoicesByJobId')).toBeUndefined();
+    expect(rolesOn(InvoiceResolver, 'invoicesByJobId')).toBeUndefined();
   });
 
   it('leaves no @Roles behind on any of them', () => {
