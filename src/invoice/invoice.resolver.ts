@@ -1,5 +1,5 @@
 import { Resolver, Query, Mutation, Args, ID, Int, ResolveField, Parent } from '@nestjs/graphql';
-import { UseGuards, ForbiddenException } from '@nestjs/common';
+import { UseGuards } from '@nestjs/common';
 import { Invoice } from './invoice.model';
 import { InvoiceKind, InvoiceStatus, invoiceKindOf, invoiceStatusFromDocument, invoiceVersionOf, paidStatus } from './invoice-kind';
 import { InvoiceService } from './invoice.service';
@@ -9,9 +9,9 @@ import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 import { Job } from '../job/job.model';
 import { JobService } from '../job/job.service';
-import { Role } from '../auth/roles/roles.enum';
 import { RequirePermission } from '../auth/permissions/permissions.decorator';
 import { Permission } from '../auth/permissions/permission.enum';
+import { assertMayReadJobFinancials } from '../job/job-read-access';
 import { JobPaymentService } from '../job-payment/job-payment.service';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityEventType } from '../activity/activity-event.model';
@@ -31,12 +31,11 @@ export class InvoiceResolver {
     const job = await this.jobService.findById(jobId);
     if (!job) return [];
 
-    const roles = user.realm_access?.roles ?? [];
-    const isStaff = roles.includes(Role.DamplabStaff);
-    const isOwner = (job as any).sub === user.sub;
-    if (!isStaff && !isOwner) {
-      throw new ForbiddenException('You do not have permission to view invoices for this job');
-    }
+    // The same rule as jobBalance / jobPayments / jobCharges: staff, the
+    // submitter, or the client named on a staff-submitted job. This used to
+    // accept only damplab-staff or the submitter's sub, so a client whose job
+    // staff had submitted for them could see their balance but not the invoice.
+    assertMayReadJobFinancials(job as any, user);
 
     return this.invoiceService.findByJobId(jobId);
   }
