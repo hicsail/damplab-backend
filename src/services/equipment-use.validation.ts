@@ -30,3 +30,15 @@ export function equipmentUseRuleViolation(
 
   return hasBookable ? undefined : EQUIPMENT_USE_NEEDS_BOOKABLE_MESSAGE;
 }
+
+/**
+ * The second rule: an equipment-use operation is priced as an hourly rate times
+ * the booked window, so its price has to be the operation's own — "Based on
+ * selected options" would price the line at $0 (see `effectivePricingMode`).
+ */
+export const EQUIPMENT_USE_PRICING_MODE_MESSAGE = 'An equipment-use operation is priced by its hourly rate, so "How price is calculated" must be "Service price", not "Based on selected options".';
+
+export function equipmentUsePricingModeViolation(equipmentUse: boolean | undefined, pricingMode: unknown): string | undefined {
+  if (equipmentUse !== true) return undefined;
+  return String(pricingMode ?? '').toUpperCase() === 'PARAMETER' ? EQUIPMENT_USE_PRICING_MODE_MESSAGE : undefined;
+}

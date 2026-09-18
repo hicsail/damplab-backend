@@ -11,9 +11,17 @@ export enum Permission {
   JobsView = 'jobs:view',
   /** The staff jobs dashboard: see everyone's jobs. */
   JobsViewAll = 'jobs:view-all',
-  /** Submit a job on a client's behalf (Q7: Administrator and Equipment User only). */
+  /** Submit a job on a client's behalf. Administrator only since 2026-09-18 (Q7 gave it to Equipment Users; withdrawn). */
   JobSubmitForClient = 'job:submit-for-client',
+  /**
+   * Put an equipment-use operation on a job. Equipment users, technicians and
+   * administrators hold it; a plain client does not, so the canvas palette hides
+   * those operations from them and `createJob` refuses a submission that carries
+   * one. The catalog entry itself stays readable — it is the *use* that is gated.
+   */
+  JobEquipmentUse = 'job:equipment-use',
 
+  /** The Release Notes page. Technician and Administrator; left the client baseline on 2026-09-18. */
   ReleaseNotesView = 'releasenotes:view',
   AnnouncementsRead = 'announcements:read',
   AnnouncementsWrite = 'announcements:write',

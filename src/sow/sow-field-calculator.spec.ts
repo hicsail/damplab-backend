@@ -664,7 +664,8 @@ describe('the Fee Schedule and equipment-use lines', () => {
   it('states the estimate under the total, and excludes it from the total', () => {
     const text = feeScheduleFor({ services: [equipmentLine as any, plainLine as any], totalCost: 350 });
     expect(text).toContain('Total: $350.00');
-    expect(text).toContain('Estimated equipment usage (not included in Total): $400.00');
+    expect(text).toContain('Estimated equipment usage: $400.00');
+    expect(text).not.toContain('not included in Total');
   });
 
   it('says nothing about estimates when there is no equipment line', () => {
@@ -672,8 +673,27 @@ describe('the Fee Schedule and equipment-use lines', () => {
     expect(text).not.toContain('Estimated equipment usage');
   });
 
-  it('still says "No services listed" when a document has no contracted lines but does have an estimate', () => {
+  it('reads as an estimate only when a document has no contracted lines: no empty list, no $0 total', () => {
     const text = feeScheduleFor({ services: [equipmentLine as any], totalCost: 0 });
+    expect(text).not.toContain('No services listed');
+    expect(text).not.toContain('Total:');
+    expect(text).toContain('Estimated equipment usage — billed at actual booked hours\n- Plate reader time — $10.00 x 40 = $400.00');
+    expect(text).toContain('Estimated equipment usage: $400.00');
+  });
+
+  it('keeps the total on an equipment-only document that carries an adjustment', () => {
+    const text = feeScheduleFor({
+      services: [equipmentLine as any],
+      adjustments: [{ type: SOWAdjustmentType.ADDITIONAL_COST, description: 'Setup', amount: 50 }] as any,
+      totalCost: 50
+    });
+    expect(text).toContain('Setup: $50.00');
+    expect(text).toContain('Total: $50.00');
+    expect(text).toContain('Estimated equipment usage: $400.00');
+  });
+
+  it('still says "No services listed" when a document has no lines of any kind', () => {
+    const text = feeScheduleFor({ services: [], totalCost: 0 });
     expect(text).toContain('- No services listed');
     expect(text).toContain('Total: $0.00');
   });

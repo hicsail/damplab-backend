@@ -34,6 +34,7 @@ import { jobVersionAuthorOrg } from '../job-version/author-org';
 import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 import { assertJobContractWritable } from './job-editing';
+import { assertMaySubmitEquipmentUse } from './equipment-use-gate';
 import { KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
@@ -262,6 +263,9 @@ export class JobResolver {
 
   @Mutation(() => Job)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
+    // Server-side twin of the palette hiding equipment-use operations from
+    // plain clients. Checked before anything is written.
+    assertMaySubmitEquipmentUse(user, createJobInput.workflows);
     // Not derived from the token alone. Pricing lives on Keycloak groups, and a
     // group reaches a token only when the realm's client carries a Group
     // Membership mapper — so a customer correctly placed in

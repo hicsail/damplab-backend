@@ -3,6 +3,7 @@ import {
   calculateServiceCost,
   calculateServiceCostBreakdown,
   CustomerCategory,
+  effectivePricingMode,
   EQUIPMENT_BOOKERS_PARAM_ID,
   EQUIPMENT_END_PARAM_ID,
   EQUIPMENT_HOURS_PER_WEEK_PARAM_ID,
@@ -542,5 +543,38 @@ describe('samples spreadsheet pricing', () => {
         { id: RUN_COUNT_PARAM_ID, value: 2 }
       ])
     ).toBe(24);
+  });
+});
+
+/**
+ * An equipment-use operation is priced as its own hourly rate times the booked
+ * window. "Based on selected options" has nothing to price there, so a service
+ * flagged both ways quoted $0 on the SOW while the invoice read the tier table.
+ */
+describe('effectivePricingMode — equipment use always prices by the operation', () => {
+  const window = [
+    { id: EQUIPMENT_START_PARAM_ID, value: '2026-01-01' },
+    { id: EQUIPMENT_END_PARAM_ID, value: '2026-01-15' },
+    { id: EQUIPMENT_HOURS_PER_WEEK_PARAM_ID, value: 5 }
+  ];
+
+  it('treats an equipment-use service as SERVICE-priced whatever its stored mode says', () => {
+    expect(effectivePricingMode({ pricingMode: ServicePricingMode.PARAMETER, equipmentUse: true })).toBe(ServicePricingMode.SERVICE);
+    expect(effectivePricingMode({ pricingMode: ServicePricingMode.PARAMETER, equipmentUse: false })).toBe(ServicePricingMode.PARAMETER);
+    expect(effectivePricingMode({ pricingMode: undefined })).toBe(ServicePricingMode.SERVICE);
+    expect(effectivePricingMode(null)).toBe(ServicePricingMode.SERVICE);
+  });
+
+  it('prices an equipment-use service left in PARAMETER mode from its tier price', () => {
+    const svc = service({
+      pricingMode: ServicePricingMode.PARAMETER,
+      equipmentUse: true,
+      price: undefined,
+      pricing: { internal: 500, externalMarket: 1000 }
+    } as any);
+    const breakdown = calculateServiceCostBreakdown(svc, window, undefined, CustomerCategory.EXTERNAL_CUSTOMER_MARKET);
+    expect(breakdown).toMatchObject({ unitCost: 1000, multiplier: 10, cost: 10000 });
+    expect(breakdown.details).toBeUndefined();
+    expect(calculateServiceCostBreakdown(svc, window, undefined, CustomerCategory.INTERNAL_CUSTOMERS).cost).toBe(5000);
   });
 });

@@ -241,14 +241,15 @@ describe('Phase 2b widening — the gate on each operation', () => {
    * BOTH the technician bench (`bench:use`) and the Protocol Library
    * (`protocol-library:read`), and `@RequirePermission` requires *all* the
    * permissions it lists — so an either/or has to be an inline check. Asserted here
-   * so a later "tidy this up into a decorator" is caught: it would 403 equipment
-   * users on the bench, who hold bench:use and not protocol-library:read.
+   * so a later "tidy this up into a decorator" is caught. (Equipment users held
+   * bench:use without protocol-library:read until 2026-09-18, which is what made
+   * the either/or visible; the shape is kept so the two pages stay independent.)
    */
   it('leaves the protocols proxy on an inline either/or check, not a decoration', () => {
     expect(permissionOn(ProtocolsController, 'getProtocol')).toBeUndefined();
     expect(rolesOn(ProtocolsController, 'getProtocol')).toBeUndefined();
     const equipmentUser = permissionsForRoles([Role.ClientUnassistedEquipmentUser]);
-    expect(equipmentUser.has(Permission.BenchUse)).toBe(true);
+    expect(equipmentUser.has(Permission.BenchUse)).toBe(false);
     expect(equipmentUser.has(Permission.ProtocolLibraryRead)).toBe(false);
   });
 
@@ -319,10 +320,12 @@ describe('Phase 2b widening — who each gate lets through', () => {
     }
   });
 
-  it('lets an equipment user reach My Bench and the Inventory Schedule', () => {
-    expect(reach(Permission.BenchUse)).toContain('equipment user');
+  it('lets an equipment user reach the Inventory Schedule but not My Bench or the Lab Monitors', () => {
     expect(reach(Permission.InventorySchedule)).toContain('equipment user');
     expect(reach(Permission.InventoryRead)).toContain('equipment user');
+    expect(reach(Permission.BenchUse)).toEqual(['administrator', 'technician']);
+    expect(reach(Permission.LabMonitorView)).toEqual(['administrator', 'technician']);
+    expect(reach(Permission.JobSubmitForClient)).toEqual(['administrator']);
   });
 
   it('does not let a technician or equipment user write the catalog, layout or inventory', () => {

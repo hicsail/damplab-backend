@@ -38,8 +38,9 @@ access group. See `damplab-backend/src/pricing/pricing-groups.ts`.
 |---|:---:|:---:|:---:|:---:|
 | `jobs:view` — see jobs you own | ✓ | ✓ | ✓ | ✓ |
 | `jobs:view-all` — the staff jobs dashboard | ✓ | ✓ | | |
-| `job:submit-for-client` — Staff submit job (Q7) | ✓ | | ✓ | |
-| `releasenotes:view` | ✓ | ✓ | ✓ | ✓ |
+| `job:submit-for-client` — Staff submit job | ✓ | | | |
+| `job:equipment-use` — put an equipment-use operation on a job (canvas palette + `createJob`) | ✓ | ✓ | ✓ | |
+| `releasenotes:view` — Release Notes | ✓ | ✓ | | |
 | `announcements:read` | ✓ | ✓ | ✓ | ✓ |
 | *(An announcement may be addressed to any subset of these four columns. The permission gates the page; the audience gates the rows, server-side. Absent or empty audience = everyone, which is how notices written before targeting existed keep working.)* | | | | |
 | `announcements:write` | ✓ | | | |
@@ -58,10 +59,10 @@ access group. See `damplab-backend/src/pricing/pricing-groups.ts`.
 | `inventory:write` | ✓ | | | |
 | `inventory:book` — Book Inventory | ✓ | ✓ | ✓ | |
 | `inventory:schedule` — Inventory Schedule | ✓ | ✓ | ✓ | |
-| `labmonitor:view` | ✓ | ✓ | ✓ | |
+| `labmonitor:view` | ✓ | ✓ | | |
 | `labmonitor:archive` | ✓ | | | |
 | `labstatustv:view` | ✓ | | | |
-| `bench:use` — My Bench (technician bench) | ✓ | ✓ | ✓ | |
+| `bench:use` — My Bench (technician bench) | ✓ | ✓ | | |
 | `billing:view` — Billing / usage billing | ✓ | | | |
 | `billing:write` — void an invoice | ✓ | | | |
 | `customers:manage` — Customer Management | ✓ | | | |
@@ -95,10 +96,15 @@ exist when the matrix was written.
 |---|---|---|---|
 | `labassistant:use` | Admin only | **+ Technician** | Requested. |
 | `inventory:schedule` | Admin + Technician | **+ Equipment User** | Requested. Equipment users should reach Inventory Schedule. |
-| `bench:use` | Admin + Technician | **+ Equipment User** | Requested. Equipment users should reach My Bench. |
+| `bench:use` | Admin + Technician | **+ Equipment User** | Requested. Equipment users should reach My Bench. *Reversed 2026-09-18, below.* |
 | `/technician_view/:id` (Q8) | Administrator only | **`jobs:view-all`** | The merged Jobs page makes it reachable for the first time: `/dashboard` is `jobs:view-all`, so keying the link off anything narrower means a technician clicks a job and bounces to `/`. |
 | Homepage: My Jobs + Jobs | Two buttons, two sections | **One button, Client Tools** | The two pages rendered the same component; scope is enforced server-side now. Client Tools because the baseline holds `jobs:view`. |
 | `billing:write` | *(absent)* | **Administrator only** | New. Voiding an invoice reverses a financial record and releases its lines for re-invoicing, so it sits above generating one — which is still a bare `damplab-staff` check inside `InvoiceService.createForJob`. |
+| `job:equipment-use` | *(absent)* | **Admin + Technician + Equipment User** | New, 2026-09-18. Equipment-use operations are hidden from the canvas palette and refused by `createJob` for anyone else. |
+| `job:submit-for-client` | Admin + Equipment User (Q7) | **Administrator only** | 2026-09-18. Equipment users lose Staff submit job. |
+| `bench:use` | Admin + Technician + Equipment User | **Admin + Technician** | 2026-09-18. Reverses the amendment above; equipment users lose My Bench. |
+| `labmonitor:view` | Admin + Technician + Equipment User | **Admin + Technician** | 2026-09-18. Equipment users lose the Lab Monitors. |
+| `releasenotes:view` | Everyone (baseline) | **Admin + Technician** | 2026-09-18. Release Notes is a staff page. Leaves the baseline, so plain clients lose it too — the floor must stay a subset of every tier. `/release_notes` now sits behind `PrivateRouteReleaseNotes`. |
 
 Two notes on the equipment-user grants, because a bare table edit misses both:
 
@@ -137,9 +143,9 @@ Two deliberate oddities, both consequences of the topical grouping:
   restricts above Client. Both are ungated today, so restricting them is a genuine
   narrowing of access clients currently have — the one place "nothing is revoked"
   does not hold.
-- *Technician Tools* contains **Staff submit job**, which the matrix gives to
-  Equipment Users and **not** Technicians (Q7). So an equipment user sees that section
-  with exactly one button, and a technician sees it without that button.
+- *Technician Tools* contains **Staff submit job**, which the matrix gave to
+  Equipment Users and **not** Technicians (Q7) until 2026-09-18. It is Administrator
+  only now; a technician sees the section without that button.
 
 ## Renames (Phase 1)
 

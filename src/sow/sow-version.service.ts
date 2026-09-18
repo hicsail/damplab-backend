@@ -627,6 +627,16 @@ export class SowVersionService {
     const stored = SowVersionService.deriveInputs(sow, job);
     const currentVersion = await this.getCurrentVersion(String((sow as any)._id));
 
+    // Recalculate previews the figures a refreshing save would store. That save
+    // re-syncs the billing core from the catalog first (saveVersion), so the
+    // preview has to price live too — `sow.services` is only rewritten on a
+    // workflow edit or a category change, and reading it here left the text
+    // quoting a stale core while the editor's rows, which come from
+    // `liveServices`, already showed the current price. Cancelling a SOW and
+    // recalculating was the visible case: the rows moved, the text did not.
+    const refreshing = inputs.refreshFeeSchedule === true;
+    const live: SowVersionInputs = refreshing ? { ...stored, services: SowVersionService.toServiceLines(await this.sowService.liveServiceLines(sow)) } : stored;
+
     const merged: SowVersionInputs = {
       ...stored,
       projectManager: inputs.projectManager ?? stored.projectManager,
@@ -638,7 +648,7 @@ export class SowVersionService {
       // The same choice the save path makes, so the preview quotes the figures a
       // save would actually store: carried forward from the current version
       // unless staff have hit Recalculate.
-      ...SowVersionService.feeScheduleInputs(stored, currentVersion?.inputs, inputs.refreshFeeSchedule === true),
+      ...SowVersionService.feeScheduleInputs(live, currentVersion?.inputs, refreshing),
       // Unsaved adjustment edits are previewed from the same derivation the save
       // path applies, so the preview quotes the figure the save would store
       // rather than whatever total the client happened to send with it.
