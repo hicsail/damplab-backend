@@ -17,7 +17,7 @@ import { User } from '../auth/user.interface';
 import { CustomerCategory } from '../pricing/customer-category';
 import { Pricing } from '../pricing/pricing.model';
 import { visibleExternalFallbackPrice, visibleFlatPrice, visiblePricing, callerCustomerCategory, canSeeAllPricingTiers } from '../pricing/pricing-visibility';
-import { resolveCategoryPrice } from '../pricing/service-pricing.util';
+import { effectivePricingMode, resolveCategoryPrice } from '../pricing/service-pricing.util';
 import { ServicePricingMode } from './models/damplab-service.model';
 import { CatalogServiceView } from './dtos/catalog-service-view.dto';
 
@@ -53,7 +53,7 @@ export class DampLabServicesResolver {
     const seesEverything = canSeeAllPricingTiers(user);
 
     return services.map((service) => {
-      const pricesPerParameter = service.pricingMode === ServicePricingMode.PARAMETER;
+      const pricesPerParameter = effectivePricingMode(service) === ServicePricingMode.PARAMETER;
       return {
         id: String((service as any)._id ?? (service as any).id),
         name: service.name,

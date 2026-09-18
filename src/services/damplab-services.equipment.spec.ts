@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { DampLabServices } from './damplab-services.services';
-import { EQUIPMENT_USE_NEEDS_BOOKABLE_MESSAGE } from './equipment-use.validation';
+import { EQUIPMENT_USE_NEEDS_BOOKABLE_MESSAGE, EQUIPMENT_USE_PRICING_MODE_MESSAGE } from './equipment-use.validation';
 
 /**
  * The server-side twin of the catalog editor's inline warning. Exercised against
@@ -75,5 +75,35 @@ describe('DampLabServices.update — equipment-use rule', () => {
     const svc = build(model(), inv);
     await expect(svc.update(stored({ name: 'x' }), { name: 'y' } as any)).resolves.toBeDefined();
     expect(inv.findByIds).not.toHaveBeenCalled();
+  });
+});
+
+describe('DampLabServices — equipment use cannot be priced by selected options', () => {
+  const stored = (over: Record<string, unknown> = {}): any => ({ _id: 's1', ...over } as any);
+
+  it('rejects creating an equipment-use service in PARAMETER mode', async () => {
+    const m = model();
+    const svc = build(m, inventory([{ _id: 'i1', bookable: true }]));
+    await expect(svc.create({ equipmentUse: true, pricingMode: 'PARAMETER', inventoryRequirements: ['i1'] } as any)).rejects.toThrow(EQUIPMENT_USE_PRICING_MODE_MESSAGE);
+    expect(m.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects switching a stored equipment-use service to PARAMETER mode', async () => {
+    const svc = build(model(), inventory([{ _id: 'i1', bookable: true }]));
+    await expect(svc.update(stored({ equipmentUse: true, pricingMode: 'SERVICE', inventoryRequirements: ['i1'] }), { pricingMode: 'PARAMETER' } as any)).rejects.toThrow(
+      EQUIPMENT_USE_PRICING_MODE_MESSAGE
+    );
+  });
+
+  it('rejects turning the flag on for a service already in PARAMETER mode', async () => {
+    const svc = build(model(), inventory([{ _id: 'i1', bookable: true }]));
+    await expect(svc.update(stored({ pricingMode: 'PARAMETER', inventoryRequirements: ['i1'] }), { equipmentUse: true } as any)).rejects.toThrow(EQUIPMENT_USE_PRICING_MODE_MESSAGE);
+  });
+
+  it('accepts an equipment-use service priced by the operation, and PARAMETER mode without the flag', async () => {
+    const m = model();
+    const svc = build(m, inventory([{ _id: 'i1', bookable: true }]));
+    await expect(svc.create({ equipmentUse: true, pricingMode: 'SERVICE', inventoryRequirements: ['i1'] } as any)).resolves.toBeDefined();
+    await expect(svc.create({ pricingMode: 'PARAMETER' } as any)).resolves.toBeDefined();
   });
 });

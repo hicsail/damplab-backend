@@ -263,14 +263,18 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
   // from inputs.estimatedEquipmentCost, so the sentence can never disagree with
   // the lines above it — including on a version frozen before that field existed.
   const { contracted, equipment } = splitContractedLines(inputs.services ?? []);
+  const adjustments = inputs.adjustments ?? [];
+  // A job that is only equipment time contracts for nothing, and the document
+  // should read that way rather than announce an empty list and a $0 total.
+  const equipmentOnly = contracted.length === 0 && equipment.length > 0;
+
   const contractedRows = contracted.map(renderRow);
-  lines.push(...(contractedRows.length ? [contractedRows.join('\n')] : ['- No services listed']));
+  if (contractedRows.length) lines.push(contractedRows.join('\n'));
+  else if (!equipmentOnly) lines.push('- No services listed');
 
   if (equipment.length > 0) {
-    lines.push('', 'Estimated equipment usage — billed at actual booked hours', equipment.map(renderRow).join('\n'));
+    lines.push(...(equipmentOnly ? [] : ['']), 'Estimated equipment usage — billed at actual booked hours', equipment.map(renderRow).join('\n'));
   }
-
-  const adjustments = inputs.adjustments ?? [];
   if (adjustments.length > 0) {
     const adjRows = adjustments.map((a) => {
       const desc = (a.description || '').trim() || (a.type === SOWAdjustmentType.DISCOUNT ? 'Discount' : 'Additional cost');
@@ -288,9 +292,14 @@ function buildFeeSchedule(inputs: SowVersionInputs): string {
     lines.push(bulletList(adjRows));
   }
 
-  lines.push('', `Total: ${formatCurrency(inputs.totalCost)}`);
+  // The contracted total is omitted only when nothing feeds it: no contracted
+  // line and no adjustment. An adjustment on an equipment-only SOW is a real
+  // charge, so its total is stated.
+  const showTotal = !(equipmentOnly && adjustments.length === 0);
+  lines.push('');
+  if (showTotal) lines.push(`Total: ${formatCurrency(inputs.totalCost)}`);
   if (equipment.length > 0) {
-    lines.push(`Estimated equipment usage (not included in Total): ${formatCurrency(sumLineCosts(equipment))}`);
+    lines.push(`Estimated equipment usage: ${formatCurrency(sumLineCosts(equipment))}`);
   }
   lines.push(
     '',

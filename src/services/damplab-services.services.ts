@@ -7,7 +7,7 @@ import { ServiceChange } from './dtos/update.dto';
 import { CreateService } from './dtos/create.dto';
 import { Pricing } from '../pricing/pricing.model';
 import { InventoryService } from '../inventory/inventory.service';
-import { equipmentUseRuleViolation } from './equipment-use.validation';
+import { equipmentUsePricingModeViolation, equipmentUseRuleViolation } from './equipment-use.validation';
 
 @Injectable()
 export class DampLabServices {
@@ -153,8 +153,10 @@ export class DampLabServices {
    * field is in play both values come from the stored record, which was valid when
    * it was written, and no inventory lookup happens at all.
    */
-  private async assertEquipmentUseIsSatisfiable(equipmentUse: boolean | undefined, requirementIds: ReadonlyArray<unknown> | undefined): Promise<void> {
+  private async assertEquipmentUseIsSatisfiable(equipmentUse: boolean | undefined, requirementIds: ReadonlyArray<unknown> | undefined, pricingMode?: unknown): Promise<void> {
     if (equipmentUse !== true) return;
+    const modeViolation = equipmentUsePricingModeViolation(equipmentUse, pricingMode);
+    if (modeViolation) throw new BadRequestException(modeViolation);
     const ids = (requirementIds ?? []).map((v) => String(v));
     const items = ids.length ? await this.inventoryService.findByIds(ids) : [];
     const violation = equipmentUseRuleViolation(equipmentUse, requirementIds, items as any);
@@ -167,7 +169,8 @@ export class DampLabServices {
     }
     const mergedEquipmentUse = (changes as any).equipmentUse ?? (service as any).equipmentUse;
     const mergedRequirements = (changes as any).inventoryRequirements ?? (service as any).inventoryRequirements;
-    await this.assertEquipmentUseIsSatisfiable(mergedEquipmentUse, mergedRequirements);
+    const mergedPricingMode = (changes as any).pricingMode ?? (service as any).pricingMode;
+    await this.assertEquipmentUseIsSatisfiable(mergedEquipmentUse, mergedRequirements, mergedPricingMode);
     await this.dampLabServiceModel.updateOne({ _id: service._id }, changes);
     const updated = await this.dampLabServiceModel.findById(service._id);
     return this.normalizeService(updated!);
@@ -188,7 +191,7 @@ export class DampLabServices {
   }
 
   async create(service: CreateService): Promise<DampLabService> {
-    await this.assertEquipmentUseIsSatisfiable((service as any).equipmentUse, (service as any).inventoryRequirements);
+    await this.assertEquipmentUseIsSatisfiable((service as any).equipmentUse, (service as any).inventoryRequirements, (service as any).pricingMode);
     // Ensure deliverables defaults to empty array if not provided
     const serviceData = {
       ...service,

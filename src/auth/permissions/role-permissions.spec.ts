@@ -22,11 +22,11 @@ describe('ROLE_PERMISSIONS — the matrix', () => {
         // baseline
         Permission.JobsView,
         Permission.CatalogView,
-        Permission.ReleaseNotesView,
         Permission.AnnouncementsRead,
         Permission.TrainingRead,
         Permission.BugsReport,
         // technician
+        Permission.ReleaseNotesView,
         Permission.JobsViewAll,
         Permission.BugBacklogView,
         Permission.CatalogEditorRead,
@@ -39,7 +39,8 @@ describe('ROLE_PERMISSIONS — the matrix', () => {
         Permission.LabMonitorView,
         Permission.BenchUse,
         Permission.LabAssistantUse,
-        Permission.InternalFieldsRead
+        Permission.InternalFieldsRead,
+        Permission.JobEquipmentUse
       ])
     );
   });
@@ -49,23 +50,36 @@ describe('ROLE_PERMISSIONS — the matrix', () => {
       sorted([
         Permission.JobsView,
         Permission.CatalogView,
-        Permission.ReleaseNotesView,
         Permission.AnnouncementsRead,
         Permission.TrainingRead,
         Permission.BugsReport,
-        Permission.JobSubmitForClient,
+        Permission.JobEquipmentUse,
         Permission.InventoryRead,
         Permission.InventoryBook,
-        Permission.InventorySchedule,
-        Permission.BenchUse,
-        Permission.LabMonitorView
+        Permission.InventorySchedule
       ])
     );
   });
 
-  it('encodes Q7: the equipment user may submit for a client and the technician may not', () => {
-    expect(permissionsForRoles([Role.ClientUnassistedEquipmentUser]).has(Permission.JobSubmitForClient)).toBe(true);
+  it('keeps equipment-use operations off the client floor', () => {
+    expect(permissionsForRoles([]).has(Permission.JobEquipmentUse)).toBe(false);
+    expect(permissionsForRoles([Role.ClientUnassistedEquipmentUser]).has(Permission.JobEquipmentUse)).toBe(true);
+    expect(permissionsForRoles([Role.Technician]).has(Permission.JobEquipmentUse)).toBe(true);
+  });
+
+  it('keeps Staff submit job to administrators: Q7 gave it to equipment users, withdrawn 2026-09-18', () => {
+    expect(permissionsForRoles([Role.ClientUnassistedEquipmentUser]).has(Permission.JobSubmitForClient)).toBe(false);
     expect(permissionsForRoles([Role.Technician]).has(Permission.JobSubmitForClient)).toBe(false);
+    expect(permissionsForRoles([Role.DamplabStaff]).has(Permission.JobSubmitForClient)).toBe(true);
+  });
+
+  it('keeps the equipment user off the staff pages: My Bench, the Lab Monitors and Release Notes', () => {
+    const equipmentUser = permissionsForRoles([Role.ClientUnassistedEquipmentUser]);
+    for (const permission of [Permission.BenchUse, Permission.LabMonitorView, Permission.ReleaseNotesView]) {
+      expect({ permission, has: equipmentUser.has(permission) }).toEqual({ permission, has: false });
+    }
+    expect(permissionsForRoles([]).has(Permission.ReleaseNotesView)).toBe(false);
+    expect(permissionsForRoles([Role.Technician]).has(Permission.ReleaseNotesView)).toBe(true);
   });
 
   it('keeps write above read: only Administrator writes the catalog, layout, inventory, announcements and training', () => {
@@ -85,7 +99,8 @@ describe('ROLE_PERMISSIONS — the matrix', () => {
     const equipmentUser = permissionsForRoles([Role.ClientUnassistedEquipmentUser]);
     expect(technician.has(Permission.LabAssistantUse)).toBe(true);
     expect(equipmentUser.has(Permission.InventorySchedule)).toBe(true);
-    expect(equipmentUser.has(Permission.BenchUse)).toBe(true);
+    // The My Bench amendment was itself reversed on 2026-09-18.
+    expect(equipmentUser.has(Permission.BenchUse)).toBe(false);
     // Widening the pages did not widen the billing act inside one of them.
     expect(equipmentUser.has(Permission.BillingView)).toBe(false);
   });
@@ -127,7 +142,7 @@ describe('the baseline floor — no user can be locked out', () => {
 describe('permissionsForRoles unions across roles', () => {
   it('unions an external customer holding the equipment-user role', () => {
     const granted = permissionsForRoles([Role.ExternalCustomer, Role.ClientUnassistedEquipmentUser]);
-    expect(granted.has(Permission.JobSubmitForClient)).toBe(true);
+    expect(granted.has(Permission.JobEquipmentUse)).toBe(true);
     expect(granted.has(Permission.InventoryBook)).toBe(true);
     expect(granted.has(Permission.JobsView)).toBe(true);
     expect(granted.has(Permission.CustomersManage)).toBe(false);
@@ -149,7 +164,8 @@ describe('asCustomer subtracts exactly the staff-flavoured roles', () => {
 
   it('does NOT subtract client-unassisted-equipment-user — it is a client variant', () => {
     const asCustomer = customerPermissionsForRoles([Role.DamplabStaff, Role.ClientUnassistedEquipmentUser]);
-    expect(asCustomer.has(Permission.JobSubmitForClient)).toBe(true);
+    expect(asCustomer.has(Permission.JobEquipmentUse)).toBe(true);
+    expect(asCustomer.has(Permission.InventoryBook)).toBe(true);
     expect(asCustomer.has(Permission.CustomersManage)).toBe(false);
   });
 

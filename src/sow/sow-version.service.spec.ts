@@ -221,7 +221,12 @@ describe('previewCalculatedValues — prose blocks', () => {
       })
     };
     const sowModel: any = { findById: () => ({ exec: async () => stored }) };
-    const sowService: any = { getJobForSow: async () => ({ customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', jobId: '1234' }) };
+    const sowService: any = {
+      getJobForSow: async () => ({ customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', jobId: '1234' }),
+      // The catalog as it stands now, as `liveServices` renders it — deliberately
+      // different from the $350 stored core so the two are distinguishable.
+      liveServiceLines: async () => [{ _id: 's1', serviceId: 's1', name: 'NGS', description: 'seq', cost: 1000, unitCost: 1000, category: 'molecular-biology' }]
+    };
     const presetService: any = { defaultTextByKey: async () => blocks };
     const activityService: any = { createEventIdempotent: async () => undefined };
     // Required now, rather than @Optional(): a missing wiring used to degrade
@@ -259,6 +264,30 @@ describe('previewCalculatedValues — prose blocks', () => {
     const rows = await service.previewCalculatedValues('sow-1', { projectManager: 'New Manager', projectLead: 'Kristen Sheldon' });
 
     expect(valueFor(rows, 'engagementResources')).toContain('New Manager');
+    expect(valueFor(rows, 'feeSchedule')).toContain('$350.00');
+  });
+
+  /**
+   * Recalculate previews what a refreshing save would store. The save re-syncs
+   * the billing core from the catalog first, so the preview must price live too
+   * — reading `sow.services` left the text quoting a core that only a workflow
+   * edit or a category change rewrites, while the editor's rows already showed
+   * the catalog's current price. Cancel-then-recalculate was the visible case.
+   */
+  it('prices the Fee Schedule live from the catalog when the preview is a Recalculate', async () => {
+    const service = harness([], {});
+
+    const rows = await service.previewCalculatedValues('sow-1', { refreshFeeSchedule: true });
+
+    expect(valueFor(rows, 'feeSchedule')).toContain('$1,000.00');
+    expect(valueFor(rows, 'feeSchedule')).not.toContain('$350.00');
+  });
+
+  it('keeps quoting the stored core when the preview is not a Recalculate', async () => {
+    const service = harness([], {});
+
+    const rows = await service.previewCalculatedValues('sow-1', { refreshFeeSchedule: false });
+
     expect(valueFor(rows, 'feeSchedule')).toContain('$350.00');
   });
 });

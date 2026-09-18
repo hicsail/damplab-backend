@@ -29,7 +29,8 @@ import { ALL_PERMISSIONS, Permission } from './permission.enum';
 export const BASELINE_PERMISSIONS: readonly Permission[] = Object.freeze([
   Permission.JobsView,
   Permission.CatalogView,
-  Permission.ReleaseNotesView,
+  // releasenotes:view left the baseline on 2026-09-18: Release Notes is a staff
+  // page. It is granted to Technician and Administrator below.
   Permission.AnnouncementsRead,
   Permission.TrainingRead,
   Permission.BugsReport
@@ -39,21 +40,20 @@ export const BASELINE_PERMISSIONS: readonly Permission[] = Object.freeze([
 const CLIENT = BASELINE_PERMISSIONS;
 
 /**
- * Q7, as the matrix specifies: an equipment user may submit a job for a client and a
- * technician may not. Odd-looking; encoded deliberately.
+ * Narrowed on 2026-09-18: an equipment user is a client who may book instruments,
+ * nothing more. Staff submit job (Q7 as transcribed), My Bench and the Lab Monitors
+ * were withdrawn; see docs/access-matrix.md, "Amendments".
  */
 const EQUIPMENT_USER: readonly Permission[] = Object.freeze([
   ...CLIENT,
-  Permission.JobSubmitForClient,
+  // The tier's namesake: only these users (and staff) may put an equipment-use
+  // operation on a job.
+  Permission.JobEquipmentUse,
   Permission.InventoryRead,
   Permission.InventoryBook,
-  // Amended after the transcription, on request: equipment users reach Inventory
-  // Schedule and My Bench. My Bench self-scopes (`assignedOperations` resolves by
-  // `user.sub`); the schedule does not, so cancel is owner-gated and confirm-usage
-  // stays Administrator-only. See docs/access-matrix.md, "Amendments".
-  Permission.InventorySchedule,
-  Permission.BenchUse,
-  Permission.LabMonitorView
+  // The schedule shows every booking; cancel is owner-gated per row and
+  // confirm-usage stays Administrator-only.
+  Permission.InventorySchedule
 ]);
 
 const TECHNICIAN: readonly Permission[] = Object.freeze([
@@ -71,7 +71,11 @@ const TECHNICIAN: readonly Permission[] = Object.freeze([
   Permission.BenchUse,
   // Amended after the transcription, on request. See docs/access-matrix.md.
   Permission.LabAssistantUse,
-  Permission.InternalFieldsRead
+  Permission.InternalFieldsRead,
+  // Amendments of 2026-09-18: lab staff may build equipment-use jobs, and Release
+  // Notes is a staff page rather than a baseline one.
+  Permission.JobEquipmentUse,
+  Permission.ReleaseNotesView
 ]);
 
 /** Administrator holds everything, by construction, so day-one staff access is unchanged. */

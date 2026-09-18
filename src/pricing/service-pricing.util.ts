@@ -349,6 +349,23 @@ export interface ServiceCostBreakdown {
  * SOW editor edits the unit price rather than the total, so both have to be
  * stored rather than recovered by dividing — a unit price of 0 is legitimate.
  */
+/**
+ * The pricing mode a line is actually priced under.
+ *
+ * An equipment-use operation is always priced as `hourly rate x hours x weeks`,
+ * and the hourly rate is the service's own tier price. "Based on selected
+ * options" has nothing to price there — the equipment window is not a priced
+ * parameter — so a service flagged both ways used to resolve every tier to $0
+ * and put `$0.00 x 1545 = $0.00` on the SOW while the invoice, which reads the
+ * tier table directly, quoted the real rate. The catalog editor now refuses the
+ * combination (`equipmentUsePricingModeViolation`); this covers the records
+ * written before it did. Twin: damplab-ui/src/utils/servicePricing.ts.
+ */
+export function effectivePricingMode(service: { pricingMode?: ServicePricingMode | string | null; equipmentUse?: boolean | null } | null | undefined): ServicePricingMode {
+  if (service?.equipmentUse === true) return ServicePricingMode.SERVICE;
+  return service?.pricingMode === ServicePricingMode.PARAMETER ? ServicePricingMode.PARAMETER : ServicePricingMode.SERVICE;
+}
+
 export function calculateServiceCostBreakdown(
   service: DampLabService,
   rawFormData: unknown,
@@ -356,7 +373,7 @@ export function calculateServiceCostBreakdown(
   customerCategory?: CustomerCategory,
   opts?: { fallbackLineCost?: number }
 ): ServiceCostBreakdown {
-  const pricingMode = service.pricingMode ?? ServicePricingMode.SERVICE;
+  const pricingMode = effectivePricingMode(service);
   let baseCost = 0;
   let details: ServicePricingDetail[] | undefined;
 

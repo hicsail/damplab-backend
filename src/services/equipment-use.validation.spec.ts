@@ -1,4 +1,4 @@
-import { EQUIPMENT_USE_NEEDS_BOOKABLE_MESSAGE, equipmentUseRuleViolation } from './equipment-use.validation';
+import { EQUIPMENT_USE_NEEDS_BOOKABLE_MESSAGE, EQUIPMENT_USE_PRICING_MODE_MESSAGE, equipmentUsePricingModeViolation, equipmentUseRuleViolation } from './equipment-use.validation';
 
 const bookable = (id: string): { _id: string; bookable: boolean } => ({ _id: id, bookable: true });
 const notBookable = (id: string): { _id: string; bookable: boolean } => ({ _id: id, bookable: false });
@@ -30,5 +30,22 @@ describe('equipmentUseRuleViolation', () => {
 
   it('ignores a bookable item the service does not actually require', () => {
     expect(equipmentUseRuleViolation(true, ['a'], [notBookable('a'), bookable('z')])).toBe(EQUIPMENT_USE_NEEDS_BOOKABLE_MESSAGE);
+  });
+});
+
+describe('equipmentUsePricingModeViolation', () => {
+  it('refuses "Based on selected options" on an equipment-use operation', () => {
+    expect(equipmentUsePricingModeViolation(true, 'PARAMETER')).toBe(EQUIPMENT_USE_PRICING_MODE_MESSAGE);
+    expect(equipmentUsePricingModeViolation(true, 'parameter')).toBe(EQUIPMENT_USE_PRICING_MODE_MESSAGE);
+  });
+
+  it('accepts the operation price, or no mode at all, on an equipment-use operation', () => {
+    expect(equipmentUsePricingModeViolation(true, 'SERVICE')).toBeUndefined();
+    expect(equipmentUsePricingModeViolation(true, undefined)).toBeUndefined();
+  });
+
+  it('never applies when the flag is off', () => {
+    expect(equipmentUsePricingModeViolation(false, 'PARAMETER')).toBeUndefined();
+    expect(equipmentUsePricingModeViolation(undefined, 'PARAMETER')).toBeUndefined();
   });
 });

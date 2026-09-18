@@ -244,6 +244,9 @@ function makeHarness(initial: { status?: SOWStatus; fields?: any[]; job?: any; l
       sow.services = [{ serviceId: 'svc-a', name: 'PCR', description: '', cost: 999, unitCost: 999, multiplier: 1, category: 'molecular-biology' }];
       sow.pricing = { ...(sow.pricing ?? {}), baseCost: 999, totalCost: 999 };
     },
+    // What a Recalculate preview prices from: the catalog as it stands. In this
+    // harness that is whatever the job's stored core currently says.
+    liveServiceLines: async () => sow.services ?? [],
     restoreDocumentBilling: async (_id: string, pricing: any, services?: any) => {
       sow.pricing = pricing;
       if (services !== undefined) sow.services = services;
