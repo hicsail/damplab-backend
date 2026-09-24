@@ -8,6 +8,7 @@ import { BugTriageNotifier } from './bug-triage-notifier.service';
 
 @Module({
   imports: [MongooseModule.forFeature([{ name: BugReport.name, schema: BugReportSchema }])],
-  providers: [BugReportService, BugReportResolver, BugReportAttachmentsService, BugTriageNotifier]
+  providers: [BugReportService, BugReportResolver, BugReportAttachmentsService, BugTriageNotifier],
+  exports: [BugReportService]
 })
 export class BugReportModule {}

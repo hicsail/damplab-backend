@@ -19,6 +19,6 @@ import { KeycloakModule } from '../keycloak/keycloak.module';
     KeycloakModule
   ],
   providers: [NotificationService, NotificationResolver, NotificationDispatchService, NotificationEmailService],
-  exports: [NotificationDispatchService]
+  exports: [NotificationDispatchService, NotificationService, NotificationEmailService]
 })
 export class NotificationModule {}
