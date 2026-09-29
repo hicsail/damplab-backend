@@ -108,3 +108,18 @@ export function sampleSheetReplaceBlockedReason(job: Pick<Job, 'state'>): string
       return null;
   }
 }
+
+/** The storage key inside a stored sampleSheet value (JSON string, or the parsed object the editor round-trips), if any. */
+export function sampleSheetKeyOf(value: unknown): string | undefined {
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const key = (parsed as { key?: unknown }).key;
+  return typeof key === 'string' && key.length > 0 ? key : undefined;
+}

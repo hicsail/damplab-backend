@@ -13,6 +13,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/uti
 import { ParameterSnapshotEntry } from '../workflow/models/parameter-snapshot.model';
 import { buildParameterSnapshot } from '../workflow/utils/parameter-snapshot.util';
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
+import { isSampleSheetParam, keyBelongsToUploader, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
 import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
 
 /** Fields on a live WorkflowNode that a save is allowed to write. Everything else — state, assigneeId, startedAt, completedSteps, usedInventory, inventory reservations — belongs to the lab and is never touched here. */
@@ -37,6 +38,8 @@ interface PreparedNode {
   clientId: string;
   patch: NodeContentPatch;
   snapshot: JobVersionNode;
+  /** Ids of this node's samples-spreadsheet parameters. */
+  sampleSheetParamIds: string[];
 }
 
 /**
@@ -553,6 +556,7 @@ export class JobVersionService {
     // only reads, so nothing is written if the guard then rejects.
     const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined, this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId));
     this.assertWorkInFlightUntouched(liveNodes, prepared);
+    if (opts.uploaderSub !== undefined) this.assertSampleSheetKeysAllowed(liveNodes, prepared, opts.uploaderSub);
 
     // Which nodes existed before this save, across every tree. Node deletion is
     // decided once, globally, at the end — never per tree.
@@ -660,6 +664,28 @@ export class JobVersionService {
   }
 
   /**
+   * B20: a spreadsheet swapped in the editor must be the one already stored, or
+   * one this caller uploaded. The node resolver presigns a download for whatever
+   * key is stored, so accepting a foreign key would let the writer read someone
+   * else's upload. Opt-in: only `saveJobWorkflows` names an uploader; restore and
+   * withdraw replay keys from history on purpose.
+   */
+  private assertSampleSheetKeysAllowed(liveNodes: Map<string, LiveNode>, prepared: PreparedNode[][], uploaderSub: string): void {
+    for (const workflow of prepared) {
+      for (const node of workflow) {
+        if (!node.sampleSheetParamIds.length) continue;
+        const before = paramValuesById(liveNodes.get(node.clientId)?.formData);
+        const after = paramValuesById(node.patch.formData);
+        for (const paramId of node.sampleSheetParamIds) {
+          const nextKey = sampleSheetKeyOf(after.get(paramId));
+          if (!nextKey || nextKey === sampleSheetKeyOf(before.get(paramId)) || keyBelongsToUploader(nextKey, uploaderSub)) continue;
+          throw new BadRequestException(`The samples spreadsheet on "${node.patch.label}" was not uploaded by you. Upload it again and retry.`);
+        }
+      }
+    }
+  }
+
+  /**
    * Work already under way is not the editor's to change.
    *
    * A node that has left QUEUED, or is holding inventory, may not be deleted or
@@ -724,6 +750,7 @@ export class JobVersionService {
 
         return {
           clientId: node.id,
+          sampleSheetParamIds: (Array.isArray(service.parameters) ? service.parameters : []).filter(isSampleSheetParam).map((p: any) => p.id),
           patch: {
             label: node.label ?? service.name,
             service: new mongoose.Types.ObjectId(String(service._id)),

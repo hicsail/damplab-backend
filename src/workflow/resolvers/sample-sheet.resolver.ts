@@ -8,12 +8,14 @@ import { RequirePermission } from '../../auth/permissions/permissions.decorator'
 import { Permission } from '../../auth/permissions/permission.enum';
 import { hasPermission } from '../../auth/permissions/permissions';
 import { callerMayAccessJob } from '../../job/job-access';
+import { customerEditBlockedReason, customerMayEdit } from '../../job/job-editing';
 import { DampLabServices } from '../../services/damplab-services.services';
 import { DampLabService } from '../../services/models/damplab-service.model';
 import { WorkflowNode } from '../models/node.model';
 import { WorkflowNodeService } from '../services/node.service';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { getMultiValueParamIds } from '../utils/form-data.util';
+import { buildParameterSnapshot } from '../utils/parameter-snapshot.util';
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { SOWService } from '../../sow/sow.service';
 import { ReplaceSampleSheetInput, SampleSheetTemplateUpload, SampleSheetTemplateUploadRequest } from '../dtos/sample-sheet.dto';
@@ -28,7 +30,10 @@ import { findSampleSheetParam, keyBelongsToUploader, SAMPLE_SHEET_TEMPLATE_KEY_P
  * `createWorkflowParameterUploadUrls`. Replacement is its own narrow path rather
  * than a trip through `saveJobWorkflows`, because the workflow editor's gates
  * close once the lab takes the job back and a sample list must stay
- * correctable, by either side, while the job runs.
+ * correctable by the lab while the job runs. Replacing from the job page is
+ * staff-only in practice: a customer swaps a sheet through the workflow editor,
+ * where it rides `saveJobWorkflows` as a new version, and here only while the
+ * lab has asked them to edit.
  */
 @Resolver()
 @UseGuards(AuthRolesGuard)
@@ -78,7 +83,7 @@ export class SampleSheetResolver {
    */
   @Mutation(() => WorkflowNode, {
     description:
-      'Replace the samples spreadsheet on one operation of a job. Open to the job’s owner, its named client and staff, until the job is closed, cancelled or rejected. The key must be one createWorkflowParameterUploadUrls minted for the caller.'
+      'Replace the samples spreadsheet on one operation of a job. Open to staff until the job is closed, cancelled or rejected, and to the job’s members only while the lab has asked them to edit. The key must be one createWorkflowParameterUploadUrls minted for the caller.'
   })
   @RequirePermission(Permission.JobsView)
   async replaceSampleSheet(@Args('input') input: ReplaceSampleSheetInput, @CurrentUser() user: User): Promise<WorkflowNode> {
@@ -89,6 +94,13 @@ export class SampleSheetResolver {
     }
     if (!callerMayAccessJob(job, user, hasPermission(user, Permission.JobsViewAll))) {
       throw new ForbiddenException('You do not have permission to change this job');
+    }
+    // B18: for a customer, swapping the sheet is an edit like any other and
+    // needs edit access. The lab (jobs:view-all, approved at the plan gate)
+    // keeps replacing at any point until the job is finished with.
+    const STAFF_REPLACE_PERMISSION_CHECK = hasPermission(user, Permission.JobsViewAll);
+    if (!STAFF_REPLACE_PERMISSION_CHECK && !customerMayEdit(job)) {
+      throw new BadRequestException(customerEditBlockedReason(job));
     }
     const blocked = sampleSheetReplaceBlockedReason(job);
     if (blocked) throw new ForbiddenException(blocked);
@@ -118,8 +130,13 @@ export class SampleSheetResolver {
     // price is only a fallback — the SOW reprices from the catalog — but it is
     // what the job page quotes, so it has to move with the count.
     const category = job.customerCategory as CustomerCategory | undefined;
-    const updated = await this.nodeService.setFormDataValue(node, input.parameterId, value, getMultiValueParamIds(service?.parameters), (formData) =>
-      service ? calculateServiceCost(service, formData, node.price, category) : node.price ?? 0
+    const updated = await this.nodeService.setFormDataValue(
+      node,
+      input.parameterId,
+      value,
+      getMultiValueParamIds(service?.parameters),
+      (formData) => (service ? calculateServiceCost(service, formData, node.price, category) : node.price ?? 0),
+      (formData) => buildParameterSnapshot(service, formData, node.parameterSnapshot)
     );
     // No-op without a SOW; with one, the line is recomputed and the document
     // flagged stale so staff decide whether to reissue it for signature.

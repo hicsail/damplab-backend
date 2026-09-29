@@ -1178,3 +1178,39 @@ describe('saveWorkflows — parameter snapshot (B21, B22)', () => {
     expect(nodes[0].parameterSnapshot).toEqual([{ id: 'enz', name: 'Enzyme', type: 'dropdown', displayValue: 'BsaI' }]);
   });
 });
+
+describe('saveWorkflows — samples-spreadsheet keys (B20)', () => {
+  const SHEET_SERVICE = { ...SERVICE_A, parameters: [{ id: 'sheet', name: 'Samples', type: 'sampleSheet' }] };
+  const sheet = (key: string): string => JSON.stringify({ filename: 'a.xlsx', key, sampleCount: 2 });
+  const setup = (): Harness => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: [{ id: 'sheet', value: sheet('workflow-parameters/owner/old.xlsx') }] })] });
+    (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => SHEET_SERVICE;
+    return harness;
+  };
+  const save = (harness: Harness, key: string, opts: any): Promise<any> =>
+    harness.service.saveWorkflows(
+      { jobId: JOB_ID, note: 'sheet', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'sheet', value: sheet(key) }] })], edges: [] }] } as any,
+      author,
+      opts
+    );
+
+  it('accepts the unchanged stored key', async () => {
+    await expect(save(setup(), 'workflow-parameters/owner/old.xlsx', { uploaderSub: 'member' })).resolves.toBeDefined();
+  });
+
+  it("accepts a key under the caller's own upload prefix", async () => {
+    const harness = setup();
+    await save(harness, 'workflow-parameters/member/new.xlsx', { uploaderSub: 'member' });
+    expect(harness.nodes[0].parameterSnapshot).toEqual([{ id: 'sheet', name: 'Samples', type: 'sampleSheet', displayValue: 'a.xlsx' }]);
+  });
+
+  it("rejects someone else's key before writing anything", async () => {
+    const harness = setup();
+    await expect(save(harness, 'workflow-parameters/other/stolen.xlsx', { uploaderSub: 'member' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(harness.versions).toHaveLength(0);
+  });
+
+  it('does not check keys when no uploader is named (restore and withdraw)', async () => {
+    await expect(save(setup(), 'workflow-parameters/other/older.xlsx', {})).resolves.toBeDefined();
+  });
+});

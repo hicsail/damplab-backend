@@ -43,6 +43,12 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
 
     expect(saveWorkflows).toHaveBeenCalledTimes(1);
   });
+
+  it('names the caller as the uploader, so the version service checks spreadsheet keys', async () => {
+    const { resolver, saveWorkflows } = harness(JobState.CHANGES_REQUESTED);
+    await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, user);
+    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: 'customer-1' });
+  });
 });
 
 describe('JobResolver.restoreJobVersion', () => {

@@ -927,7 +927,7 @@ export class JobResolver {
     this.assertContractWritable(job, user);
     await this.jobService.claimSubIfPrimary(job, user);
 
-    const updated = await this.jobVersionService.saveWorkflows(input, this.versionAuthor(user, job));
+    const updated = await this.jobVersionService.saveWorkflows(input, this.versionAuthor(user, job), { uploaderSub: user.sub });
 
     // The billing core has moved. This is a no-op on a job with no SOW, which is
     // most jobs being edited; where there is one it flags the document stale so
