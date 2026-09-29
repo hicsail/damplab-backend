@@ -634,7 +634,6 @@ export class JobVersionService {
     return [...ids];
   }
 
-  /** Every live node on the job, keyed by client-side id. */
   /** Earlier names per node: the live node's snapshot, overridden by a restored version's. */
   private priorSnapshots(liveNodes: Map<string, LiveNode>, fromVersion?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]>): Map<string, ParameterSnapshotEntry[]> {
     const merged = new Map<string, ParameterSnapshotEntry[]>();
@@ -648,6 +647,7 @@ export class JobVersionService {
     return merged;
   }
 
+  /** Every live node on the job, keyed by client-side id. */
   private async loadLiveNodes(job: Job): Promise<Map<string, LiveNode>> {
     const byClientId = new Map<string, LiveNode>();
     for (const workflowRef of job.workflows ?? []) {
