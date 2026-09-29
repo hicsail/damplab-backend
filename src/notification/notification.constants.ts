@@ -54,6 +54,11 @@ export const EVENT_RECIPIENT_MAP: Record<string, EventRecipientConfig> = {
     excludeActor: true,
     emailWorthy: true
   },
+  INTERNAL_COMMENT_CREATED: {
+    recipients: [RecipientRole.ALL_STAFF],
+    excludeActor: true,
+    emailWorthy: true
+  },
   LAB_NODE_ASSIGNED: {
     recipients: [RecipientRole.ALL_STAFF],
     excludeActor: true,

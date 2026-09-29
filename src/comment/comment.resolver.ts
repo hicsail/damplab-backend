@@ -8,6 +8,7 @@ import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityEventType } from '../activity/activity-event.model';
+import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { JobAttachmentsService } from '../job/job-attachments.service';
 import { isStaff } from '../sow/sow-access';
 
@@ -17,6 +18,7 @@ export class CommentResolver {
   constructor(
     private readonly commentService: CommentService,
     private readonly activityService: ActivityService,
+    private readonly notificationDispatch: NotificationDispatchService,
     // Reuse the existing presign service — files for comment attachments live
     // in the same S3 bucket and were uploaded via createJobAttachmentUploadUrls.
     private readonly jobAttachmentsService: JobAttachmentsService
@@ -77,6 +79,15 @@ export class CommentResolver {
       actorDisplayName: author,
       jobId: input.jobId,
       commentId: String((created as any)._id)
+    });
+    const snippet = input.content.length > 200 ? input.content.slice(0, 200) + '…' : input.content;
+    this.notificationDispatch.dispatch({
+      eventType: created.isInternal ? 'INTERNAL_COMMENT_CREATED' : 'COMMENT_CREATED',
+      title: created.isInternal ? 'New internal comment' : 'New comment on your job',
+      message: snippet,
+      jobId: input.jobId,
+      actorSub: user.sub,
+      actorDisplayName: author
     });
     return created;
   }
