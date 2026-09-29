@@ -118,6 +118,7 @@ const GATES: Row[] = [
   // Comments (F1). Baseline, scoped inside to the job's members and jobs:view-all.
   [CommentResolver, 'commentsByJobId', Permission.JobsView],
   [CommentResolver, 'commentById', Permission.JobsView],
+  [CommentResolver, 'commentsByNodeId', Permission.JobsView],
   [CommentResolver, 'createComment', Permission.JobsView],
   [CommentResolver, 'updateComment', Permission.JobsView],
   [CommentResolver, 'deleteComment', Permission.JobsView],
