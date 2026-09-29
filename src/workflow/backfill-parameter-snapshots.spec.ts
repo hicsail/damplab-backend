@@ -209,7 +209,7 @@ describe('migrateStaffSubmittedJobs (B32)', () => {
         jobs: jobs()
       });
       // The fake clones documents through JSON, which a throwing getter would not survive.
-      database.collections.damplabservices.find = () => ({ toArray: async () => [...services, broken] });
+      database.collections.damplabservices.find = (): { toArray: () => Promise<any[]> } => ({ toArray: async (): Promise<any[]> => [...services, broken] });
       const report = await backfillParameterSnapshots(database, { log: () => undefined });
       expect(report.failed).toEqual([{ id: 'version v1 node bad', error: 'malformed service' }]);
       expect(report.versionNodesUpdated).toBe(1);
