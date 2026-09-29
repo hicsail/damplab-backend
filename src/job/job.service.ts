@@ -4,7 +4,8 @@ import { AclidScreening, CustomerActionRequired, HomologyScreening, Job, JobAtta
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
-import { effectiveClientEmailExpr, normalizeClientEmail, ownedJobsFilter } from './client-email';
+import { effectiveClientEmailExpr, normalizeClientEmail } from './client-email';
+import { jobMembersFilter } from './job-membership';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder, JobArchiveFilter, JobScope, JobsForViewerInput } from './dto/jobs-query.dto';
@@ -404,7 +405,7 @@ export class JobService {
   }
 
   async findOwnJobsPaginated(sub: string, email: string, input: OwnJobsInput): Promise<OwnJobsResult> {
-    const baseMatch = ownedJobsFilter(sub, email);
+    const baseMatch = jobMembersFilter(sub, email);
     const { items, totalCount } = await this.runJobsPipeline(baseMatch, input);
     return { items, totalCount };
   }
@@ -428,8 +429,8 @@ export class JobService {
     let baseMatch: mongoose.FilterQuery<JobDocument> = {};
     if (resolved.scope === JobScope.CREATED_BY_ME) {
       // Not `{ sub }`: a job staff submitted for this person carries the staff
-      // member's sub, and `clientEmail` is the only thing tying it to them.
-      baseMatch = ownedJobsFilter(resolved.viewerSub, resolved.viewerEmail);
+      // member's sub; `clientEmail` and `memberEmails` are what tie it to them.
+      baseMatch = jobMembersFilter(resolved.viewerSub, resolved.viewerEmail);
     } else if (resolved.createdByClient) {
       baseMatch = { $expr: { $eq: [effectiveClientEmailExpr(), normalizeClientEmail(resolved.createdByClient) ?? ''] } };
     } else if (resolved.createdBySub) {

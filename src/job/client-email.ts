@@ -1,5 +1,3 @@
-import * as mongoose from 'mongoose';
-
 /**
  * The client email on a job, and how it is compared.
  *
@@ -25,27 +23,6 @@ export function matchesClientEmail(jobClientEmail: string | null | undefined, us
   const job = normalizeClientEmail(jobClientEmail);
   const user = normalizeClientEmail(userEmail);
   return job !== undefined && user !== undefined && job === user;
-}
-
-/**
- * The "jobs this person owns" filter: their own submissions, plus the ones staff
- * submitted naming them.
- *
- * `$expr`/`$toLower` rather than a plain equality so a row written before emails
- * were normalised still matches. The guard is load-bearing, not defensive: with
- * no address to match, `$toLower` of a missing `clientEmail` is `""`, which would
- * equal an empty needle and hand the caller every job that has no client email —
- * that is to say, every ordinary job in the collection.
- */
-export function ownedJobsFilter(sub: string, email: string | null | undefined): mongoose.FilterQuery<any> {
-  const normalized = normalizeClientEmail(email);
-  if (!normalized) return { sub };
-  // $trim as well as $toLower: normalizeClientEmail trims, so a stored value with
-  // stray padding would compare unequal here while comparing equal in JS -- the
-  // list would hide a job the detail page happily opens. ($trim of a missing
-  // field is null, and $toLower of null is "", which the guard above has already
-  // ruled out as a needle.)
-  return { $or: [{ sub }, { $expr: { $eq: [{ $toLower: { $trim: { input: '$clientEmail' } } }, normalized] } }] };
 }
 
 /**
