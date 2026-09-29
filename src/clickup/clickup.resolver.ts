@@ -23,10 +23,7 @@ import { hasPermission } from '../auth/permissions/permissions';
 @Resolver(() => BacklogCard)
 @UseGuards(AuthRolesGuard)
 export class ClickUpResolver {
-  constructor(
-    private readonly clickup: ClickUpService,
-    private readonly bugDeployNotifier: BugDeployNotifierService
-  ) {}
+  constructor(private readonly clickup: ClickUpService, private readonly bugDeployNotifier: BugDeployNotifierService) {}
 
   /**
    * Whether to show the ClickUp deep link. Re-pointed off the raw `damplab-staff`
@@ -73,10 +70,7 @@ export class ClickUpResolver {
   }
 
   @Mutation(() => Boolean, { description: 'Staff-only: notify the bug reporter that a fix has been deployed to staging.' })
-  async notifyBugDeployedToStaging(
-    @Args('cardId', { type: () => ID }) cardId: string,
-    @CurrentUser() user: User
-  ): Promise<boolean> {
+  async notifyBugDeployedToStaging(@Args('cardId', { type: () => ID }) cardId: string, @CurrentUser() user: User): Promise<boolean> {
     if (!hasPermission(user, Permission.BugBacklogView)) {
       throw new ForbiddenException('Staff only.');
     }

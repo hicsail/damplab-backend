@@ -9,11 +9,7 @@ const EVENT_TYPE = 'BUG_DEPLOYED_TO_STAGING';
 export class BugDeployNotifierService {
   private readonly logger = new Logger(BugDeployNotifierService.name);
 
-  constructor(
-    private readonly bugReportService: BugReportService,
-    private readonly notificationService: NotificationService,
-    private readonly emailService: NotificationEmailService
-  ) {}
+  constructor(private readonly bugReportService: BugReportService, private readonly notificationService: NotificationService, private readonly emailService: NotificationEmailService) {}
 
   async notifyDeployedToStaging(sourceBugId: string, cardTitle: string): Promise<{ reporterEmail: string }> {
     const bug = await this.bugReportService.findById(sourceBugId);

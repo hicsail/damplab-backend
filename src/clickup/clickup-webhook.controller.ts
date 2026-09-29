@@ -5,17 +5,10 @@ import { BugDeployNotifierService } from './bug-deploy-notifier.service';
 
 @Controller('api/webhooks/clickup')
 export class ClickUpWebhookController {
-  constructor(
-    private readonly configService: ConfigService,
-    private readonly clickUpService: ClickUpService,
-    private readonly bugDeployNotifier: BugDeployNotifierService
-  ) {}
+  constructor(private readonly configService: ConfigService, private readonly clickUpService: ClickUpService, private readonly bugDeployNotifier: BugDeployNotifierService) {}
 
   @Post('staging-deployed')
-  async handleStagingDeployed(
-    @Headers('x-agent-secret') secret: string,
-    @Body() body: { taskId: string }
-  ): Promise<{ ok: boolean; reporterEmail?: string }> {
+  async handleStagingDeployed(@Headers('x-agent-secret') secret: string, @Body() body: { taskId: string }): Promise<{ ok: boolean; reporterEmail?: string }> {
     const expected = this.configService.get<string>('agent.webhookSecret');
     if (!expected || secret !== expected) {
       throw new UnauthorizedException('Invalid webhook secret.');
