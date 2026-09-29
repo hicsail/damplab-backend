@@ -4,7 +4,9 @@ import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInpu
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
 import { AclidScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
-import { normalizeMemberEmailList, jobMemberEmails, jobPrimaryEmail, isJobMember } from './job-membership';
+import { normalizeMemberEmailList, jobMemberEmails, jobPrimaryEmail, isJobMember, isValidEmail } from './job-membership';
+import { normalizeJobDescription } from './job-description';
+import { normalizeClientEmail } from './client-email';
 import { callerMayAccessJob } from './job-access';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -657,6 +659,60 @@ export class JobResolver {
     if (!updated) {
       throw new Error('Unable to update job attachments');
     }
+    return updated;
+  }
+
+  /** Members and damplab-staff manage the member list, in any job state (B9). */
+  private async jobForMemberManagement(jobId: string, user: User): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
+    if (!isStaff && !isJobMember(job, user)) throw new ForbiddenException('You do not have permission to change who is on this job');
+    // B29: the primary client acting on their job claims its account id if unset.
+    return this.jobService.claimSubIfPrimary(job, user);
+  }
+
+  @Mutation(() => Job, { description: "Add a person (by email) with the same access as the job's primary client. Idempotent. Open to the job's members and damplab-staff." })
+  @RequirePermission(Permission.JobsView)
+  async addJobMember(@Args('jobId', { type: () => ID }) jobId: string, @Args('email') email: string, @CurrentUser() user: User): Promise<Job> {
+    const job = await this.jobForMemberManagement(jobId, user);
+    const normalized = normalizeClientEmail(email);
+    if (!normalized || !isValidEmail(normalized)) throw new BadRequestException('Enter a valid email address.');
+    if (normalized === jobPrimaryEmail(job) || jobMemberEmails(job).includes(normalized)) return job;
+    const updated = await this.jobService.addMember(jobId, normalized);
+    if (!updated) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    const actor = user.preferred_username ?? user.email ?? undefined;
+    await this.activityService.createEvent({ type: ActivityEventType.JOB_UPDATED, message: `${actor ?? 'Someone'} added ${normalized} to job "${job.name}"`, actorDisplayName: actor, jobId });
+    return updated;
+  }
+
+  @Mutation(() => Job, { description: "Remove a member from the job. The primary client can't be removed. Open to the job's members (including removing themselves) and damplab-staff." })
+  @RequirePermission(Permission.JobsView)
+  async removeJobMember(@Args('jobId', { type: () => ID }) jobId: string, @Args('email') email: string, @CurrentUser() user: User): Promise<Job> {
+    const job = await this.jobForMemberManagement(jobId, user);
+    const normalized = normalizeClientEmail(email);
+    if (normalized && normalized === jobPrimaryEmail(job)) throw new BadRequestException("The primary client can't be removed");
+    if (!normalized || !jobMemberEmails(job).includes(normalized)) return job;
+    const updated = await this.jobService.removeMember(jobId, normalized);
+    if (!updated) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    const actor = user.preferred_username ?? user.email ?? undefined;
+    await this.activityService.createEvent({ type: ActivityEventType.JOB_UPDATED, message: `${actor ?? 'Someone'} removed ${normalized} from job "${job.name}"`, actorDisplayName: actor, jobId });
+    return updated;
+  }
+
+  @Mutation(() => Job, { description: 'Set or clear the job description (trimmed, at most 500 characters). Any job state; creates no job version. Open to members and jobs:view-all.' })
+  @RequirePermission(Permission.JobsView)
+  async setJobDescription(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @CurrentUser() user: User,
+    @Args('description', { type: () => String, nullable: true }) description?: string | null
+  ): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    if (!hasPermission(user, Permission.JobsViewAll) && !isJobMember(job, user)) throw new ForbiddenException('You do not have permission to change this job');
+    await this.jobService.claimSubIfPrimary(job, user);
+    const updated = await this.jobService.setDescription(jobId, normalizeJobDescription(description));
+    if (!updated) throw new NotFoundException(`Job with ID ${jobId} not found`);
     return updated;
   }
 

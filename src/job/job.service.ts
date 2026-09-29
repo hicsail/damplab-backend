@@ -265,6 +265,21 @@ export class JobService {
       .exec();
   }
 
+  /** Idempotent: $addToSet. The caller has normalized the email and ruled out the primary. */
+  async addMember(jobId: string, email: string): Promise<Job | null> {
+    return this.jobModel.findByIdAndUpdate(jobId, { $addToSet: { memberEmails: email } }, { new: true }).exec();
+  }
+
+  async removeMember(jobId: string, email: string): Promise<Job | null> {
+    return this.jobModel.findByIdAndUpdate(jobId, { $pull: { memberEmails: email } }, { new: true }).exec();
+  }
+
+  /** Undefined unsets the field, so "cleared" and "never set" read the same. */
+  async setDescription(jobId: string, description: string | undefined): Promise<Job | null> {
+    const update = description ? { $set: { description } } : { $unset: { description: 1 } };
+    return this.jobModel.findByIdAndUpdate(jobId, update, { new: true }).exec();
+  }
+
   /**
    * Append a newly-created workflow to an existing job.
    * Intended for staff/technicians to update job scope as requirements change.

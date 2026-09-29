@@ -108,6 +108,12 @@ const GATES: Row[] = [
   [JobResolver, 'startJobCustomerVerification', Permission.JobsView],
   [JobResolver, 'refreshJobAclidScreening', Permission.JobsView],
 
+  // Collaborators. Baseline, scoped inside: membership (or damplab-staff /
+  // jobs:view-all) is checked in the resolver, the way the KYC mutations are.
+  [JobResolver, 'addJobMember', Permission.JobsView],
+  [JobResolver, 'removeJobMember', Permission.JobsView],
+  [JobResolver, 'setJobDescription', Permission.JobsView],
+
   // /lab-monitor/:screen
   [WorkflowNodeResolver, 'getLabMonitorNodes', Permission.LabMonitorView],
   [WorkflowNodeResolver, 'getLabMonitorStaffList', Permission.LabMonitorView],

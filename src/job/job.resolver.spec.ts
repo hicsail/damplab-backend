@@ -801,3 +801,88 @@ describe('JobResolver — members act as the owner (B2–B4)', () => {
     await expect(resolver.addJobAttachments('job-1', [] as any, strangerUser)).rejects.toThrow(/permission/);
   });
 });
+
+describe('JobResolver member management and description (B7–B9, B17)', () => {
+  const member: any = { sub: 'member-sub', email: 'member@x.org', preferred_username: 'Member', realm_access: { roles: [] } };
+  const primary: any = { sub: 'client-sub', email: 'client@bu.edu', preferred_username: 'Client', realm_access: { roles: [] } };
+  const adminUser: any = { sub: 'admin', email: 'admin@bu.edu', preferred_username: 'Admin', realm_access: { roles: [Role.DamplabStaff] } };
+  const tech: any = { sub: 'tech', email: 'tech@bu.edu', preferred_username: 'Tech', realm_access: { roles: [Role.Technician] } };
+  const strangerUser: any = { sub: 'x', email: 'x@x.org', preferred_username: 'X', realm_access: { roles: [] } };
+
+  function harness(over: any = {}): { resolver: JobResolver; job: any; jobService: any; createEvent: jest.Mock } {
+    const job: any = { _id: 'job-1', name: 'Job', sub: 'staff-sub', email: 'tech@bu.edu', clientEmail: 'client@bu.edu', memberEmails: ['member@x.org'], state: JobState.CLOSED, ...over };
+    const jobService: any = {
+      findById: jest.fn(async () => job),
+      addMember: jest.fn(async (_id: string, email: string) => ({ ...job, memberEmails: [...job.memberEmails, email] })),
+      removeMember: jest.fn(async (_id: string, email: string) => ({ ...job, memberEmails: job.memberEmails.filter((e: string) => e !== email) })),
+      setDescription: jest.fn(async (_id: string, description?: string) => ({ ...job, description })),
+      claimSubIfPrimary: jest.fn(async (j: any) => j)
+    };
+    const createEvent = jest.fn(async () => undefined);
+    const resolver = new JobResolver(jobService, {} as any, {} as any, { createEvent } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    return { resolver, job, jobService, createEvent };
+  }
+
+  it('adds a normalized email in any state, even a closed job, and records who did it', async () => {
+    const { resolver, jobService, createEvent } = harness();
+    const updated = await resolver.addJobMember('job-1', '  New@Y.org ', member);
+    expect(jobService.addMember).toHaveBeenCalledWith('job-1', 'new@y.org');
+    expect(updated.memberEmails).toContain('new@y.org');
+    expect(createEvent.mock.calls[0][0].message).toMatch(/new@y\.org/);
+    expect(createEvent.mock.calls[0][0].actorDisplayName).toBe('Member');
+  });
+
+  it('is idempotent for an existing member or the primary', async () => {
+    const { resolver, jobService, createEvent } = harness();
+    await resolver.addJobMember('job-1', 'MEMBER@x.org', member);
+    await resolver.addJobMember('job-1', 'client@bu.edu', member);
+    expect(jobService.addMember).not.toHaveBeenCalled();
+    expect(createEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed email', async () => {
+    const { resolver } = harness();
+    await expect(resolver.addJobMember('job-1', 'not-an-email', member)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('lets damplab-staff manage members, and refuses a technician who is not a member, and a stranger', async () => {
+    const { resolver } = harness();
+    await expect(resolver.addJobMember('job-1', 'a@b.org', adminUser)).resolves.toBeDefined();
+    await expect(resolver.addJobMember('job-1', 'a@b.org', tech)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(resolver.removeJobMember('job-1', 'member@x.org', strangerUser)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses to remove the primary client', async () => {
+    const { resolver } = harness();
+    await expect(resolver.removeJobMember('job-1', 'Client@BU.edu', adminUser)).rejects.toThrow("The primary client can't be removed");
+  });
+
+  it('lets a member remove themselves, and treats a non-member removal as a no-op', async () => {
+    const { resolver, jobService } = harness();
+    const updated = await resolver.removeJobMember('job-1', 'member@x.org', member);
+    expect(updated.memberEmails).toEqual([]);
+    jobService.removeMember.mockClear();
+    await resolver.removeJobMember('job-1', 'nobody@x.org', primary);
+    expect(jobService.removeMember).not.toHaveBeenCalled();
+  });
+
+  it('404s on a missing job', async () => {
+    const { resolver, jobService } = harness();
+    jobService.findById.mockResolvedValueOnce(null);
+    await expect(resolver.addJobMember('job-1', 'a@b.org', member)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('sets the description for a member or a jobs:view-all holder, trimmed, in any state', async () => {
+    const { resolver, jobService } = harness();
+    await resolver.setJobDescription('job-1', member, '  For lab 4 ');
+    expect(jobService.setDescription).toHaveBeenLastCalledWith('job-1', 'For lab 4');
+    await resolver.setJobDescription('job-1', tech, '');
+    expect(jobService.setDescription).toHaveBeenLastCalledWith('job-1', undefined);
+  });
+
+  it('refuses a stranger and an over-long description', async () => {
+    const { resolver } = harness();
+    await expect(resolver.setJobDescription('job-1', strangerUser, 'x')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(resolver.setJobDescription('job-1', member, 'x'.repeat(501))).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
