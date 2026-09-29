@@ -4,8 +4,7 @@ import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInpu
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
 import { AclidScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
-import { matchesClientEmail } from './client-email';
-import { normalizeMemberEmailList, jobMemberEmails, jobPrimaryEmail } from './job-membership';
+import { normalizeMemberEmailList, jobMemberEmails, jobPrimaryEmail, isJobMember } from './job-membership';
 import { callerMayAccessJob } from './job-access';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -209,7 +208,8 @@ export class JobResolver {
       viewerEmail: user.email,
       createdBySub: seesEveryJob ? requested.createdBySub : undefined,
       createdByClient: seesEveryJob ? requested.createdByClient : undefined,
-      assigneeId: seesEveryJob ? requested.assigneeId : undefined
+      assigneeId: seesEveryJob ? requested.assigneeId : undefined,
+      includeSubmittedBy: seesEveryJob
     });
   }
 
@@ -235,9 +235,8 @@ export class JobResolver {
   @Query(() => Job, { nullable: true })
   async ownJobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
     const job = await this.jobService.findById(id);
-    if (job?.sub === user.sub) return job;
-    if (matchesClientEmail(job?.clientEmail, user.email)) return job;
-    return null;
+    if (!job || !isJobMember(job, user)) return null;
+    return this.jobService.claimSubIfPrimary(job, user);
   }
 
   @Query(() => Job)
@@ -538,7 +537,7 @@ export class JobResolver {
    */
   @Mutation(() => Job, {
     description:
-      'Staff-only. Change pricing category for a job owner: updates their Keycloak pricing group, every job under that account, and reprices SOW billing cores (documents stay stale until staff refresh).'
+      "Staff-only. Change pricing category for a job's client: updates their Keycloak pricing group, every job under that account, and reprices SOW billing cores (documents stay stale until staff refresh)."
   })
   @Roles(Role.DamplabStaff)
   async changeJobCustomerCategory(@Args('jobId', { type: () => ID }) jobId: string, @Args('customerCategory', { type: () => CustomerCategory }) customerCategory: CustomerCategory): Promise<Job> {
@@ -547,6 +546,7 @@ export class JobResolver {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
 
+    // `job.sub` is the client's (B28/B31); on a job whose client has no account yet only this job is updated.
     // Account-wide: Keycloak group first (staff path / when Admin API is available), then all jobs for this sub.
     if (job.sub && this.keycloakService.isConfigured()) {
       try {
@@ -842,6 +842,7 @@ export class JobResolver {
     }
 
     this.assertContractWritable(job, user);
+    await this.jobService.claimSubIfPrimary(job, user);
 
     const updated = await this.jobVersionService.saveWorkflows(input, this.versionAuthor(user, job));
 

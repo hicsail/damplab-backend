@@ -20,7 +20,7 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
       customerActionRequired: 'EDIT_WORKFLOW',
       workflows: []
     };
-    const jobService: any = { findById: jest.fn(async () => job) };
+    const jobService: any = { findById: jest.fn(async () => job), claimSubIfPrimary: jest.fn(async (j: any) => j) };
     const saveWorkflows = jest.fn(async () => job);
     const jobVersionService: any = { saveWorkflows };
     const activityService: any = { createEvent: jest.fn(async () => undefined) };
@@ -567,9 +567,10 @@ describe('JobResolver.createJob — clients, members and description', () => {
   }
 
   it('refuses clientEmail from a caller without job:submit-for-client, before writing anything (F2)', async () => {
-    const { resolver, create } = harness();
+    const { resolver, create, byEmail } = harness();
     await expect(resolver.createJob({ name: 'J', workflows: [], clientEmail: 'client@bu.edu' } as any, customer)).rejects.toBeInstanceOf(ForbiddenException);
     expect(create).not.toHaveBeenCalled();
+    expect(byEmail).not.toHaveBeenCalled();
   });
 
   it("makes a staff-submitted job the client's: their sub, email, username and category, with staff recorded as submitter only (B28, F3, B11)", async () => {
@@ -639,5 +640,84 @@ describe('JobResolver resolve fields — memberEmails and primaryClientEmail', (
     const job: any = { sub: 's', email: 'tech@bu.edu', clientEmail: 'client@bu.edu', memberEmails: ['client@bu.edu', 'b@x.org'] };
     expect(resolver.primaryClientEmail(job)).toBe('client@bu.edu');
     expect(resolver.memberEmails(job)).toEqual(['b@x.org']);
+  });
+});
+
+describe('JobResolver — client ownership consequences (B29, B31)', () => {
+  const client: any = { sub: 'client-kc', email: 'client@bu.edu', preferred_username: 'cara', realm_access: { roles: [] } };
+
+  it('ownJobById claims the sub for the primary client and returns the claimed job', async () => {
+    const job: any = { _id: 'job-1', email: 'client@bu.edu', clientEmail: 'client@bu.edu', submittedBy: { sub: 'admin-1' } };
+    const claimSubIfPrimary = jest.fn(async (j: any, u: any) => ({ ...j, sub: u.sub }));
+    const resolver = new JobResolver(
+      { findById: async () => job, claimSubIfPrimary } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    expect((await resolver.ownJobById('job-1', client))?.sub).toBe('client-kc');
+    expect(claimSubIfPrimary).toHaveBeenCalledWith(job, client);
+  });
+
+  it('refuses the staff submitter on ownJobById — submittedBy grants nothing (B28)', async () => {
+    const job: any = { _id: 'job-1', sub: 'client-kc', email: 'client@bu.edu', clientEmail: 'client@bu.edu', submittedBy: { sub: 'admin-1', email: 'tech@bu.edu' } };
+    const resolver = new JobResolver(
+      { findById: async () => job, claimSubIfPrimary: async (j: any) => j } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    expect(await resolver.ownJobById('job-1', { sub: 'admin-1', email: 'tech@bu.edu', realm_access: { roles: [] } } as any)).toBeNull();
+  });
+
+  it("changeJobCustomerCategory updates the client's Keycloak account, not the staff submitter's (B31)", async () => {
+    const job: any = { _id: 'job-1', sub: 'client-kc', email: 'client@bu.edu', clientEmail: 'client@bu.edu', submittedBy: { sub: 'admin-1' } };
+    const setUserCustomerCategory = jest.fn(async () => undefined);
+    const updateCustomerCategoryForSub = jest.fn(async () => [job]);
+    const resolver = new JobResolver(
+      { findById: async () => job, updateCustomerCategoryForSub } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { syncServicesFromJobWorkflows: jest.fn(async () => undefined) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { isConfigured: () => true, setUserCustomerCategory } as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    await resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS);
+    expect(setUserCustomerCategory).toHaveBeenCalledWith('client-kc', CustomerCategory.INTERNAL_CUSTOMERS);
+    expect(updateCustomerCategoryForSub).toHaveBeenCalledWith('client-kc', CustomerCategory.INTERNAL_CUSTOMERS);
+  });
+
+  it('staff "created by me" also finds jobs they submitted for a client; a client never gets that widening', async () => {
+    const findJobsForViewer: jest.Mock = jest.fn(async () => ({ items: [], totalCount: 0 }));
+    const resolver = new JobResolver({ findJobsForViewer } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    await resolver.jobsForViewer({ scope: 'CREATED_BY_ME' } as any, { sub: 'admin-1', email: 'tech@bu.edu', realm_access: { roles: [Role.DamplabStaff] } } as any);
+    await resolver.jobsForViewer({} as any, client);
+    expect(findJobsForViewer.mock.calls[0][1]).toMatchObject({ includeSubmittedBy: true });
+    expect(findJobsForViewer.mock.calls[1][1]).toMatchObject({ includeSubmittedBy: false });
   });
 });

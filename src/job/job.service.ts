@@ -5,7 +5,7 @@ import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
 import { effectiveClientEmailExpr, normalizeClientEmail } from './client-email';
-import { jobMembersFilter } from './job-membership';
+import { jobMembersFilter, jobPrimaryEmail } from './job-membership';
 import { Workflow } from '../workflow/models/workflow.model';
 import { WorkflowService } from '../workflow/workflow.service';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobSortField, SortOrder, JobArchiveFilter, JobScope, JobsForViewerInput } from './dto/jobs-query.dto';
@@ -424,13 +424,15 @@ export class JobService {
    */
   async findJobsForViewer(
     input: JobsForViewerInput,
-    resolved: { scope: JobScope; viewerSub: string; viewerEmail?: string; createdBySub?: string; createdByClient?: string; assigneeId?: string }
+    resolved: { scope: JobScope; viewerSub: string; viewerEmail?: string; createdBySub?: string; createdByClient?: string; assigneeId?: string; includeSubmittedBy?: boolean }
   ): Promise<JobsResult> {
     let baseMatch: mongoose.FilterQuery<JobDocument> = {};
     if (resolved.scope === JobScope.CREATED_BY_ME) {
-      // Not `{ sub }`: a job staff submitted for this person carries the staff
-      // member's sub; `clientEmail` and `memberEmails` are what tie it to them.
-      baseMatch = jobMembersFilter(resolved.viewerSub, resolved.viewerEmail);
+      // Not `{ sub }`: a job's owner is the client even when staff entered it.
+      // Staff (jobs:view-all) also see what they entered for clients under
+      // "Created by me" — a list convenience; access never reads submittedBy.
+      const mine = jobMembersFilter(resolved.viewerSub, resolved.viewerEmail);
+      baseMatch = resolved.includeSubmittedBy ? { $or: [mine, { 'submittedBy.sub': resolved.viewerSub }] } : mine;
     } else if (resolved.createdByClient) {
       baseMatch = { $expr: { $eq: [effectiveClientEmailExpr(), normalizeClientEmail(resolved.createdByClient) ?? ''] } };
     } else if (resolved.createdBySub) {
@@ -440,6 +442,19 @@ export class JobService {
     const workedBySub = resolved.scope === JobScope.WORKED_BY_ME ? resolved.viewerSub : resolved.assigneeId;
     const { items, totalCount } = await this.runJobsPipeline(baseMatch, input, workedBySub);
     return { items, totalCount };
+  }
+
+  /**
+   * B29: a staff-submitted job for a client with no account yet has no sub.
+   * The first time that client (primary email match) opens or edits it, record
+   * their sub. Conditional in Mongo, so it never overwrites and a race is a no-op.
+   */
+  async claimSubIfPrimary(job: Job, user: { sub?: string; email?: string }): Promise<Job> {
+    if (job.sub || !user.sub) return job;
+    const email = normalizeClientEmail(user.email);
+    if (!email || email !== jobPrimaryEmail(job)) return job;
+    const claimed = await this.jobModel.findOneAndUpdate({ _id: (job as any)._id, $or: [{ sub: { $exists: false } }, { sub: null }, { sub: '' }] }, { $set: { sub: user.sub } }, { new: true }).exec();
+    return claimed ?? job;
   }
 
   /**
@@ -460,10 +475,14 @@ export class JobService {
             // whatever order the jobs come back in.
             clientDisplayName: { $max: '$clientDisplayName' },
             username: { $max: '$username' },
-            // Only from a job they submitted themselves — on a staff-submitted
-            // one `sub` is the technician's, and handing that back as the
-            // client's sub is the bug this grouping exists to avoid.
-            ownSub: { $max: { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$clientEmail', ''] } }, 0] }, null, '$sub'] } }
+            // A job's sub is its client's, except on a legacy staff submission
+            // not yet migrated (clientEmail set, no submittedBy): there it is
+            // still the technician's.
+            ownSub: {
+              $max: {
+                $cond: [{ $and: [{ $gt: [{ $strLenCP: { $ifNull: ['$clientEmail', ''] } }, 0] }, { $eq: [{ $ifNull: ['$submittedBy', null] }, null] }] }, null, '$sub']
+              }
+            }
           }
         },
         { $sort: { _id: 1 } }
