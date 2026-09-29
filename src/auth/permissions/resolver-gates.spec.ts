@@ -183,6 +183,7 @@ const GATES: Row[] = [
   [CategoryResolver, 'createCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'updateCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'deleteCategory', Permission.CatalogEditorWrite],
+  [DampLabServicesResolver, 'deletedServiceIds', Permission.CatalogEditorRead],
   [ParameterSetsResolver, 'parameterSets', Permission.CatalogEditorRead],
   [ParameterSetsResolver, 'parameterSet', Permission.CatalogEditorRead],
   [ParameterSetsResolver, 'createParameterSet', Permission.CatalogEditorWrite],

@@ -52,24 +52,36 @@ export class DampLabServicesResolver {
     const services = await this.dampLabServices.findAll();
     const category = callerCustomerCategory(user);
     const seesEverything = canSeeAllPricingTiers(user);
+    // Retired operations reach only the people who retire them. Server-side,
+    // because the page is a client page and its filter is only presentation.
+    const seesHidden = hasPermission(user, Permission.CatalogEditorRead);
 
-    return services.map((service) => {
-      const pricesPerParameter = effectivePricingMode(service) === ServicePricingMode.PARAMETER;
-      return {
-        id: String((service as any)._id ?? (service as any).id),
-        name: service.name,
-        description: service.description,
-        serviceCategoryName: service.serviceCategoryName,
-        unit: service.unit,
-        // Per-parameter services have no single number to quote: the price depends
-        // on what the customer picks. Say so rather than showing a misleading base.
-        price: pricesPerParameter ? undefined : resolveCategoryPrice(service as any, category),
-        pricingModeLabel: pricesPerParameter ? 'Based on selected options' : 'Operation price',
-        parameterCount: Array.isArray(service.parameters) ? service.parameters.length : 0,
-        pricing: seesEverything ? service.pricing : undefined,
-        parameters: seesEverything ? service.parameters : undefined
-      };
-    });
+    return services
+      .filter((service) => seesHidden || service.hiddenFromClients !== true)
+      .map((service) => {
+        const pricesPerParameter = effectivePricingMode(service) === ServicePricingMode.PARAMETER;
+        return {
+          id: String((service as any)._id ?? (service as any).id),
+          name: service.name,
+          description: service.description,
+          serviceCategoryName: service.serviceCategoryName,
+          unit: service.unit,
+          // Per-parameter services have no single number to quote: the price depends
+          // on what the customer picks. Say so rather than showing a misleading base.
+          price: pricesPerParameter ? undefined : resolveCategoryPrice(service as any, category),
+          pricingModeLabel: pricesPerParameter ? 'Based on selected options' : 'Operation price',
+          parameterCount: Array.isArray(service.parameters) ? service.parameters.length : 0,
+          pricing: seesEverything ? service.pricing : undefined,
+          parameters: seesEverything ? service.parameters : undefined,
+          hiddenFromClients: service.hiddenFromClients === true
+        };
+      });
+  }
+
+  @Query(() => [ID], { description: 'Ids of soft-deleted operations. The operations spreadsheet upload uses it to tell "deleted" from "unknown".' })
+  @RequirePermission(Permission.CatalogEditorRead)
+  deletedServiceIds(): Promise<string[]> {
+    return this.dampLabServices.findDeletedIds();
   }
 
   @Mutation(() => DampLabService)
