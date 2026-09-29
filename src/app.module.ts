@@ -8,6 +8,7 @@ import config from './config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
 import { DampLabServicesModule } from './services/damplab-services.module';
+import { ParameterSetsModule } from './parameter-sets/parameter-sets.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { WorkflowModule } from './workflow/workflow.module';
 import { CategoriesModule } from './categories/categories.module';
@@ -58,6 +59,7 @@ import { AclidModule } from './aclid/aclid.module';
     }),
     AuthModule,
     DampLabServicesModule,
+    ParameterSetsModule,
     WorkflowModule,
     CategoriesModule,
     BundlesModule,

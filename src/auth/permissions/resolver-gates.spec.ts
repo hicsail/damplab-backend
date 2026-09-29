@@ -29,6 +29,7 @@ import { PermissionsResolver } from './permissions.resolver';
 import { InvoiceResolver } from '../../invoice/invoice.resolver';
 import { JobPaymentResolver } from '../../job-payment/job-payment.resolver';
 import { JobChargeResolver } from '../../job-payment/job-charge.resolver';
+import { ParameterSetsResolver } from '../../parameter-sets/parameter-sets.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -182,6 +183,11 @@ const GATES: Row[] = [
   [CategoryResolver, 'createCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'updateCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'deleteCategory', Permission.CatalogEditorWrite],
+  [ParameterSetsResolver, 'parameterSets', Permission.CatalogEditorRead],
+  [ParameterSetsResolver, 'parameterSet', Permission.CatalogEditorRead],
+  [ParameterSetsResolver, 'createParameterSet', Permission.CatalogEditorWrite],
+  [ParameterSetsResolver, 'updateParameterSet', Permission.CatalogEditorWrite],
+  [ParameterSetsResolver, 'deleteParameterSet', Permission.CatalogEditorWrite],
 
   // Samples spreadsheets. The blank template is catalog data — staff attach it,
   // and anyone who can see the catalog may download it, because the canvas is
