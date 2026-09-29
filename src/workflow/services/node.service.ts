@@ -233,13 +233,24 @@ export class WorkflowNodeService {
    * readiness logic the bench view relies on.
    */
   async isNodeReady(nodeId: string): Promise<boolean> {
-    const workflow = await this.workflowModel.findOne({ nodes: new mongoose.Types.ObjectId(nodeId) }).lean().exec();
+    const workflow = await this.workflowModel
+      .findOne({ nodes: new mongoose.Types.ObjectId(nodeId) })
+      .lean()
+      .exec();
     if (!workflow) return true;
     const nodeIds = (workflow.nodes ?? []).map(String);
     const edgeIds = (workflow.edges ?? []).map(String);
     const [states, edges] = await Promise.all([
-      this.workflowNodeModel.find({ _id: { $in: nodeIds } }).select('_id state').lean().exec(),
-      this.workflowEdgeModel.find({ _id: { $in: edgeIds } }).select('source target').lean().exec()
+      this.workflowNodeModel
+        .find({ _id: { $in: nodeIds } })
+        .select('_id state')
+        .lean()
+        .exec(),
+      this.workflowEdgeModel
+        .find({ _id: { $in: edgeIds } })
+        .select('source target')
+        .lean()
+        .exec()
     ]);
     const ready = readyOperationIds({
       nodes: states.map((n) => ({ id: String(n._id), state: (n.state as WorkflowNodeState) ?? WorkflowNodeState.QUEUED })),
