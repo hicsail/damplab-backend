@@ -1,4 +1,4 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { CommentResolver } from './comment.resolver';
 import { Role } from '../auth/roles/roles.enum';
 
@@ -22,7 +22,11 @@ function harness(): { resolver: CommentResolver; commentService: any } {
     delete: jest.fn(async () => true)
   };
   const jobService: any = { findById: jest.fn(async (id: string) => (id === 'job-1' ? job : null)) };
-  const resolver = new CommentResolver(commentService, { createEvent: jest.fn(async () => undefined) } as any, { dispatch: jest.fn() } as any, {} as any, jobService);
+  // Node n-1 is in a workflow that belongs to job-1; n-b is in job-2's workflow.
+  const workflows: Record<string, any> = { 'n-1': { _id: 'wf-1' }, 'n-b': { _id: 'wf-b' } };
+  const workflowService: any = { findWhereNodeId: jest.fn(async (id: string) => workflows[id] ?? null) };
+  jobService.findByWorkflow = jest.fn(async (wf: any) => (wf._id === 'wf-1' ? job : { _id: 'job-2' }));
+  const resolver = new CommentResolver(commentService, { createEvent: jest.fn(async () => undefined) } as any, { dispatch: jest.fn() } as any, {} as any, jobService, workflowService);
   return { resolver, commentService };
 }
 
@@ -203,5 +207,20 @@ describe('CommentResolver — API keys never see internal notes', () => {
     const { resolver, commentService } = harness();
     await resolver.createComment({ jobId: 'job-1', content: 'x', isInternal: true } as any, apiKeyUser);
     expect(commentService.create.mock.calls[0][0]).toMatchObject({ isInternal: false });
+  });
+});
+
+describe('CommentResolver — a node comment must be on a node of that job', () => {
+  it("refuses another job's node, and a node that does not exist", async () => {
+    const { resolver, commentService } = harness();
+    await expect(resolver.createComment({ jobId: 'job-1', content: 'x', nodeId: 'n-b' } as any, member)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(resolver.createComment({ jobId: 'job-1', content: 'x', nodeId: 'missing' } as any, member)).rejects.toBeInstanceOf(BadRequestException);
+    expect(commentService.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts the job's own node, and a comment with no node", async () => {
+    const { resolver } = harness();
+    await expect(resolver.createComment({ jobId: 'job-1', content: 'x', nodeId: 'n-1' } as any, member)).resolves.toMatchObject({ _id: 'c2' });
+    await expect(resolver.createComment({ jobId: 'job-1', content: 'x' } as any, member)).resolves.toMatchObject({ _id: 'c2' });
   });
 });

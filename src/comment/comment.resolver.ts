@@ -2,7 +2,7 @@ import { Resolver, Mutation, Args, Query, ID, ResolveField, Parent } from '@nest
 import { Comment, CommentAttachment, CommentAuthorType } from './comment.model';
 import { CommentService } from './comment.service';
 import { CreateCommentInput, UpdateCommentInput } from './comment.dto';
-import { ForbiddenException, Inject, NotFoundException, UseGuards, forwardRef } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, NotFoundException, UseGuards, forwardRef } from '@nestjs/common';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
 import { User } from '../auth/user.interface';
@@ -12,6 +12,7 @@ import { NotificationDispatchService } from '../notification/notification-dispat
 import { JobAttachmentsService } from '../job/job-attachments.service';
 import { isStaff } from '../sow/sow-access';
 import { JobService } from '../job/job.service';
+import { WorkflowService } from '../workflow/workflow.service';
 import { isJobMember } from '../job/job-membership';
 import { hasPermission } from '../auth/permissions/permissions';
 import { Permission } from '../auth/permissions/permission.enum';
@@ -28,7 +29,8 @@ export class CommentResolver {
     // Reuse the existing presign service — files for comment attachments live
     // in the same S3 bucket and were uploaded via createJobAttachmentUploadUrls.
     private readonly jobAttachmentsService: JobAttachmentsService,
-    @Inject(forwardRef(() => JobService)) private readonly jobService: JobService
+    @Inject(forwardRef(() => JobService)) private readonly jobService: JobService,
+    @Inject(forwardRef(() => WorkflowService)) private readonly workflowService: WorkflowService
   ) {}
 
   /** Whether the caller is on the job (a member, or someone who sees every job). 404 before 403. */
@@ -44,6 +46,13 @@ export class CommentResolver {
     if (user.apiKey) return false;
     const roles = user.realm_access?.roles ?? [];
     return roles.some((r) => STAFF_FLAVORED_ROLES.includes(r)) || hasPermission(user, Permission.JobsViewAll);
+  }
+
+  /** A node comment is read through the node's job, so the node must be one of this job's. */
+  private async assertNodeBelongsToJob(nodeId: string, jobId: string): Promise<void> {
+    const workflow = await this.workflowService.findWhereNodeId(String(nodeId)).catch(() => null);
+    const nodeJob = workflow ? await this.jobService.findByWorkflow(workflow) : null;
+    if (!nodeJob || String(nodeJob._id) !== String(jobId)) throw new BadRequestException('That node does not belong to this job');
   }
 
   private async assertMayUseJobComments(jobId: string, user: User): Promise<void> {
@@ -109,6 +118,7 @@ export class CommentResolver {
   @RequirePermission(Permission.JobsView)
   async createComment(@Args('input', { type: () => CreateCommentInput }) input: CreateCommentInput, @CurrentUser() user: User): Promise<Comment> {
     await this.assertMayUseJobComments(input.jobId, user);
+    if (input.nodeId) await this.assertNodeBelongsToJob(input.nodeId, input.jobId);
     // B30: who a comment is from is the caller, never what the page sent and
     // never the job's owner fields. The page used to pass job.email, which on a
     // staff-submitted job was the technician's.
