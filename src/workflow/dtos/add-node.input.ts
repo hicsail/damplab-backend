@@ -2,13 +2,15 @@ import { BadRequestException, Injectable, PipeTransform, Scope, Inject } from '@
 import { ID, Field, InputType, OmitType } from '@nestjs/graphql';
 import { WorkflowNode, WorkflowNodeState } from '../models/node.model';
 import { DampLabServices } from '../../services/damplab-services.services';
+import { buildParameterSnapshot } from '../utils/parameter-snapshot.util';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-data.util';
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { REQUEST } from '@nestjs/core';
 import { deriveCustomerCategory } from '../../pricing/pricing-groups';
 
+// parameterSnapshot is server-written and an object type: exposing it on an input would both let clients forge it and fail schema generation.
 @InputType()
-export class AddNodeInput extends OmitType(WorkflowNode, ['_id', 'service', 'state'] as const, InputType) {
+export class AddNodeInput extends OmitType(WorkflowNode, ['_id', 'service', 'state', 'parameterSnapshot'] as const, InputType) {
   @Field(() => ID, { description: 'The ID of the service this node is a part of' })
   serviceId: string;
 }
@@ -52,6 +54,6 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     const groups: string[] = this.request?.user?.groups ?? [];
     const category: CustomerCategory | undefined = deriveCustomerCategory([...roles, ...groups]);
     const price = calculateServiceCost(service, formData, value.price, category);
-    return { ...value, formData, service, state: WorkflowNodeState.QUEUED, price };
+    return { ...value, formData, service, state: WorkflowNodeState.QUEUED, price, parameterSnapshot: buildParameterSnapshot(service, formData) };
   }
 }

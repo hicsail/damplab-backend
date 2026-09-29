@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { Field, ObjectType, ID, Int, Float, registerEnumType } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
 import { JobState } from '../job/job.model';
+import { ParameterSnapshotEntry } from '../workflow/models/parameter-snapshot.model';
 
 /**
  * A job version is an immutable snapshot of a job's workflow graph. Every save
@@ -63,6 +64,13 @@ export class JobVersionNode {
   @Prop({ type: mongoose.Schema.Types.Mixed, default: [] })
   @Field(() => JSON, { description: 'Parameter values, canonical array shape: [{ id, value }]' })
   formData: any;
+
+  @Prop({ type: [mongoose.Schema.Types.Mixed], required: false, default: undefined })
+  @Field(() => [ParameterSnapshotEntry], {
+    nullable: true,
+    description: "The node's parameter snapshot as of this version."
+  })
+  parameterSnapshot?: ParameterSnapshotEntry[];
 
   @Prop({ required: true, default: '' })
   @Field({ defaultValue: '' })
