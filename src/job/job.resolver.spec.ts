@@ -886,3 +886,54 @@ describe('JobResolver member management and description (B7–B9, B17)', () => {
     await expect(resolver.setJobDescription('job-1', member, 'x'.repeat(501))).rejects.toBeInstanceOf(BadRequestException);
   });
 });
+
+describe('JobResolver.reviewJob — owner notification (F4)', () => {
+  it.each(['ACCEPT', 'REQUEST_CLARIFICATION', 'REQUEST_EDITS', 'REQUEST_APPROVAL'])('dispatches JOB_REVIEWED for %s, keyed on the operation id', async (decision) => {
+    const dispatch = jest.fn();
+    const reviewJob = jest.fn(async () => ({ _id: 'job-1', name: 'Job' }));
+    const resolver = new JobResolver(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { reviewJob } as any,
+      {} as any,
+      { dispatch } as any,
+      {} as any,
+      {} as any
+    );
+    const staff: any = { sub: 'staff-1', email: 's@bu.edu', preferred_username: 'Staff', realm_access: { roles: [Role.DamplabStaff] } };
+    await resolver.reviewJob({ operationId: 'op-1', jobId: 'job-1', decision } as any, staff);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'JOB_REVIEWED', jobId: 'job-1', actorSub: 'staff-1', operationId: 'job-reviewed:op-1' }));
+    expect(dispatch.mock.calls[0][0].title).toBeTruthy();
+  });
+
+  it('does not notify when the review fails', async () => {
+    const dispatch = jest.fn();
+    const resolver = new JobResolver(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        reviewJob: jest.fn(async () => {
+          throw new BadRequestException('no');
+        })
+      } as any,
+      {} as any,
+      { dispatch } as any,
+      {} as any,
+      {} as any
+    );
+    await expect(resolver.reviewJob({ operationId: 'op-2', jobId: 'job-1', decision: 'ACCEPT' } as any, { sub: 's', realm_access: { roles: [] } } as any)).rejects.toBeInstanceOf(BadRequestException);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+});

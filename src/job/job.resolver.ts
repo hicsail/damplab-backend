@@ -38,7 +38,7 @@ import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 import { assertJobContractWritable } from './job-editing';
 import { assertMaySubmitEquipmentUse } from './equipment-use-gate';
 import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
-import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
+import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
@@ -93,6 +93,13 @@ export class JobResolver {
       isOwner: isJobMember(job, user)
     });
   }
+
+  private static readonly REVIEW_NOTIFICATION_TITLES: Record<JobReviewDecision, string> = {
+    [JobReviewDecision.ACCEPT]: 'Your job was accepted',
+    [JobReviewDecision.REQUEST_CLARIFICATION]: 'The DAMP Lab has a question about your job',
+    [JobReviewDecision.REQUEST_EDITS]: 'The DAMP Lab asked for changes to your job',
+    [JobReviewDecision.REQUEST_APPROVAL]: 'The DAMP Lab asked you to approve changes to your job'
+  };
 
   constructor(
     private readonly jobService: JobService,
@@ -782,12 +789,25 @@ export class JobResolver {
   })
   @Roles(Role.DamplabStaff)
   async reviewJob(@Args('input', { type: () => ReviewJobInput }) input: ReviewJobInput, @CurrentUser() user: User): Promise<Job> {
-    return this.jobReviewService.reviewJob(input, {
+    const reviewed = await this.jobReviewService.reviewJob(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
       email: user.email,
       claims: user.realm_access?.roles ?? []
     });
+    const title = JobResolver.REVIEW_NOTIFICATION_TITLES[input.decision] ?? 'Your job was reviewed';
+    // Keyed on the review's own operation id, so a retried review makes one
+    // notification per recipient rather than one per attempt.
+    this.notificationDispatch.dispatch({
+      eventType: 'JOB_REVIEWED',
+      title,
+      message: input.message?.trim() || `${title}: "${reviewed?.name ?? 'your job'}"`,
+      jobId: input.jobId,
+      actorSub: user.sub,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      operationId: `job-reviewed:${input.operationId}`
+    });
+    return reviewed;
   }
 
   @Mutation(() => Job, {
