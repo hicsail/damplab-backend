@@ -88,7 +88,7 @@ export class JobResolver {
   private assertContractWritable(job: Job, user: User): void {
     assertJobContractWritable(job, {
       isStaff: (user.realm_access?.roles ?? []).includes(Role.DamplabStaff),
-      isOwner: job.sub === user.sub
+      isOwner: isJobMember(job, user)
     });
   }
 
@@ -605,7 +605,7 @@ export class JobResolver {
       throw new Error('Job not found');
     }
     const roles = user.realm_access?.roles ?? [];
-    const isOwner = job.sub === user.sub;
+    const isOwner = isJobMember(job, user);
     const isStaff = roles.includes(Role.DamplabStaff);
     if (!isOwner && !isStaff) {
       throw new Error('You do not have permission to modify this job');
@@ -639,7 +639,7 @@ export class JobResolver {
       throw new Error('Job not found');
     }
     const roles = user.realm_access?.roles ?? [];
-    const isOwner = job.sub === user.sub;
+    const isOwner = isJobMember(job, user);
     const isStaff = roles.includes(Role.DamplabStaff);
     if (!isOwner && !isStaff) {
       throw new Error('You do not have permission to modify this job');
@@ -683,7 +683,7 @@ export class JobResolver {
 
     const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
     if (!isStaff) {
-      const isOwner = job.sub === user.sub;
+      const isOwner = isJobMember(job, user);
       const isResubmission = job.state === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
       if (!isOwner || !isResubmission) {
         throw new ForbiddenException('You do not have permission to change the state of this job');
@@ -729,6 +729,7 @@ export class JobResolver {
     return this.jobReviewService.reviewJob(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -740,6 +741,7 @@ export class JobResolver {
     return this.jobReviewService.respondToJobReview(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -751,6 +753,7 @@ export class JobResolver {
     return this.jobReviewService.rejectJobReview(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -762,6 +765,7 @@ export class JobResolver {
     return this.jobReviewService.cancelJob(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -773,6 +777,7 @@ export class JobResolver {
     return this.jobReviewService.requestJobEditAccess(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -785,6 +790,7 @@ export class JobResolver {
     return this.jobReviewService.withdrawJobFromCustomer(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -797,6 +803,7 @@ export class JobResolver {
     return this.jobReviewService.withdrawJobAcceptance(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -829,8 +836,8 @@ export class JobResolver {
    * Replace the job's workflow graph with what the editor produced, and record
    * the result as a new version.
    *
-   * Staff may edit any job that is not CLOSED. Customers may edit only their own
-   * job, and only while staff have enabled editing on it.
+   * Staff may edit any job that is not CLOSED. Customers may edit only a job they are a member of
+   * and only while staff have enabled editing on it.
    */
   @Mutation(() => Job, {
     description: "Replace a job's workflow graph from the workflow editor and record the result as a new job version."

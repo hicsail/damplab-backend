@@ -1357,3 +1357,30 @@ describe('requestJobEditAccess', () => {
     expect(job.editAccessRequestedAt ?? null).toBeNull();
   });
 });
+
+describe('customer commands by a job member (B3)', () => {
+  const member = { sub: 'member-sub', name: 'Member', email: 'Member@X.org' };
+
+  it('lets a member request edit access', async () => {
+    const { service, job } = buildHarness({ state: JobState.ACCEPTED, memberEmails: ['member@x.org'] });
+    await service.requestJobEditAccess({ operationId: 'member-edit-1', jobId: JOB_ID }, member);
+    expect(job.editAccessRequestedAt instanceof Date).toBe(true);
+  });
+
+  it('lets the client named on a staff-submitted job cancel it', async () => {
+    const { service, job } = buildHarness({ state: JobState.SUBMITTED, clientEmail: 'client@bu.edu' }, { sowStatus: null });
+    await service.cancelJob({ operationId: 'client-cancel-1', jobId: JOB_ID, reason: 'No longer needed' } as any, { sub: 'client-sub', name: 'Client', email: 'CLIENT@bu.edu' });
+    expect(job.state).toBe(JobState.CANCELLED);
+  });
+
+  it('lets a member respond to a review', async () => {
+    const { service, job } = buildHarness({ state: JobState.CHANGES_REQUESTED, customerActionRequired: CustomerActionRequired.REPLY, memberEmails: ['member@x.org'] });
+    await service.respondToJobReview({ operationId: 'member-reply-1', jobId: JOB_ID, message: 'Here you go.' }, member);
+    expect(job.state).toBe(JobState.SUBMITTED);
+  });
+
+  it('still refuses a stranger with an email', async () => {
+    const { service } = buildHarness({ state: JobState.ACCEPTED, memberEmails: ['member@x.org'] });
+    await expect(service.requestJobEditAccess({ operationId: 'stranger-1', jobId: JOB_ID }, { sub: 'x', name: 'X', email: 'x@x.org' })).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});

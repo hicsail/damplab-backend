@@ -721,3 +721,83 @@ describe('JobResolver — client ownership consequences (B29, B31)', () => {
     expect(findJobsForViewer.mock.calls[1][1]).toMatchObject({ includeSubmittedBy: false });
   });
 });
+
+describe('JobResolver — members act as the owner (B2–B4)', () => {
+  const member: any = { sub: 'member-sub', email: 'Member@X.org', preferred_username: 'Member', realm_access: { roles: [] } };
+  const namedClient: any = { sub: 'client-sub', email: 'client@bu.edu', preferred_username: 'Client', realm_access: { roles: [] } };
+  const strangerUser: any = { sub: 'stranger', email: 'stranger@x.org', preferred_username: 'S', realm_access: { roles: [] } };
+  // A legacy, unmigrated staff submission (sub/email still the technician's): the
+  // named client must still act through clientEmail (B4). New-style jobs are covered in Task 4.
+  const baseJob = (over: any = {}): any => ({
+    _id: 'job-1',
+    name: 'Job',
+    sub: 'staff-sub',
+    email: 'tech@bu.edu',
+    clientEmail: 'client@bu.edu',
+    memberEmails: ['member@x.org'],
+    workflows: [],
+    ...over
+  });
+
+  function harness(job: any): { resolver: JobResolver; saveWorkflows: jest.Mock; updateState: jest.Mock; addAttachments: jest.Mock } {
+    const saveWorkflows = jest.fn(async () => job);
+    const updateState = jest.fn(async (_j: any, state: any) => ({ ...job, state }));
+    const addAttachments = jest.fn(async () => job);
+    const jobService: any = { findById: jest.fn(async () => job), updateState, addAttachments, claimSubIfPrimary: jest.fn(async (j: any) => j) };
+    const jobVersionService: any = { saveWorkflows, appendStateEvent: jest.fn(async () => undefined) };
+    const activityService: any = { createEvent: jest.fn(async () => undefined) };
+    const sowService: any = { syncServicesFromJobWorkflows: jest.fn(async () => undefined) };
+    const jobScreeningService: any = { screenJobInBackground: jest.fn() };
+    const resolver = new JobResolver(
+      jobService,
+      {} as any,
+      {} as any,
+      activityService,
+      {} as any,
+      sowService,
+      {} as any,
+      jobVersionService,
+      {} as any,
+      {} as any,
+      {} as any,
+      jobScreeningService,
+      {} as any
+    );
+    return { resolver, saveWorkflows, updateState, addAttachments };
+  }
+
+  it('ownJobById opens the job for a member and returns null to a stranger', async () => {
+    const { resolver } = harness(baseJob());
+    expect(await resolver.ownJobById('job-1', member)).toMatchObject({ _id: 'job-1' });
+    expect(await resolver.ownJobById('job-1', strangerUser)).toBeNull();
+  });
+
+  it.each([
+    ['member', member],
+    ['client named on a staff-submitted job (B4)', namedClient]
+  ])('lets the %s save the workflow while edit access is granted', async (_label, caller) => {
+    const { resolver, saveWorkflows } = harness(baseJob({ state: JobState.CHANGES_REQUESTED, customerActionRequired: 'EDIT_WORKFLOW' }));
+    await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, caller);
+    expect(saveWorkflows).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a stranger saving the workflow', async () => {
+    const { resolver, saveWorkflows } = harness(baseJob({ state: JobState.CHANGES_REQUESTED, customerActionRequired: 'EDIT_WORKFLOW' }));
+    await expect(resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, strangerUser)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(saveWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('lets a member resubmit', async () => {
+    const job = baseJob({ state: JobState.CHANGES_REQUESTED });
+    const { resolver, updateState } = harness(job);
+    await resolver.changeJobState(job, JobState.SUBMITTED, member);
+    expect(updateState).toHaveBeenCalled();
+  });
+
+  it('lets a member add attachments and refuses a stranger', async () => {
+    const { resolver, addAttachments } = harness(baseJob());
+    await resolver.addJobAttachments('job-1', [{ filename: 'a.pdf', key: 'k', contentType: 'application/pdf', size: 1 }] as any, member);
+    expect(addAttachments).toHaveBeenCalled();
+    await expect(resolver.addJobAttachments('job-1', [] as any, strangerUser)).rejects.toThrow(/permission/);
+  });
+});

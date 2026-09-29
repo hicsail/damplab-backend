@@ -105,6 +105,8 @@ exist when the matrix was written.
 | `bench:use` | Admin + Technician + Equipment User | **Admin + Technician** | 2026-09-18. Reverses the amendment above; equipment users lose My Bench. |
 | `labmonitor:view` | Admin + Technician + Equipment User | **Admin + Technician** | 2026-09-18. Equipment users lose the Lab Monitors. |
 | `releasenotes:view` | Everyone (baseline) | **Admin + Technician** | 2026-09-18. Release Notes is a staff page. Leaves the baseline, so plain clients lose it too — the floor must stay a subset of every tier. `/release_notes` now sits behind `PrivateRouteReleaseNotes`. |
+| Job membership | Jobs you own = the submitter's `sub`, or the `clientEmail` staff typed | **The primary client + every address in `memberEmails`; a staff submitter owns nothing** | 2026-09-29. A job has a primary client (`clientEmail ?? email`) and any number of members with the same powers. A job staff submit for a client is the client's: its `sub`/`email`/`username` are the client's, and the staff member is recorded in `submittedBy`, which grants nothing (staff keep access through `jobs:view-all` and their roles). Every "jobs you own" rule — reads, edits, review responses, cancel, SOW sign/decline, billing reads, comments, attachments, KYC, booking — goes through `isJobMember` (`src/job/job-membership.ts`). Members are added or removed by a member or `damplab-staff`; the primary cannot be removed. `changeJobCustomerCategory` acts on the client's account. |
+| `job:submit-for-client` | UI-only | **Enforced on the server** | 2026-09-29. `createJob` with `clientEmail` from a caller without the permission is Forbidden (F2). |
 
 Two notes on the equipment-user grants, because a bare table edit misses both:
 

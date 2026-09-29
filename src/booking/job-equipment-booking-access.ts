@@ -1,5 +1,5 @@
 import { registerEnumType } from '@nestjs/graphql';
-import { matchesClientEmail } from '../job/client-email';
+import { isJobMember } from '../job/job-membership';
 import { normalizeBookerEmails } from './booker-emails';
 
 /**
@@ -22,7 +22,9 @@ registerEnumType(JobBookingAccessStatus, { name: 'JobBookingAccessStatus' });
 
 export interface AccessJob {
   sub?: string;
+  email?: string;
   clientEmail?: string;
+  memberEmails?: string[];
   bookingBlocked?: boolean;
   bookingBlockedReason?: string;
 }
@@ -74,7 +76,7 @@ export function resolveJobEquipmentBookingAccess(job: AccessJob, actor: AccessAc
 
   const [actorEmail] = normalizeBookerEmails(actor.email);
   const listedNodeIds = actorEmail ? operations.filter((op) => op.bookers.includes(actorEmail)).map((op) => op.nodeId) : [];
-  const isOwner = (!!job.sub && !!actor.sub && job.sub === actor.sub) || matchesClientEmail(job.clientEmail, actor.email);
+  const isOwner = isJobMember(job, actor);
 
   // HIDDEN first, and it returns nothing else: a stranger must not learn from the
   // status whether this job exists, whether its SOW is signed, or that the lab has
