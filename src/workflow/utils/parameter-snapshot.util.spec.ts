@@ -42,6 +42,11 @@ describe('buildParameterSnapshot', () => {
     ]);
   });
 
+  it('shows only the filename for a bare S3 key, never the key', () => {
+    const snapshot = buildParameterSnapshot(service, [{ id: 'map', value: 'workflow-parameters/user-1/plasmid.gb' }]);
+    expect(snapshot[0].displayValue).toBe('plasmid.gb');
+  });
+
   it('skips empty values', () => {
     expect(
       buildParameterSnapshot(service, [

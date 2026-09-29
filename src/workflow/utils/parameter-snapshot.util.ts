@@ -37,7 +37,9 @@ function fileNameOf(value: unknown): string | undefined {
     try {
       parsed = JSON.parse(value);
     } catch {
-      return value;
+      // A bare, non-JSON string is a storage key at worst: show only its last path segment.
+      const last = value.split('/').pop() ?? '';
+      return last.trim() !== '' ? last : undefined;
     }
   }
   const name = parsed && typeof parsed === 'object' ? (parsed as { filename?: unknown }).filename : undefined;
