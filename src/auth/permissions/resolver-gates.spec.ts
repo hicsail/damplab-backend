@@ -30,6 +30,7 @@ import { InvoiceResolver } from '../../invoice/invoice.resolver';
 import { JobPaymentResolver } from '../../job-payment/job-payment.resolver';
 import { JobChargeResolver } from '../../job-payment/job-charge.resolver';
 import { ParameterSetsResolver } from '../../parameter-sets/parameter-sets.resolver';
+import { UploadLogResolver } from '../../inventory/upload-log.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -190,6 +191,11 @@ const GATES: Row[] = [
   [ParameterSetsResolver, 'updateParameterSet', Permission.CatalogEditorWrite],
   [ParameterSetsResolver, 'deleteParameterSet', Permission.CatalogEditorWrite],
 
+  // Upload history. Was @Roles(DamplabStaff), which 403'd the technicians the
+  // route admits (F4).
+  [UploadLogResolver, 'uploadLogs', Permission.CatalogEditorRead],
+  [UploadLogResolver, 'uploadLog', Permission.CatalogEditorRead],
+
   // Samples spreadsheets. The blank template is catalog data — staff attach it,
   // and anyone who can see the catalog may download it, because the canvas is
   // where a customer picks it up. Replacing a filled-in sheet is open at the
@@ -288,6 +294,15 @@ describe('Phase 2b widening — the gate on each operation', () => {
     expect(rolesOn(JobChargeResolver, 'jobCharges')).toBeUndefined();
     expect(permissionOn(InvoiceResolver, 'invoicesByJobId')).toBeUndefined();
     expect(rolesOn(InvoiceResolver, 'invoicesByJobId')).toBeUndefined();
+  });
+
+  /**
+   * The write depends on *what* was uploaded — inventory:write for an inventory
+   * log, catalog-editor:write for an operations log — so it is an inline check.
+   */
+  it('leaves createUploadLog on an inline per-type check, not a decoration', () => {
+    expect(permissionOn(UploadLogResolver, 'createUploadLog')).toBeUndefined();
+    expect(rolesOn(UploadLogResolver, 'createUploadLog')).toBeUndefined();
   });
 
   it('leaves no @Roles behind on any of them', () => {
