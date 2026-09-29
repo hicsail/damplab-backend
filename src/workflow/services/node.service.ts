@@ -228,6 +228,26 @@ export class WorkflowNodeService {
     return updated;
   }
 
+  /**
+   * Check whether a node's predecessors are all COMPLETE, using the same
+   * readiness logic the bench view relies on.
+   */
+  async isNodeReady(nodeId: string): Promise<boolean> {
+    const workflow = await this.workflowModel.findOne({ nodes: new mongoose.Types.ObjectId(nodeId) }).lean().exec();
+    if (!workflow) return true;
+    const nodeIds = (workflow.nodes ?? []).map(String);
+    const edgeIds = (workflow.edges ?? []).map(String);
+    const [states, edges] = await Promise.all([
+      this.workflowNodeModel.find({ _id: { $in: nodeIds } }).select('_id state').lean().exec(),
+      this.workflowEdgeModel.find({ _id: { $in: edgeIds } }).select('source target').lean().exec()
+    ]);
+    const ready = readyOperationIds({
+      nodes: states.map((n) => ({ id: String(n._id), state: (n.state as WorkflowNodeState) ?? WorkflowNodeState.QUEUED })),
+      edges: edges.map((e) => ({ source: String(e.source), target: String(e.target) }))
+    });
+    return ready.has(String(nodeId));
+  }
+
   async setCompletedSteps(node: WorkflowNode, completedSteps: string[]): Promise<WorkflowNode | null> {
     const unique = Array.from(new Set((completedSteps ?? []).map((s) => String(s))));
     return this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set: { completedSteps: unique } }, { new: true }).exec();
