@@ -1,6 +1,7 @@
 import { Args, ID, Mutation, Query, Resolver } from '@nestjs/graphql';
-import { UseGuards } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, UseGuards } from '@nestjs/common';
 import { ClickUpService } from './clickup.service';
+import { BugDeployNotifierService } from './bug-deploy-notifier.service';
 import { BacklogCard, BacklogCardDetail, BacklogComment } from './clickup.dto';
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
@@ -22,7 +23,7 @@ import { hasPermission } from '../auth/permissions/permissions';
 @Resolver(() => BacklogCard)
 @UseGuards(AuthRolesGuard)
 export class ClickUpResolver {
-  constructor(private readonly clickup: ClickUpService) {}
+  constructor(private readonly clickup: ClickUpService, private readonly bugDeployNotifier: BugDeployNotifierService) {}
 
   /**
    * Whether to show the ClickUp deep link. Re-pointed off the raw `damplab-staff`
@@ -66,6 +67,22 @@ export class ClickUpResolver {
   @Query(() => Boolean, { description: 'Whether the backlog integration is configured, so the UI can show a helpful empty state instead of an error.' })
   async backlogAvailable(): Promise<boolean> {
     return this.clickup.isConfigured();
+  }
+
+  @Mutation(() => Boolean, { description: 'Staff-only: notify the bug reporter that a fix has been deployed to staging.' })
+  async notifyBugDeployedToStaging(@Args('cardId', { type: () => ID }) cardId: string, @CurrentUser() user: User): Promise<boolean> {
+    if (!hasPermission(user, Permission.BugBacklogView)) {
+      throw new ForbiddenException('Staff only.');
+    }
+    const card = await this.clickup.getCard(cardId);
+    if (!card.sourceBugId) {
+      throw new BadRequestException('This card has no linked bug report.');
+    }
+    if (!card.reporterEmail) {
+      throw new BadRequestException('No reporter email on this card.');
+    }
+    await this.bugDeployNotifier.notifyDeployedToStaging(card.sourceBugId, card.title);
+    return true;
   }
 
   @Mutation(() => BacklogComment, { description: 'Add a comment to a backlog card, attributed to the signed-in user.' })
