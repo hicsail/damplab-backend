@@ -263,8 +263,6 @@ export class JobResolver {
 
   @Mutation(() => Job)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
-    // Server-side twin of the palette hiding equipment-use operations from
-    // plain clients. Checked before anything is written.
     // F2: submitting on someone's behalf is a staff act. The UI hides the form;
     // this is its server-side twin, checked before anything is written.
     const clientEmail = createJobInput.clientEmail;
@@ -272,6 +270,8 @@ export class JobResolver {
       throw new ForbiddenException('Only staff can submit a job on behalf of a client.');
     }
     const memberEmails = normalizeMemberEmailList(createJobInput.memberEmails, clientEmail ?? user.email);
+    // Server-side twin of the palette hiding equipment-use operations from
+    // plain clients. Checked before anything is written.
     assertMaySubmitEquipmentUse(user, createJobInput.workflows);
     // Not derived from the token alone. Pricing lives on Keycloak groups, and a
     // group reaches a token only when the realm's client carries a Group
