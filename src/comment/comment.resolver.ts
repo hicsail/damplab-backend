@@ -40,6 +40,8 @@ export class CommentResolver {
 
   /** Who may see and write internal notes: staff-flavoured roles (damplab-staff, technician) or anyone with jobs:view-all. One predicate for create, update, list and by-id. */
   private mayUseInternalComments(user: User): boolean {
+    // API keys hold jobs:view-all for the lab monitor's reads but never saw internal notes; keep it so.
+    if (user.apiKey) return false;
     const roles = user.realm_access?.roles ?? [];
     return roles.some((r) => STAFF_FLAVORED_ROLES.includes(r)) || hasPermission(user, Permission.JobsViewAll);
   }

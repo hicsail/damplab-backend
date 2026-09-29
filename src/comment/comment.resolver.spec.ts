@@ -176,3 +176,32 @@ describe('CommentResolver — commentsByNodeId is scoped to the job', () => {
     expect(seen.map((c: any) => c._id)).toEqual(['c1']);
   });
 });
+
+describe('CommentResolver — API keys never see internal notes', () => {
+  const apiKeyUser: any = { sub: 'apikey:1', apiKey: true, readOnly: true, preferred_username: 'lab-monitor', realm_access: { roles: [] } };
+
+  it('passes includeInternal=false to commentsByJobId', async () => {
+    const { resolver, commentService } = harness();
+    await resolver.commentsByJobId('job-1', apiKeyUser);
+    expect(commentService.findByJobWithVisibility).toHaveBeenCalledWith('job-1', false);
+  });
+
+  it('returns null for an internal note by id', async () => {
+    const { resolver, commentService } = harness();
+    commentService.findById.mockResolvedValue({ ...comment, isInternal: true });
+    await expect(resolver.commentById('c1', apiKeyUser)).resolves.toBeNull();
+  });
+
+  it('filters internal notes out of commentsByNodeId', async () => {
+    const { resolver } = harness();
+    const result = await resolver.commentsByNodeId('n1', apiKeyUser);
+    expect(result.every((c) => !c.isInternal)).toBe(true);
+    expect(result).toHaveLength(1);
+  });
+
+  it('cannot create an internal comment', async () => {
+    const { resolver, commentService } = harness();
+    await resolver.createComment({ jobId: 'job-1', content: 'x', isInternal: true } as any, apiKeyUser);
+    expect(commentService.create.mock.calls[0][0]).toMatchObject({ isInternal: false });
+  });
+});
