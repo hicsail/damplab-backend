@@ -20,6 +20,7 @@ import { visibleExternalFallbackPrice, visibleFlatPrice, visiblePricing, callerC
 import { effectivePricingMode, resolveCategoryPrice } from '../pricing/service-pricing.util';
 import { ServicePricingMode } from './models/damplab-service.model';
 import { CatalogServiceView } from './dtos/catalog-service-view.dto';
+import { ParameterSet } from '../parameter-sets/parameter-set.model';
 
 @Resolver(() => DampLabService)
 @UseGuards(AuthRolesGuard)
@@ -100,6 +101,17 @@ export class DampLabServicesResolver {
   @ResolveField()
   allowedConnections(@Parent() service: DampLabService): Promise<DampLabService[]> {
     return this.dampLabServices.findByIds(service.allowedConnections);
+  }
+
+  /** As strings: the stored ObjectIds serialize through `ID` anyway, this makes it explicit. */
+  @ResolveField(() => [ID])
+  parameterSetIds(@Parent() service: DampLabService): string[] {
+    return (service.parameterSetIds ?? []).map((id) => String(id));
+  }
+
+  @ResolveField(() => [ParameterSet])
+  parameterSets(@Parent() service: DampLabService): Promise<ParameterSet[]> {
+    return this.dampLabServices.findParameterSetsFor(service);
   }
 
   /**

@@ -48,7 +48,7 @@ export class DampLabService {
   @Prop({ type: mongoose.Schema.Types.Mixed })
   @Field(() => JSON, {
     description:
-      'Parameters that are part of the service. Each parameter may include allowMultipleValues (boolean, default false) and price (number). When allowMultipleValues is true, formData values may be stored and returned as string[].'
+      "The EFFECTIVE parameters: this operation's own, then each Parameter Set's in parameterSetIds order (set entries carry fromParameterSetId/fromParameterSetName). Writing it writes the own list. Each parameter may include allowMultipleValues (boolean, default false) and price (number). When allowMultipleValues is true, formData values may be stored and returned as string[]."
   })
   parameters: any;
 
@@ -59,6 +59,24 @@ export class DampLabService {
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: DampLabService.name }] })
   @Field(() => [DampLabService], { description: 'List of services this service can connect to' })
   allowedConnections: mongoose.Types.ObjectId[];
+
+  @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'ParameterSet' }], default: [] })
+  @Field(() => [ID], {
+    defaultValue: [],
+    description: "Parameter Sets this operation uses, in order. Their parameters follow the operation's own in `parameters`."
+  })
+  parameterSetIds: mongoose.Types.ObjectId[];
+
+  @Prop({ default: false })
+  @Field(() => Boolean, {
+    defaultValue: false,
+    description: 'Retired for clients: still valid on existing jobs and still returned by `services`, but clients cannot put it on a new job and do not see it in the palette or catalog.'
+  })
+  hiddenFromClients: boolean;
+
+  /** Filled by the DampLabServices loaders; never stored. */
+  @Field(() => JSON, { nullable: true, description: "The parameters stored on this operation itself — what the parameter editor edits. `parameters` is these plus every Parameter Set's." })
+  ownParameters?: any[];
 
   @Prop({ type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' }], required: false, default: [] })
   @Field(() => [String], {
