@@ -98,3 +98,38 @@ describe('CommentResolver — only the author or staff change a comment (B6)', (
     await expect(resolver.deleteComment('missing', admin)).resolves.toBe(false);
   });
 });
+
+describe('CommentResolver — internal notes stay staff-only', () => {
+  const internal = { ...comment, _id: 'c3', isInternal: true };
+
+  it('commentById hides an internal comment from a client member and shows it to staff', async () => {
+    const { resolver, commentService } = harness();
+    commentService.findById = jest.fn(async () => internal);
+    await expect(resolver.commentById('c3', member)).resolves.toBeNull();
+    await expect(resolver.commentById('c3', admin)).resolves.toMatchObject({ _id: 'c3' });
+  });
+
+  it('createComment stores isInternal false for a non-staff caller, keeps it for staff', async () => {
+    const { resolver, commentService } = harness();
+    await resolver.createComment({ jobId: 'job-1', content: 'x', isInternal: true } as any, member);
+    expect(commentService.create.mock.calls[0][0]).toMatchObject({ isInternal: false });
+    await resolver.createComment({ jobId: 'job-1', content: 'x', isInternal: true } as any, admin);
+    expect(commentService.create.mock.calls[1][0]).toMatchObject({ isInternal: true });
+  });
+
+  it('updateComment ignores an isInternal change from a non-staff author', async () => {
+    const { resolver, commentService } = harness();
+    await resolver.updateComment('c1', { content: 'e', isInternal: true }, member);
+    expect(commentService.update.mock.calls[0][1].isInternal).toBeUndefined();
+  });
+
+  it('update and delete refuse a stranger at the membership check, before the author check', async () => {
+    const { resolver, commentService } = harness();
+    const asStranger = user('x', 'Member@X.org'); // matches the stored author, still not on the job
+    (resolver as any).jobService.findById = async (): Promise<any> => ({ ...job, memberEmails: [], email: 'owner@x.org' });
+    await expect(resolver.updateComment('c1', { content: 'x' }, asStranger)).rejects.toThrow('permission to see the comments');
+    await expect(resolver.deleteComment('c1', asStranger)).rejects.toThrow('permission to see the comments');
+    expect(commentService.update).not.toHaveBeenCalled();
+    expect(commentService.delete).not.toHaveBeenCalled();
+  });
+});

@@ -74,7 +74,10 @@ export class CommentResolver {
   async commentById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Comment | null> {
     const comment = await this.commentService.findById(id);
     if (!comment) return null;
-    return (await this.mayUseJobComments(String(comment.jobId), user)) ? comment : null;
+    if (!(await this.mayUseJobComments(String(comment.jobId), user))) return null;
+    // Same rule commentsByJobId applies: internal notes are staff-only.
+    if (comment.isInternal && !isStaff(user)) return null;
+    return comment;
   }
 
   @Query(() => [Comment], { description: 'Comments on a job. Staff see internal notes too; everyone else sees only what was written for the customer.' })
@@ -102,6 +105,8 @@ export class CommentResolver {
 
     const created = await this.commentService.create({
       ...input,
+      // Internal notes are staff-only, the same predicate commentsByJobId uses.
+      isInternal: isStaff(user) ? input.isInternal : false,
       author,
       authorType
     });
@@ -131,7 +136,9 @@ export class CommentResolver {
     if (!existing) throw new NotFoundException(`Comment with ID ${id} not found`);
     await this.assertMayUseJobComments(String(existing.jobId), user);
     this.assertMayChangeComment(existing, user);
-    const updated = await this.commentService.update(id, input);
+    // Only staff may change visibility.
+    const safeInput = isStaff(user) ? input : { ...input, isInternal: undefined };
+    const updated = await this.commentService.update(id, safeInput);
     await this.activityService.createEvent({
       type: ActivityEventType.COMMENT_UPDATED,
       message: `${updated.authorType === 'STAFF' ? 'Technician' : 'Client'} updated a comment`,
