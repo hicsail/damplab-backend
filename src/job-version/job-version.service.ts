@@ -10,6 +10,8 @@ import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../workfl
 import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.model';
 import { DampLabServices } from '../services/damplab-services.services';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
+import { ParameterSnapshotEntry } from '../workflow/models/parameter-snapshot.model';
+import { buildParameterSnapshot } from '../workflow/utils/parameter-snapshot.util';
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
 import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
 
@@ -21,6 +23,7 @@ type NodeContentPatch = {
   formData: unknown;
   price: number | undefined;
   reactNode: Record<string, unknown>;
+  parameterSnapshot: ParameterSnapshotEntry[];
 };
 
 /** Mongoose models declare `_id: string` on these classes, so ids come back needing a widening conversion. */
@@ -352,6 +355,7 @@ export class JobVersionService {
       formData: Array.isArray(node.formData) ? node.formData : [],
       additionalInstructions: node.additionalInstructions ?? '',
       price: node.price,
+      parameterSnapshot: Array.isArray(node.parameterSnapshot) ? node.parameterSnapshot : undefined,
       position: position && typeof position.x === 'number' && typeof position.y === 'number' ? { x: position.x, y: position.y } : undefined
     };
   }
@@ -517,10 +521,23 @@ export class JobVersionService {
       edges: (workflow.edges ?? []).map((edge) => ({ id: edge.id, source: edge.source, target: edge.target }))
     }));
 
-    return this.saveWorkflows({ jobId, workflows, note } as SaveJobWorkflowsInput, author, opts);
+    // The version's own names for its values. Passed out of band (never through
+    // SaveNodeInput, which clients can set) so a restore can re-label a value the
+    // catalogue has since dropped.
+    const priorSnapshotsByClientId = new Map<string, ParameterSnapshotEntry[]>();
+    for (const workflow of source.workflows ?? []) {
+      for (const node of workflow.nodes ?? []) {
+        if (Array.isArray(node.parameterSnapshot)) priorSnapshotsByClientId.set(node.id, node.parameterSnapshot);
+      }
+    }
+    return this.saveWorkflows({ jobId, workflows, note } as SaveJobWorkflowsInput, author, { ...opts, priorSnapshotsByClientId });
   }
 
-  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string }, opts: { visibleToCustomer?: boolean } = {}): Promise<Job> {
+  async saveWorkflows(
+    input: SaveJobWorkflowsInput,
+    author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string },
+    opts: { visibleToCustomer?: boolean; uploaderSub?: string; priorSnapshotsByClientId?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]> } = {}
+  ): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
 
@@ -534,7 +551,7 @@ export class JobVersionService {
     // Prepared first, deliberately: it resolves each node against the catalogue
     // and normalizes formData, so the guard below compares like with like. It
     // only reads, so nothing is written if the guard then rejects.
-    const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined);
+    const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined, this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId));
     this.assertWorkInFlightUntouched(liveNodes, prepared);
 
     // Which nodes existed before this save, across every tree. Node deletion is
@@ -618,6 +635,19 @@ export class JobVersionService {
   }
 
   /** Every live node on the job, keyed by client-side id. */
+  /** Earlier names per node: the live node's snapshot, overridden by a restored version's. */
+  private priorSnapshots(liveNodes: Map<string, LiveNode>, fromVersion?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]>): Map<string, ParameterSnapshotEntry[]> {
+    const merged = new Map<string, ParameterSnapshotEntry[]>();
+    const clientIds = new Set([...liveNodes.keys(), ...(fromVersion?.keys() ?? [])]);
+    for (const clientId of clientIds) {
+      const byId = new Map<string, ParameterSnapshotEntry>();
+      for (const entry of liveNodes.get(clientId)?.parameterSnapshot ?? []) byId.set(entry.id, entry);
+      for (const entry of fromVersion?.get(clientId) ?? []) byId.set(entry.id, entry);
+      merged.set(clientId, [...byId.values()]);
+    }
+    return merged;
+  }
+
   private async loadLiveNodes(job: Job): Promise<Map<string, LiveNode>> {
     const byClientId = new Map<string, LiveNode>();
     for (const workflowRef of job.workflows ?? []) {
@@ -670,7 +700,11 @@ export class JobVersionService {
    * editing user's — otherwise a technician saving a customer's job would
    * silently reprice it at staff rates.
    */
-  private async prepareWorkflows(workflows: SaveWorkflowInput[], category: CustomerCategory | undefined): Promise<PreparedNode[][]> {
+  private async prepareWorkflows(
+    workflows: SaveWorkflowInput[],
+    category: CustomerCategory | undefined,
+    priorByClientId: Map<string, ParameterSnapshotEntry[]> = new Map()
+  ): Promise<PreparedNode[][]> {
     const serviceIds = [...new Set(workflows.flatMap((w) => w.nodes.map((n) => String(n.serviceId))))];
     const services = new Map<string, any>();
     for (const id of serviceIds) {
@@ -684,6 +718,8 @@ export class JobVersionService {
         const service = services.get(String(node.serviceId));
         const formData = normalizeFormDataToArray(node.formData, getMultiValueParamIds(service.parameters));
         const price = calculateServiceCost(service, formData, undefined, category);
+        // From the normalized formData that is persisted, so the card cannot disagree with the stored value.
+        const parameterSnapshot = buildParameterSnapshot(service, formData, priorByClientId.get(node.id));
         const position = node.position ? { x: node.position.x, y: node.position.y } : undefined;
 
         return {
@@ -694,6 +730,7 @@ export class JobVersionService {
             additionalInstructions: node.additionalInstructions ?? '',
             formData,
             price,
+            parameterSnapshot,
             // Minimal, so nothing the client invented can ride along. Hydration
             // reads only `position` back out of this.
             reactNode: { id: node.id, type: 'selectorNode', position: position ?? { x: 0, y: 0 } }
@@ -706,6 +743,7 @@ export class JobVersionService {
             formData,
             additionalInstructions: node.additionalInstructions ?? '',
             price,
+            parameterSnapshot,
             position
           }
         };
@@ -739,6 +777,7 @@ export class JobVersionService {
               additionalInstructions: node.patch.additionalInstructions,
               formData: node.patch.formData,
               price: node.patch.price,
+              parameterSnapshot: node.patch.parameterSnapshot,
               reactNode: node.patch.reactNode
             }
           })
@@ -752,6 +791,7 @@ export class JobVersionService {
           additionalInstructions: node.patch.additionalInstructions,
           formData: node.patch.formData,
           price: node.patch.price,
+          parameterSnapshot: node.patch.parameterSnapshot,
           reactNode: node.patch.reactNode,
           state: WorkflowNodeState.QUEUED
         });

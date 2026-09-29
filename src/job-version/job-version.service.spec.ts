@@ -1085,3 +1085,96 @@ describe('restoreVersion — event versions', () => {
     await expect(harness.service.restoreVersion(JOB_ID, harness.versions[0].versionNumber, author, 'Reverted')).rejects.toThrow(/no workflow to restore/);
   });
 });
+
+describe('saveWorkflows — parameter snapshot (B21, B22)', () => {
+  it('writes the snapshot on the live node and copies it into the version', async () => {
+    const { service, nodes, versions } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 7 }] })], edges: [] }] } as any, author);
+    const expected = [{ id: 'vol', name: 'Volume', type: 'number', displayValue: '7' }];
+    expect(nodes[0].parameterSnapshot).toEqual(expected);
+    expect(versions[0].workflows[0].nodes[0].parameterSnapshot).toEqual(expected);
+  });
+
+  it('writes the snapshot on a node the save creates', async () => {
+    const { service, nodes } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows(
+      { jobId: JOB_ID, note: 'added', workflows: [{ workflowId: WF_ID, nodes: [inputNode(), inputNode({ id: 'b', formData: [{ id: 'vol', value: 3 }] })], edges: [] }] } as any,
+      author
+    );
+    expect(nodes.find((n) => n.id === 'b').parameterSnapshot).toEqual([{ id: 'vol', name: 'Volume', type: 'number', displayValue: '3' }]);
+  });
+
+  it("keeps a removed parameter's name on the first save after the catalogue drops it", async () => {
+    const { service, nodes } = buildHarness({
+      nodes: [
+        liveNode({
+          formData: [
+            { id: 'vol', value: 10 },
+            { id: 'gone', value: 'x' }
+          ],
+          parameterSnapshot: [{ id: 'gone', name: 'Old parameter', type: 'text', displayValue: 'x' }]
+        })
+      ]
+    });
+    await service.saveWorkflows(
+      {
+        jobId: JOB_ID,
+        note: 'edited',
+        workflows: [
+          {
+            workflowId: WF_ID,
+            nodes: [
+              inputNode({
+                formData: [
+                  { id: 'vol', value: 10 },
+                  { id: 'gone', value: 'x' }
+                ]
+              })
+            ],
+            edges: []
+          }
+        ]
+      } as any,
+      author
+    );
+    expect(nodes[0].parameterSnapshot).toContainEqual({ id: 'gone', name: 'Old parameter', type: 'text', displayValue: 'x' });
+  });
+
+  it("restores a version with that version's names, even when the live node has lost them", async () => {
+    const harness = buildHarness({ nodes: [liveNode()] });
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'v1', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    const v1 = harness.versions[0];
+    // The catalogue drops the parameter and the live node's snapshot is lost.
+    (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({ ...SERVICE_A, parameters: [] });
+    harness.nodes[0].parameterSnapshot = [];
+    await harness.service.restoreVersion(JOB_ID, v1.versionNumber, author, 'Reverted');
+    expect(harness.nodes[0].parameterSnapshot).toEqual([{ id: 'vol', name: 'Volume', type: 'number', displayValue: '10' }]);
+  });
+
+  it('snapshots the normalized value that is stored, not the raw input', async () => {
+    const { service, nodes } = buildHarness({ nodes: [liveNode()] });
+    const dropdown = {
+      _id: SVC_A,
+      name: 'Gibson Assembly',
+      price: 100,
+      parameters: [
+        {
+          id: 'enz',
+          name: 'Enzyme',
+          type: 'dropdown',
+          options: [
+            { id: 'e1', name: 'BsaI' },
+            { id: 'e2', name: 'BsmBI' }
+          ]
+        }
+      ]
+    };
+    (service as any).dampLabServices.findOneActive = async (): Promise<any> => dropdown;
+    await service.saveWorkflows(
+      { jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'enz', value: ['e1', 'e2'] }] })], edges: [] }] } as any,
+      author
+    );
+    expect(nodes[0].formData).toEqual([{ id: 'enz', value: 'e1' }]);
+    expect(nodes[0].parameterSnapshot).toEqual([{ id: 'enz', name: 'Enzyme', type: 'dropdown', displayValue: 'BsaI' }]);
+  });
+});
