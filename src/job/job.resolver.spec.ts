@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JobResolver } from './job.resolver';
-import { HomologyScreeningStatus, JobState } from './job.model';
+import { CustomerCategory, HomologyScreeningStatus, JobState } from './job.model';
 import { Role } from '../auth/roles/roles.enum';
 
 describe('JobResolver.saveJobWorkflows customer edit gate', () => {
@@ -527,5 +527,117 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     const { resolver, getScreen } = kycHarness(job);
     await expect(resolver.refreshJobAclidScreening('job-1', owner)).rejects.toThrow(new BadRequestException('No Aclid screen on this job'));
     expect(getScreen).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobResolver.createJob — clients, members and description', () => {
+  const customer: any = { sub: 'customer-9', email: 'Customer@Example.org', preferred_username: 'Customer', realm_access: { roles: [] } };
+  const admin: any = { sub: 'admin-1', email: 'tech@bu.edu', preferred_username: 'Tech', realm_access: { roles: [Role.DamplabStaff] } };
+
+  function harness(account: any = { sub: 'client-kc', username: 'cara', customerCategory: CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC }): {
+    resolver: JobResolver;
+    create: jest.Mock;
+    byUser: jest.Mock;
+    byEmail: jest.Mock;
+  } {
+    const create = jest.fn(async (input: any) => ({ _id: 'job-1', name: input.name, ...input }));
+    const jobService: any = { create, findById: jest.fn(async () => ({ _id: 'job-1', name: 'Job' })) };
+    const jobVersionService: any = { snapshotLiveWorkflows: jest.fn(async () => []), appendVersion: jest.fn(async () => undefined) };
+    const activityService: any = { createEvent: jest.fn(async () => undefined) };
+    const byUser = jest.fn(async () => CustomerCategory.INTERNAL_CUSTOMERS);
+    const byEmail = jest.fn(async () => account);
+    const keycloakService: any = { resolveCustomerCategoryForUser: byUser, resolveClientAccountByEmail: byEmail };
+    const jobScreeningService: any = { screenJobInBackground: jest.fn(), screenJob: jest.fn() };
+    const resolver = new JobResolver(
+      jobService,
+      {} as any,
+      {} as any,
+      activityService,
+      {} as any,
+      {} as any,
+      {} as any,
+      jobVersionService,
+      {} as any,
+      keycloakService,
+      { dispatch: jest.fn() } as any,
+      jobScreeningService,
+      {} as any
+    );
+    return { resolver, create, byUser, byEmail };
+  }
+
+  it('refuses clientEmail from a caller without job:submit-for-client, before writing anything (F2)', async () => {
+    const { resolver, create } = harness();
+    await expect(resolver.createJob({ name: 'J', workflows: [], clientEmail: 'client@bu.edu' } as any, customer)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("makes a staff-submitted job the client's: their sub, email, username and category, with staff recorded as submitter only (B28, F3, B11)", async () => {
+    const { resolver, create, byUser, byEmail } = harness();
+    await resolver.createJob({ name: 'J', workflows: [], clientEmail: 'client@bu.edu', memberEmails: ['B@x.org', 'client@bu.edu', 'b@x.org'] } as any, admin);
+    expect(byEmail).toHaveBeenCalledTimes(1);
+    expect(byEmail).toHaveBeenCalledWith('client@bu.edu');
+    expect(byUser).not.toHaveBeenCalled();
+    expect(create.mock.calls[0][0]).toMatchObject({
+      sub: 'client-kc',
+      email: 'client@bu.edu',
+      username: 'cara',
+      clientEmail: 'client@bu.edu',
+      memberEmails: ['b@x.org'],
+      customerCategory: CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC,
+      submittedBy: { sub: 'admin-1', email: 'tech@bu.edu', name: 'Tech' }
+    });
+  });
+
+  it('leaves sub and username unset when the client has no account (ownership rests on the email)', async () => {
+    const { resolver, create } = harness({});
+    await resolver.createJob({ name: 'J', workflows: [], clientEmail: 'new@bu.edu' } as any, admin);
+    const input = create.mock.calls[0][0];
+    expect(input.sub).toBeUndefined();
+    expect(input.username).toBeUndefined();
+    expect(input.email).toBe('new@bu.edu');
+    expect(input.customerCategory).toBeUndefined();
+  });
+
+  it("lets any submitter add members; the submitter's own email is dropped (B10, B12)", async () => {
+    const { resolver, create, byUser } = harness();
+    await resolver.createJob({ name: 'J', workflows: [], memberEmails: [' Friend@X.org ', 'customer@example.org'], description: 'For lab 4' } as any, customer);
+    expect(byUser).toHaveBeenCalled();
+    expect(create.mock.calls[0][0]).toMatchObject({
+      sub: 'customer-9',
+      email: 'Customer@Example.org',
+      memberEmails: ['friend@x.org'],
+      description: 'For lab 4',
+      customerCategory: CustomerCategory.INTERNAL_CUSTOMERS
+    });
+    expect(create.mock.calls[0][0].submittedBy).toBeUndefined();
+  });
+
+  it('allows an empty member list', async () => {
+    const { resolver, create } = harness();
+    await resolver.createJob({ name: 'J', workflows: [] } as any, customer);
+    expect(create.mock.calls[0][0].memberEmails).toEqual([]);
+  });
+
+  it('rejects a malformed member email', async () => {
+    const { resolver, create } = harness();
+    await expect(resolver.createJob({ name: 'J', workflows: [], memberEmails: ['nope'] } as any, customer)).rejects.toBeInstanceOf(BadRequestException);
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobResolver resolve fields — memberEmails and primaryClientEmail', () => {
+  const resolver = new JobResolver({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+
+  it('resolves a legacy row from the list pipeline that has no memberEmails at all', () => {
+    const legacy: any = { sub: 's', email: 'Owner@x.org' };
+    expect(resolver.memberEmails(legacy)).toEqual([]);
+    expect(resolver.primaryClientEmail(legacy)).toBe('owner@x.org');
+  });
+
+  it('names the client as primary on a (legacy, unmigrated) staff-submitted job and never lists it as a member', () => {
+    const job: any = { sub: 's', email: 'tech@bu.edu', clientEmail: 'client@bu.edu', memberEmails: ['client@bu.edu', 'b@x.org'] };
+    expect(resolver.primaryClientEmail(job)).toBe('client@bu.edu');
+    expect(resolver.memberEmails(job)).toEqual(['b@x.org']);
   });
 });

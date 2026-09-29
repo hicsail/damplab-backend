@@ -5,6 +5,7 @@ import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInp
 import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
 import { AclidScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { matchesClientEmail } from './client-email';
+import { normalizeMemberEmailList, jobMemberEmails, jobPrimaryEmail } from './job-membership';
 import { callerMayAccessJob } from './job-access';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -35,7 +36,7 @@ import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 import { assertJobContractWritable } from './job-editing';
 import { assertMaySubmitEquipmentUse } from './equipment-use-gate';
-import { KeycloakService } from '../keycloak/keycloak.service';
+import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
@@ -265,6 +266,13 @@ export class JobResolver {
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
     // Server-side twin of the palette hiding equipment-use operations from
     // plain clients. Checked before anything is written.
+    // F2: submitting on someone's behalf is a staff act. The UI hides the form;
+    // this is its server-side twin, checked before anything is written.
+    const clientEmail = createJobInput.clientEmail;
+    if (clientEmail && !hasPermission(user, Permission.JobSubmitForClient)) {
+      throw new ForbiddenException('Only staff can submit a job on behalf of a client.');
+    }
+    const memberEmails = normalizeMemberEmailList(createJobInput.memberEmails, clientEmail ?? user.email);
     assertMaySubmitEquipmentUse(user, createJobInput.workflows);
     // Not derived from the token alone. Pricing lives on Keycloak groups, and a
     // group reaches a token only when the realm's client carries a Group
@@ -274,13 +282,19 @@ export class JobResolver {
     // reads the token first and falls back to the Admin API, which is what makes
     // group membership actually decide the price, as the access matrix says it
     // does.
-    const customerCategory: CustomerCategory | undefined = await this.keycloakService.resolveCustomerCategoryForUser(user);
+    // B28 + F3: a job staff submit for a client is the client's. One exact-email
+    // lookup gives their account (the job's sub/username) and their pricing
+    // category; the staff member is recorded in submittedBy and owns nothing.
+    const clientAccount: ClientAccount | null = clientEmail ? await this.keycloakService.resolveClientAccountByEmail(clientEmail) : null;
+    const customerCategory: CustomerCategory | undefined = clientAccount ? clientAccount.customerCategory : await this.keycloakService.resolveCustomerCategoryForUser(user);
+    const owner = clientEmail
+      ? { sub: clientAccount?.sub, email: clientEmail, username: clientAccount?.username, submittedBy: { sub: user.sub, email: user.email, name: user.preferred_username ?? user.email } }
+      : { sub: user.sub, email: user.email, username: user.preferred_username };
     const created = await this.jobService.create({
       ...createJobInput,
-      username: user.preferred_username,
+      ...owner,
+      memberEmails,
       clientDisplayName: (createJobInput as any)?.clientDisplayName,
-      sub: user.sub,
-      email: user.email,
       customerCategory
     });
     // v1 is the submission itself, so the first technician edit has something to
@@ -849,6 +863,16 @@ export class JobResolver {
   @ResolveField()
   async workflows(@Parent() job: Job): Promise<Workflow[]> {
     return this.workflowService.findByIds(job.workflows.map((workflow) => workflow._id));
+  }
+
+  @ResolveField(() => [String], { name: 'memberEmails', description: 'Additional people with the same access as the primary client. Never contains the primary.' })
+  memberEmails(@Parent() job: Job): string[] {
+    return jobMemberEmails(job);
+  }
+
+  @ResolveField(() => String, { name: 'primaryClientEmail', description: 'The primary client: clientEmail when staff submitted on their behalf, otherwise the submitter email. Cannot be removed.' })
+  primaryClientEmail(@Parent() job: Job): string {
+    return jobPrimaryEmail(job) ?? '';
   }
 
   @ResolveField(() => [JobAttachment], {

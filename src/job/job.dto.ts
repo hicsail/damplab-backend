@@ -4,17 +4,22 @@ import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '..
 import { BadRequestException, Injectable, PipeTransform, Scope } from '@nestjs/common';
 import { JobService } from './job.service';
 import { normalizeClientEmail } from './client-email';
+import { normalizeJobDescription } from './job-description';
 
 @InputType()
 // CreateJobInput is what the user supplies, and what the CreateJobPipe receives.
-export class CreateJobInput extends PickType(Job, ['name', 'institute', 'notes', 'clientDisplayName', 'clientEmail'] as const, InputType) {
+export class CreateJobInput extends PickType(Job, ['name', 'institute', 'notes', 'clientDisplayName', 'clientEmail', 'description'] as const, InputType) {
+  @Field(() => [String], { nullable: true, description: 'Additional people with the same access as the primary client. The primary is dropped server-side.' })
+  memberEmails?: string[];
+
   @Field(() => [AddWorkflowInput], { description: 'The workflows that were submitted together' })
   workflows: AddWorkflowInput[];
 }
 
 // CreateJobPreProcessed is what the pipe outputs.
-export interface CreateJobPreProcessed extends Pick<Job, 'name' | 'institute' | 'notes' | 'clientDisplayName' | 'clientEmail' | 'state'> {
+export interface CreateJobPreProcessed extends Pick<Job, 'name' | 'institute' | 'notes' | 'clientDisplayName' | 'clientEmail' | 'description' | 'state'> {
   workflows: AddWorkflowInputFull[];
+  memberEmails?: string[];
 }
 
 // CreateJobFull is what the job service receives.
@@ -76,7 +81,7 @@ export class CreateJobPipe implements PipeTransform<CreateJobInput, Promise<Crea
     // Normalised here rather than in the resolver: the pipe is the one seam every
     // createJob call passes through, and the resolver rebuilds its payload field
     // by field, so a value normalised there is one edit away from being dropped.
-    return { ...value, clientEmail: normalizeClientEmail(value.clientEmail), workflows, state: JobState.SUBMITTED };
+    return { ...value, clientEmail: normalizeClientEmail(value.clientEmail), description: normalizeJobDescription(value.description), workflows, state: JobState.SUBMITTED };
   }
 }
 

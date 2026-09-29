@@ -1,10 +1,11 @@
 /**
  * The client email on a job, and how it is compared.
  *
- * When staff submit a job for a client, the job's `sub` and `email` belong to the
- * staff member — they come from the submitter's token. `clientEmail` is the only
- * link back to the client, and unlike every other identity field on a job it is
- * *typed by hand* into the staff submission form. So `Client@BU.edu` and
+ * When staff submit a job for a client, the job's `sub` and `email` are the
+ * client's (the account found by exact email; `sub` is unset if they have none
+ * yet). The staff member is recorded in `submittedBy` and owns nothing.
+ * `clientEmail` is the typed address, and unlike every other identity field on a
+ * job it is *typed by hand* into the staff submission form. So `Client@BU.edu` and
  * `client@bu.edu` are the same person, and an exact `===` against the Keycloak
  * address silently hides the job.
  *

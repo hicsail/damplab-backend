@@ -140,6 +140,19 @@ export class JobAttachment {
   url?: string;
 }
 
+/** Who entered a job on a client's behalf (B28). A record, never an owner: isJobMember does not read it. */
+@ObjectType({ description: 'The staff member who submitted a job on behalf of its client.' })
+export class JobSubmitter {
+  @Field()
+  sub: string;
+
+  @Field({ nullable: true })
+  email?: string;
+
+  @Field({ nullable: true })
+  name?: string;
+}
+
 @Schema()
 @ObjectType({ description: 'Jobs encapsulate many workflows that were submitted together' })
 export class Job {
@@ -161,8 +174,8 @@ export class Job {
   /// These fields will be replaced by a user field in the future /////////////
   // ^ Should there be a single 'user' field with a nested object, or was the point more about 'real auth'?
   @Prop()
-  @Field({ description: 'Username of the person who submitted the job - from access token' })
-  username: string;
+  @Field({ nullable: true, description: "Username of the job's owner: the submitter's, or on a staff-submitted job the client's account username (unset when they have no account yet)" })
+  username?: string;
 
   @Prop({ required: false })
   @Field({
@@ -179,11 +192,11 @@ export class Job {
   clientEmail?: string;
 
   @Prop()
-  @Field({ description: 'Subject id of the user - from access token' })
-  sub: string;
+  @Field({ nullable: true, description: "Keycloak sub of the job's owner: the submitter's, or on a staff-submitted job the client's (unset until they have an account — see the one-time claim)" })
+  sub?: string;
 
   @Prop()
-  @Field({ description: 'The email address of the user - from access token' })
+  @Field({ description: "Email of the job's owner (the primary client's on a staff-submitted job)" })
   email: string;
 
   @Prop()
@@ -209,6 +222,18 @@ export class Job {
   @Prop({ required: false })
   @Field({ description: 'Additional information the user provided', nullable: true })
   notes?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'Short free-text description of the job, shown at the top of the job page. At most 500 characters.' })
+  description?: string;
+
+  @Prop({ type: [String], default: [] })
+  @Field(() => [String], { description: 'Additional people (emails) with the same access to this job as its primary client. Never contains the primary.' })
+  memberEmails: string[];
+
+  @Prop({ type: Object, required: false })
+  @Field(() => JobSubmitter, { nullable: true, description: 'The staff member who submitted this job on behalf of its client. Null when the client submitted it. Grants nothing.' })
+  submittedBy?: JobSubmitter;
 
   @Prop({ required: true, default: JobState.CREATING })
   @Field(() => JobState, { description: 'Where in the Job life cycle this Job is' })
