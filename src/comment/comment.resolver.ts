@@ -38,6 +38,12 @@ export class CommentResolver {
     return hasPermission(user, Permission.JobsViewAll) || isJobMember(job, user);
   }
 
+  /** Who may see and write internal notes: staff-flavoured roles (damplab-staff, technician) or anyone with jobs:view-all. One predicate for create, update, list and by-id. */
+  private mayUseInternalComments(user: User): boolean {
+    const roles = user.realm_access?.roles ?? [];
+    return roles.some((r) => STAFF_FLAVORED_ROLES.includes(r)) || hasPermission(user, Permission.JobsViewAll);
+  }
+
   private async assertMayUseJobComments(jobId: string, user: User): Promise<void> {
     if (!(await this.mayUseJobComments(jobId, user))) throw new ForbiddenException('You do not have permission to see the comments on this job');
   }
@@ -76,7 +82,7 @@ export class CommentResolver {
     if (!comment) return null;
     if (!(await this.mayUseJobComments(String(comment.jobId), user))) return null;
     // Same rule commentsByJobId applies: internal notes are staff-only.
-    if (comment.isInternal && !isStaff(user)) return null;
+    if (comment.isInternal && !this.mayUseInternalComments(user)) return null;
     return comment;
   }
 
@@ -84,12 +90,17 @@ export class CommentResolver {
   @RequirePermission(Permission.JobsView)
   async commentsByJobId(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Comment[]> {
     await this.assertMayUseJobComments(jobId, user);
-    return this.commentService.findByJobWithVisibility(jobId, isStaff(user));
+    return this.commentService.findByJobWithVisibility(jobId, this.mayUseInternalComments(user));
   }
 
-  @Query(() => [Comment], { description: 'Get comments scoped to a single workflow node (technician bench-view notes)' })
-  async commentsByNodeId(@Args('nodeId', { type: () => ID }) nodeId: string): Promise<Comment[]> {
-    return this.commentService.findByNode(nodeId);
+  @Query(() => [Comment], { description: 'Get comments scoped to a single workflow node (technician bench-view notes). Same scope and internal-note rule as commentsByJobId.' })
+  @RequirePermission(Permission.JobsView)
+  async commentsByNodeId(@Args('nodeId', { type: () => ID }) nodeId: string, @CurrentUser() user: User): Promise<Comment[]> {
+    const comments = await this.commentService.findByNode(nodeId);
+    // A node belongs to one job; the job is the one its comments were written on.
+    const jobIds = [...new Set(comments.map((c) => String(c.jobId)))];
+    for (const jobId of jobIds) await this.assertMayUseJobComments(jobId, user);
+    return this.mayUseInternalComments(user) ? comments : comments.filter((c) => !c.isInternal);
   }
 
   @Mutation(() => Comment, { description: 'Create a new comment' })
@@ -106,7 +117,7 @@ export class CommentResolver {
     const created = await this.commentService.create({
       ...input,
       // Internal notes are staff-only, the same predicate commentsByJobId uses.
-      isInternal: isStaff(user) ? input.isInternal : false,
+      isInternal: this.mayUseInternalComments(user) ? input.isInternal : false,
       author,
       authorType
     });
@@ -136,8 +147,8 @@ export class CommentResolver {
     if (!existing) throw new NotFoundException(`Comment with ID ${id} not found`);
     await this.assertMayUseJobComments(String(existing.jobId), user);
     this.assertMayChangeComment(existing, user);
-    // Only staff may change visibility.
-    const safeInput = isStaff(user) ? input : { ...input, isInternal: undefined };
+    // Only staff-flavoured callers may change visibility.
+    const safeInput = this.mayUseInternalComments(user) ? input : { ...input, isInternal: undefined };
     const updated = await this.commentService.update(id, safeInput);
     await this.activityService.createEvent({
       type: ActivityEventType.COMMENT_UPDATED,

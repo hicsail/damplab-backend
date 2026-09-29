@@ -16,6 +16,7 @@ function harness(): { resolver: CommentResolver; commentService: any } {
   const commentService: any = {
     findById: jest.fn(async (id: string) => (id === 'c1' ? comment : null)),
     findByJobWithVisibility: jest.fn(async () => [comment]),
+    findByNode: jest.fn(async () => [comment, { ...comment, _id: 'c4', isInternal: true }]),
     create: jest.fn(async (input: any) => ({ _id: 'c2', ...input })),
     update: jest.fn(async () => comment),
     delete: jest.fn(async () => true)
@@ -131,5 +132,47 @@ describe('CommentResolver — internal notes stay staff-only', () => {
     await expect(resolver.deleteComment('c1', asStranger)).rejects.toThrow('permission to see the comments');
     expect(commentService.update).not.toHaveBeenCalled();
     expect(commentService.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('CommentResolver — a technician writes and reads internal notes', () => {
+  const internal = { ...comment, _id: 'c3', isInternal: true };
+
+  it("stores a technician's internal note as internal", async () => {
+    const { resolver, commentService } = harness();
+    await resolver.createComment({ jobId: 'job-1', content: 'bench', isInternal: true } as any, tech);
+    expect(commentService.create.mock.calls[0][0]).toMatchObject({ isInternal: true, authorType: 'STAFF' });
+  });
+
+  it('lets a technician read internal notes by job and by id, and a client member not', async () => {
+    const { resolver, commentService } = harness();
+    await resolver.commentsByJobId('job-1', tech);
+    expect(commentService.findByJobWithVisibility).toHaveBeenLastCalledWith('job-1', true);
+    await resolver.commentsByJobId('job-1', member);
+    expect(commentService.findByJobWithVisibility).toHaveBeenLastCalledWith('job-1', false);
+    commentService.findById = jest.fn(async () => internal);
+    await expect(resolver.commentById('c3', tech)).resolves.toMatchObject({ _id: 'c3' });
+    await expect(resolver.commentById('c3', member)).resolves.toBeNull();
+  });
+
+  it('lets a technician change visibility on update; a client member cannot', async () => {
+    const { resolver, commentService } = harness();
+    commentService.findById = jest.fn(async () => ({ ...comment, author: 'tech@bu.edu' }));
+    await resolver.updateComment('c1', { isInternal: true }, tech);
+    expect(commentService.update.mock.calls[0][1].isInternal).toBe(true);
+  });
+});
+
+describe('CommentResolver — commentsByNodeId is scoped to the job', () => {
+  it('refuses a stranger', async () => {
+    const { resolver } = harness();
+    await expect(resolver.commentsByNodeId('n1', stranger)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('shows a technician the internal bench notes and a client member only the public ones', async () => {
+    const { resolver } = harness();
+    await expect(resolver.commentsByNodeId('n1', tech)).resolves.toHaveLength(2);
+    const seen = await resolver.commentsByNodeId('n1', member);
+    expect(seen.map((c: any) => c._id)).toEqual(['c1']);
   });
 });
