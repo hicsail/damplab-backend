@@ -39,6 +39,6 @@ export function matchesClientEmail(jobClientEmail: string | null | undefined, us
  * filtering and the ownership checks all agree on who is who.
  */
 export function effectiveClientEmailExpr(): Record<string, unknown> {
-  const raw = { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$clientEmail', ''] } }, 0] }, '$clientEmail', { $ifNull: ['$email', ''] }] };
+  const raw = { $cond: [{ $gt: [{ $strLenCP: { $trim: { input: { $ifNull: ['$clientEmail', ''] } } } }, 0] }, '$clientEmail', { $ifNull: ['$email', ''] }] };
   return { $toLower: { $trim: { input: raw } } };
 }
