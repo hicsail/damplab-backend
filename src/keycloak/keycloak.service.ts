@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CustomerCategory } from '../job/job.model';
+import { normalizeClientEmail } from '../job/client-email';
 import {
   CATEGORY_PRIMARY_GROUP,
   claimsFromGroupList,
@@ -27,6 +28,13 @@ export interface KeycloakUserCustomerManagementRow {
   isDefaultExternalCustomer?: boolean;
   /** The access column this user resolves to. Independent of `customerCategory`. */
   accessTier?: AccessTier;
+}
+
+/** The account a staff-entered client email names: who owns the job (B28) and how it is priced (B13). */
+export interface ClientAccount {
+  sub?: string;
+  username?: string;
+  customerCategory?: CustomerCategory;
 }
 
 interface KeycloakGroup {
@@ -193,6 +201,43 @@ export class KeycloakService {
       // category on the job, and the warning is what makes the gap visible.
       this.logger.warn(`Could not read pricing groups for user ${user.sub} from Keycloak; falling back to the token's claims`, error instanceof Error ? error.stack : error);
       return undefined;
+    }
+  }
+
+  /** The account whose email is exactly this one (case-insensitive), or null. Throws on a failed request. */
+  async findUserByExactEmail(email: string): Promise<KeycloakUser | null> {
+    const normalized = normalizeClientEmail(email);
+    if (!normalized) return null;
+    const res = await this.fetchWithToken(`/admin/realms/${this.realm}/users?email=${encodeURIComponent(normalized)}&exact=true`);
+    if (!res.ok) throw new Error(`Keycloak user lookup by email failed: ${res.status} ${await res.text()}`);
+    const users = (await res.json()) as KeycloakUser[];
+    return users.find((u) => normalizeClientEmail(u.email) === normalized) ?? null;
+  }
+
+  /**
+   * The client a staff member is submitting for: their account id and username
+   * (the job is theirs — B28) and their pricing category (F3). One exact-email
+   * lookup, then that account's groups. Never blocks a submission: no account or
+   * a failed lookup gives {} — ownership then rests on the email, pricing on the
+   * catalogue's fallback until staff set a category.
+   */
+  async resolveClientAccountByEmail(email: string): Promise<ClientAccount> {
+    if (!this.isConfigured()) {
+      this.logger.warn(`Keycloak Admin API not configured; no account resolved for client ${email}.`);
+      return {};
+    }
+    try {
+      const user = await this.findUserByExactEmail(email);
+      if (!user) {
+        this.logger.warn(`No Keycloak account with email ${email}; the job is owned by email until they sign in, and priced at the catalogue's fallback until staff set a category.`);
+        return {};
+      }
+      const customerCategory = deriveCategoryFromGroups(await this.getUserGroups(user.id));
+      if (!customerCategory) this.logger.warn(`No pricing group resolved for client ${email}; pricing will fall back to the catalogue's fallback price.`);
+      return { sub: user.id, username: user.username, customerCategory };
+    } catch (error) {
+      this.logger.warn(`Could not resolve the Keycloak account for client ${email}`, error instanceof Error ? error.stack : error);
+      return {};
     }
   }
 
