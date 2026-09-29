@@ -6,13 +6,17 @@ class FakeCollection {
   find(): { toArray: () => Promise<any[]> } {
     return { toArray: async () => this.documents.map((d) => JSON.parse(JSON.stringify(d))) };
   }
-  async updateOne(filter: any, update: any): Promise<void> {
+  async updateOne(filter: any, update: any): Promise<{ matchedCount: number }> {
+    const doc = this.documents.find((d) =>
+      Object.entries(filter).every(([key, want]: [string, any]) =>
+        want !== null && typeof want === 'object' && '$exists' in want ? (d[key] !== undefined) === want.$exists : String(d[key]) === String(want)
+      )
+    );
+    if (!doc) return { matchedCount: 0 };
     this.updates += 1;
-    const doc = this.documents.find((d) => String(d._id) === String(filter._id));
-    if (doc) {
-      Object.assign(doc, update.$set ?? {});
-      for (const key of Object.keys(update.$unset ?? {})) delete doc[key];
-    }
+    Object.assign(doc, update.$set ?? {});
+    for (const key of Object.keys(update.$unset ?? {})) delete doc[key];
+    return { matchedCount: 1 };
   }
 }
 const db = (fixtures: Record<string, any[]>): any => {
@@ -147,6 +151,95 @@ describe('migrateStaffSubmittedJobs (B32)', () => {
       const report = await migrateStaffSubmittedJobs(database, lookup, { dryRun: true, log: () => undefined });
       expect(report.commentsRepaired).toBe(2);
       expect(database.collections.comments.updates).toBe(0);
+    });
+  });
+
+  describe('concurrency, caching and matching', () => {
+    it('does not overwrite submittedBy when an overlapping run converts the job first', async () => {
+      const database = db({ jobs: jobs().slice(0, 1) });
+      let nested = false;
+      const overlapping = async (email: string): Promise<any> => {
+        if (!nested) {
+          nested = true;
+          await migrateStaffSubmittedJobs(database, lookup, { log: () => undefined });
+        }
+        return lookup(email);
+      };
+      const report = await migrateStaffSubmittedJobs(database, overlapping, { log: () => undefined });
+      expect(database.collections.jobs.documents[0].submittedBy).toEqual({ sub: 'staff-sub', email: 'tech@bu.edu', name: 'tess' });
+      expect(report).toMatchObject({ converted: 0, skipped: 1 });
+    });
+
+    it('does not overwrite a sub set between the read and the write, and repairs no comments for it', async () => {
+      const database = db({ jobs: jobs().slice(0, 1), comments: [{ _id: 'c1', jobId: 'j1', authorType: 'CLIENT', author: 'tech@bu.edu' }] });
+      const claiming = async (email: string): Promise<any> => {
+        database.collections.jobs.documents[0].sub = 'claimed-sub';
+        return lookup(email);
+      };
+      const report = await migrateStaffSubmittedJobs(database, claiming, { log: () => undefined });
+      expect(database.collections.jobs.documents[0].sub).toBe('claimed-sub');
+      expect(database.collections.jobs.documents[0].submittedBy).toBeUndefined();
+      expect(report).toMatchObject({ converted: 0, skipped: 1, commentsRepaired: 0 });
+      expect(database.collections.comments.documents[0].author).toBe('tech@bu.edu');
+    });
+
+    it('reports a throwing version node and still runs the conversion', async () => {
+      const broken = {
+        _id: 'svcBad',
+        get parameters(): never {
+          throw new Error('malformed service');
+        }
+      };
+      const database = db({
+        damplabservices: services,
+        workflownodes: [],
+        job_versions: [
+          {
+            _id: 'v1',
+            workflows: [
+              {
+                nodes: [
+                  { id: 'bad', serviceId: 'svcBad', formData: [] },
+                  { id: 'ok', serviceId: 'svc1', formData: [{ id: 'vol', value: 1 }] }
+                ]
+              }
+            ]
+          }
+        ],
+        jobs: jobs()
+      });
+      // The fake clones documents through JSON, which a throwing getter would not survive.
+      database.collections.damplabservices.find = () => ({ toArray: async () => [...services, broken] });
+      const report = await backfillParameterSnapshots(database, { log: () => undefined });
+      expect(report.failed).toEqual([{ id: 'version v1 node bad', error: 'malformed service' }]);
+      expect(report.versionNodesUpdated).toBe(1);
+      const migration = await migrateStaffSubmittedJobs(database, lookup, { log: () => undefined });
+      expect(migration.converted).toBe(2);
+    });
+
+    it('matches a mixed-case, padded clientEmail to its client', async () => {
+      const database = db({ jobs: [{ _id: 'jm', sub: 'staff-sub', email: 'tech@bu.edu', username: 'tess', clientEmail: '  Client@BU.edu ' }] });
+      await migrateStaffSubmittedJobs(database, lookup, { log: () => undefined });
+      expect(database.collections.jobs.documents[0]).toMatchObject({ sub: 'client-kc', email: 'client@bu.edu', clientEmail: 'client@bu.edu' });
+    });
+
+    it('asks about a client once for two of their jobs, and once for a failing client', async () => {
+      const database = db({
+        jobs: [
+          { _id: 'a', sub: 's', email: 't@bu.edu', clientEmail: 'client@bu.edu' },
+          { _id: 'b', sub: 's', email: 't@bu.edu', clientEmail: 'CLIENT@bu.edu' },
+          { _id: 'c', sub: 's', email: 't@bu.edu', clientEmail: 'down@bu.edu' },
+          { _id: 'd', sub: 's', email: 't@bu.edu', clientEmail: 'down@bu.edu' }
+        ]
+      });
+      const calls: string[] = [];
+      const counting = async (email: string): Promise<any> => {
+        calls.push(email);
+        return lookup(email);
+      };
+      const report = await migrateStaffSubmittedJobs(database, counting, { log: () => undefined });
+      expect(calls).toEqual(['client@bu.edu', 'down@bu.edu']);
+      expect(report).toMatchObject({ converted: 2, failed: [{ id: 'c' }, { id: 'd' }] });
     });
   });
 

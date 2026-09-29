@@ -65,8 +65,14 @@ export async function backfillParameterSnapshots(db: mongoose.mongo.Db, opts: { 
         if (Array.isArray(node.parameterSnapshot)) return node;
         const service = services.get(String(node.serviceId));
         if (!service) return node;
-        changed += 1;
-        return { ...node, parameterSnapshot: buildParameterSnapshot(service, node.formData) };
+        try {
+          const parameterSnapshot = buildParameterSnapshot(service, node.formData);
+          changed += 1;
+          return { ...node, parameterSnapshot };
+        } catch (error) {
+          report.failed.push({ id: `version ${version._id} node ${node.id}`, error: error instanceof Error ? error.message : String(error) });
+          return node;
+        }
       })
     }));
     if (changed === 0) continue;
@@ -84,6 +90,8 @@ export async function backfillParameterSnapshots(db: mongoose.mongo.Db, opts: { 
 export interface StaffSubmittedMigrationReport {
   scanned: number;
   converted: number;
+  /** Jobs whose document changed between the read and the write; left for a re-run. */
+  skipped: number;
   /** CLIENT comments whose author was the staff submitter's email, re-pointed at the client. */
   commentsRepaired: number;
   failed: Array<{ id: string; error: string }>;
@@ -102,11 +110,12 @@ export async function migrateStaffSubmittedJobs(
   opts: { dryRun?: boolean; log?: (msg: string) => void } = {}
 ): Promise<StaffSubmittedMigrationReport> {
   const log = opts.log ?? console.log;
-  const report: StaffSubmittedMigrationReport = { scanned: 0, converted: 0, commentsRepaired: 0, failed: [] };
+  const report: StaffSubmittedMigrationReport = { scanned: 0, converted: 0, skipped: 0, commentsRepaired: 0, failed: [] };
   const jobs = db.collection('jobs');
   const comments = db.collection('comments');
 
   // Comments by job, loaded once. Comment.jobId is an ObjectId in Mongo, a string in tests.
+  const lookups = new Map<string, Promise<{ sub?: string; username?: string } | null>>();
   const commentsByJob = new Map<string, any[]>();
   for (const comment of await comments.find({}).toArray()) {
     const key = String(comment.jobId);
@@ -123,7 +132,13 @@ export async function migrateStaffSubmittedJobs(
       if (normalizeClientEmail(job.email as string | undefined) === clientEmail) continue;
       let account: { sub?: string; username?: string } | null;
       try {
-        account = await lookup(clientEmail);
+        let pending = lookups.get(clientEmail);
+        if (!pending) {
+          // Cached per client, failures included, so one client is asked about once.
+          pending = lookup(clientEmail);
+          lookups.set(clientEmail, pending);
+        }
+        account = await pending;
       } catch (error) {
         report.failed.push({ id: String(job._id), error: error instanceof Error ? error.message : String(error) });
         log(`job ${job._id}: client lookup failed, left unconverted (re-run to retry)`);
@@ -139,7 +154,19 @@ export async function migrateStaffSubmittedJobs(
       else $unset.sub = 1;
       if (account?.username) $set.username = account.username;
       else $unset.username = 1;
-      if (!opts.dryRun) await jobs.updateOne({ _id: job._id }, Object.keys($unset).length ? { $set, $unset } : { $set });
+      // Conditional on the state that was read: the read is of the whole collection and each
+      // conversion waits on Keycloak, so an overlapping run or a sub claimed meanwhile must
+      // not be overwritten (a second write would replace submittedBy with the client).
+      const unchanged = (field: string, value: unknown): Record<string, unknown> => (value === undefined || value === null ? { [field]: { $exists: false } } : { [field]: value });
+      const filter = { _id: job._id, submittedBy: { $exists: false }, ...unchanged('sub', job.sub), ...unchanged('email', job.email), ...unchanged('clientEmail', job.clientEmail) };
+      if (!opts.dryRun) {
+        const result = await jobs.updateOne(filter, Object.keys($unset).length ? { $set, $unset } : { $set });
+        if (result.matchedCount === 0) {
+          report.skipped += 1;
+          log(`job ${job._id}: changed since it was read, left alone (re-run to retry)`);
+          continue;
+        }
+      }
       report.converted += 1;
       submitter = $set.submittedBy as { email?: string };
     }
