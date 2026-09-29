@@ -38,8 +38,8 @@ interface PreparedNode {
   clientId: string;
   patch: NodeContentPatch;
   snapshot: JobVersionNode;
-  /** Ids of this node's samples-spreadsheet parameters. */
-  sampleSheetParamIds: string[];
+  /** Ids of this node's uploaded-file parameters (`file` and `sampleSheet`), whose stored keys are presigned on read. */
+  fileParamIds: string[];
 }
 
 /**
@@ -664,22 +664,42 @@ export class JobVersionService {
   }
 
   /**
-   * B20: a spreadsheet swapped in the editor must be the one already stored, or
-   * one this caller uploaded. The node resolver presigns a download for whatever
-   * key is stored, so accepting a foreign key would let the writer read someone
-   * else's upload. Opt-in: only `saveJobWorkflows` names an uploader; restore and
-   * withdraw replay keys from history on purpose.
+   * B20: a file or spreadsheet swapped in the editor must be one already stored
+   * on that parameter, or one this caller uploaded (both kinds share the
+   * `workflow-parameters/{sub}/` prefix). The node resolver presigns a download
+   * for every stored key, so accepting a foreign key would let the writer read
+   * someone else's upload.
+   *
+   * Fails closed: every raw formData entry for a guarded parameter is checked
+   * (duplicate ids included, array elements included), and a non-empty value
+   * with no parseable key is refused unless it is exactly what is stored.
+   * An empty `uploaderSub` names nobody, so no new key is accepted. Opt-in:
+   * only `saveJobWorkflows` names an uploader; restore and withdraw replay keys
+   * from history on purpose.
    */
   private assertSampleSheetKeysAllowed(liveNodes: Map<string, LiveNode>, prepared: PreparedNode[][], uploaderSub: string): void {
+    const flatten = (value: unknown): unknown[] => (Array.isArray(value) ? value.flatMap(flatten) : [value]);
+    const isBlank = (v: unknown): boolean => v === null || v === undefined || v === '';
+    const raw = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
     for (const workflow of prepared) {
       for (const node of workflow) {
-        if (!node.sampleSheetParamIds.length) continue;
-        const before = paramValuesById(liveNodes.get(node.clientId)?.formData);
-        const after = paramValuesById(node.patch.formData);
-        for (const paramId of node.sampleSheetParamIds) {
-          const nextKey = sampleSheetKeyOf(after.get(paramId));
-          if (!nextKey || nextKey === sampleSheetKeyOf(before.get(paramId)) || keyBelongsToUploader(nextKey, uploaderSub)) continue;
-          throw new BadRequestException(`The samples spreadsheet on "${node.patch.label}" was not uploaded by you. Upload it again and retry.`);
+        if (!node.fileParamIds.length) continue;
+        const guarded = new Set(node.fileParamIds);
+        const stored = new Map<string, unknown[]>();
+        for (const entry of (liveNodes.get(node.clientId)?.formData ?? []) as Array<{ id?: unknown; value?: unknown }>) {
+          if (typeof entry?.id === 'string' && guarded.has(entry.id)) stored.set(entry.id, [...(stored.get(entry.id) ?? []), ...flatten(entry.value)]);
+        }
+        for (const entry of (node.patch.formData ?? []) as Array<{ id?: unknown; value?: unknown }>) {
+          if (typeof entry?.id !== 'string' || !guarded.has(entry.id)) continue;
+          const before = stored.get(entry.id) ?? [];
+          const beforeKeys = new Set(before.map(sampleSheetKeyOf).filter((k): k is string => !!k));
+          const beforeRaw = new Set(before.filter((v) => !isBlank(v)).map(raw));
+          for (const value of flatten(entry.value)) {
+            if (isBlank(value)) continue;
+            const key = sampleSheetKeyOf(value);
+            const allowed = key ? beforeKeys.has(key) || (uploaderSub !== '' && keyBelongsToUploader(key, uploaderSub)) : beforeRaw.has(raw(value));
+            if (!allowed) throw new BadRequestException(`The file on "${node.patch.label}" was not uploaded by you. Upload it again and retry.`);
+          }
         }
       }
     }
@@ -750,7 +770,9 @@ export class JobVersionService {
 
         return {
           clientId: node.id,
-          sampleSheetParamIds: (Array.isArray(service.parameters) ? service.parameters : []).filter(isSampleSheetParam).map((p: any) => p.id),
+          fileParamIds: (Array.isArray(service.parameters) ? service.parameters : [])
+            .filter((p: any) => p && typeof p.id === 'string' && (p.type === 'file' || isSampleSheetParam(p)))
+            .map((p: any) => p.id),
           patch: {
             label: node.label ?? service.name,
             service: new mongoose.Types.ObjectId(String(service._id)),

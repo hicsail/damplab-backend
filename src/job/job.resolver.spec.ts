@@ -49,6 +49,12 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
     await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, user);
     expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: 'customer-1' });
   });
+
+  it('names an empty uploader for a caller without a sub, so no new key is accepted', async () => {
+    const { resolver, saveWorkflows } = harness(JobState.SUBMITTED);
+    await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, { ...user, sub: undefined, realm_access: { roles: [Role.DamplabStaff] } });
+    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: '' });
+  });
 });
 
 describe('JobResolver.restoreJobVersion', () => {

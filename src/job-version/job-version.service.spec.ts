@@ -1210,6 +1210,53 @@ describe('saveWorkflows — samples-spreadsheet keys (B20)', () => {
     expect(harness.versions).toHaveLength(0);
   });
 
+  const saveRaw = (harness: Harness, formData: any[], opts: any = { uploaderSub: 'member' }): Promise<any> =>
+    harness.service.saveWorkflows({ jobId: JOB_ID, note: 'sheet', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData })], edges: [] }] } as any, author, opts);
+  const FOREIGN = 'workflow-parameters/other/stolen.xlsx';
+  const OWN = 'workflow-parameters/member/new.xlsx';
+
+  it('rejects a foreign key hidden behind a duplicate id', async () => {
+    const harness = setup();
+    await expect(
+      saveRaw(harness, [
+        { id: 'sheet', value: sheet(FOREIGN) },
+        { id: 'sheet', value: sheet(OWN) }
+      ])
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(harness.versions).toHaveLength(0);
+  });
+
+  it('rejects a foreign key inside an array value, and accepts an array of allowed keys', async () => {
+    const multi = (): Harness => {
+      const harness = setup();
+      (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({
+        ...SERVICE_A,
+        parameters: [{ id: 'sheet', name: 'Samples', type: 'sampleSheet', allowMultipleValues: true }]
+      });
+      return harness;
+    };
+    await expect(saveRaw(multi(), [{ id: 'sheet', value: [sheet(OWN), sheet(FOREIGN)] }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(multi(), [{ id: 'sheet', value: [sheet(OWN), sheet('workflow-parameters/owner/old.xlsx')] }])).resolves.toBeDefined();
+  });
+
+  it('rejects a non-empty value with no parseable key unless it is what is stored', async () => {
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: 'not json' }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: JSON.stringify({ filename: 'a.xlsx', notUploaded: true }) }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: '' }])).resolves.toBeDefined();
+  });
+
+  it('guards file parameters the same way', async () => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: [{ id: 'f', value: sheet('workflow-parameters/owner/old.pdf') }] })] });
+    (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({ ...SERVICE_A, parameters: [{ id: 'f', name: 'File', type: 'file' }] });
+    await expect(saveRaw(harness, [{ id: 'f', value: sheet(FOREIGN) }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(harness, [{ id: 'f', value: sheet(OWN) }])).resolves.toBeDefined();
+  });
+
+  it('accepts no new key when the uploader is empty (caller without a sub)', async () => {
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: sheet('workflow-parameters//x.xlsx') }], { uploaderSub: '' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: sheet('workflow-parameters/owner/old.xlsx') }], { uploaderSub: '' })).resolves.toBeDefined();
+  });
+
   it('does not check keys when no uploader is named (restore and withdraw)', async () => {
     await expect(save(setup(), 'workflow-parameters/other/older.xlsx', {})).resolves.toBeDefined();
   });
