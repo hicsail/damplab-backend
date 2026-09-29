@@ -31,6 +31,7 @@ import { JobPaymentResolver } from '../../job-payment/job-payment.resolver';
 import { JobChargeResolver } from '../../job-payment/job-charge.resolver';
 import { ParameterSetsResolver } from '../../parameter-sets/parameter-sets.resolver';
 import { UploadLogResolver } from '../../inventory/upload-log.resolver';
+import { CatalogExportResolver } from '../../catalog-export/catalog-export.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -190,6 +191,7 @@ const GATES: Row[] = [
   [ParameterSetsResolver, 'createParameterSet', Permission.CatalogEditorWrite],
   [ParameterSetsResolver, 'updateParameterSet', Permission.CatalogEditorWrite],
   [ParameterSetsResolver, 'deleteParameterSet', Permission.CatalogEditorWrite],
+  [CatalogExportResolver, 'catalogExport', Permission.CatalogEditorWrite],
 
   // Upload history. Was @Roles(DamplabStaff), which 403'd the technicians the
   // route admits (F4).

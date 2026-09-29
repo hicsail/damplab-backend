@@ -49,8 +49,8 @@ access group. See `damplab-backend/src/pricing/pricing-groups.ts`.
 | `bugs:report` | ✓ | ✓ | ✓ | ✓ |
 | `bugbacklog:view` | ✓ | ✓ | | |
 | `catalog:view` — the services catalog page | ✓ | ✓ | ✓ | ✓ |
-| `catalog-editor:read` | ✓ | ✓ | | |
-| `catalog-editor:write` | ✓ | | | |
+| `catalog-editor:read` — Catalog Editor (read), Parameter Sets, upload history, sees operations hidden from clients | ✓ | ✓ | | |
+| `catalog-editor:write` — edit operations/sets/bundles/categories, operations upload, Download Catalog | ✓ | | | |
 | `protocol-library:read` | ✓ | ✓ | | |
 | `protocol-library:write` | ✓ | ✓ | | |
 | `lab-layout:read` | ✓ | ✓ | | |
@@ -134,7 +134,7 @@ that is the only coupling between grouping and permission.
 | *(Announcements here is the read-only feed at `/announcements`, `announcements:read` — baseline. The editor is "Edit Announcements" under Admin Operational Tools, `announcements:write`.)* | |
 | **Technician Tools** | Staff submit job, My Bench |
 | **Operational Tools** | Inventory Availability, Inventory Schedule |
-| **Admin Operational Tools** | Release Notes, Catalog & Inventory Editor, Protocol Library, Lab Layout, Edit Announcements, Billing, AI Lab Assistant |
+| **Admin Operational Tools** | Release Notes, Catalog Editor, Protocol Library, Lab Layout, Edit Announcements, Billing, AI Lab Assistant |
 | **Admin Management Tools** | Customer Management, API Keys, Data Translation, Lab Monitor North, Lab Monitor South, Lab Status TV |
 
 Two deliberate oddities, both consequences of the topical grouping:
@@ -151,7 +151,7 @@ Two deliberate oddities, both consequences of the topical grouping:
 
 | Was | Now | Route |
 |---|---|---|
-| Catalog Editor | Catalog & Inventory Editor | `/edit` |
+| Catalog Editor | Catalog Editor *(Phase 1 had appended "and Inventory"; dropped again by the catalog-editor-updates run)* | `/edit` |
 | Protocol Map | Protocol Library | `/protocol-map` |
 | Lab Stations | Lab Layout | `/stations` |
 | Usage Billing | Billing | `/usage-billing` |
@@ -163,3 +163,13 @@ Two deliberate oddities, both consequences of the topical grouping:
 
 Routes are unchanged; only labels move. Each rename must land in three places —
 the homepage button, `AppBreadcrumbs`' `STATIC` map, and the page's own heading.
+
+## Catalog Editor resolver gates (catalog-editor-updates)
+
+| Operation | Gate |
+|---|---|
+| `parameterSets`, `parameterSet`, `deletedServiceIds`, `uploadLogs`, `uploadLog` | `catalog-editor:read` |
+| `createParameterSet`, `updateParameterSet`, `deleteParameterSet`, `catalogExport` | `catalog-editor:write` |
+| `createUploadLog` | inline: `inventory:write` for an INVENTORY log, `catalog-editor:write` for an OPERATION log |
+| `catalogServices` | `catalog:view`; operations hidden from clients are returned only to `catalog-editor:read` |
+| `createJob` | refuses a node whose operation is hidden from clients unless the caller holds `catalog-editor:read` |
