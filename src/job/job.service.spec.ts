@@ -97,3 +97,35 @@ describe('setAclidScreening', () => {
     expect(findOneAndUpdate.mock.calls[0][1].$set.aclidScreening.screenId).toBe('screen-2');
   });
 });
+
+describe('JobService.claimSubIfPrimary (B29)', () => {
+  const build = (): { service: JobService; updates: any[] } => {
+    const updates: any[] = [];
+    const jobModel: any = {
+      findOneAndUpdate: (filter: any, update: any): { exec: () => Promise<any> } => ({
+        exec: async (): Promise<any> => {
+          updates.push({ filter, update });
+          return { _id: filter._id, sub: update.$set.sub, email: 'client@bu.edu' };
+        }
+      })
+    };
+    return { service: new JobService(jobModel, {} as any, {} as any, {} as any), updates };
+  };
+  const unclaimed: any = { _id: 'job-1', email: 'client@bu.edu', clientEmail: 'client@bu.edu' };
+
+  it("stores the primary client's sub on a job that has none, conditionally", async () => {
+    const { service, updates } = build();
+    const out = await service.claimSubIfPrimary(unclaimed, { sub: 'client-kc', email: 'Client@BU.edu' });
+    expect(out.sub).toBe('client-kc');
+    expect(updates[0].filter).toEqual({ _id: 'job-1', $or: [{ sub: { $exists: false } }, { sub: null }, { sub: '' }] });
+  });
+
+  it('never overwrites a set sub, and ignores members and strangers', async () => {
+    const { service, updates } = build();
+    await service.claimSubIfPrimary({ ...unclaimed, sub: 'someone' }, { sub: 'client-kc', email: 'client@bu.edu' });
+    await service.claimSubIfPrimary({ ...unclaimed, memberEmails: ['m@x.org'] }, { sub: 'm', email: 'm@x.org' });
+    await service.claimSubIfPrimary(unclaimed, { sub: 'x', email: 'x@x.org' });
+    await service.claimSubIfPrimary(unclaimed, { email: 'client@bu.edu' });
+    expect(updates).toEqual([]);
+  });
+});

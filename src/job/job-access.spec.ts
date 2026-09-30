@@ -33,4 +33,8 @@ describe('callerMayAccessJob', () => {
     expect(callerMayAccessJob(null, { sub: 'tech-1' }, true)).toBe(false);
     expect(callerMayAccessJob(null, owner, false)).toBe(false);
   });
+
+  it('admits a member listed on the job', () => {
+    expect(callerMayAccessJob({ sub: 'customer-1', memberEmails: ['m@x.org'] }, { sub: 'm-1', email: 'M@x.org' }, false)).toBe(true);
+  });
 });

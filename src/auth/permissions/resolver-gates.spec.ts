@@ -9,6 +9,7 @@ import { StationResolver } from '../../station/station.resolver';
 import { ProtocolMapResolver } from '../../protocol-map/protocol-map.resolver';
 import { TemplateResolver } from '../../template/template.resolver';
 import { JobResolver } from '../../job/job.resolver';
+import { CommentResolver } from '../../comment/comment.resolver';
 import { SecureDnaResolver } from '../../securedna/securedna.resolver';
 import { WorkflowResolver } from '../../workflow/workflow.resolver';
 import { WorkflowNodeResolver } from '../../workflow/resolvers/node.resolver';
@@ -110,6 +111,20 @@ const GATES: Row[] = [
   // inside the resolver. Re-running the screen itself stays jobs:view-all above.
   [JobResolver, 'startJobCustomerVerification', Permission.JobsView],
   [JobResolver, 'refreshJobAclidScreening', Permission.JobsView],
+
+  // Collaborators. Baseline, scoped inside: membership (or damplab-staff /
+  // jobs:view-all) is checked in the resolver, the way the KYC mutations are.
+  [JobResolver, 'addJobMember', Permission.JobsView],
+  [JobResolver, 'removeJobMember', Permission.JobsView],
+  [JobResolver, 'setJobDescription', Permission.JobsView],
+
+  // Comments (F1). Baseline, scoped inside to the job's members and jobs:view-all.
+  [CommentResolver, 'commentsByJobId', Permission.JobsView],
+  [CommentResolver, 'commentById', Permission.JobsView],
+  [CommentResolver, 'commentsByNodeId', Permission.JobsView],
+  [CommentResolver, 'createComment', Permission.JobsView],
+  [CommentResolver, 'updateComment', Permission.JobsView],
+  [CommentResolver, 'deleteComment', Permission.JobsView],
 
   // /lab-monitor/:screen
   [WorkflowNodeResolver, 'getLabMonitorNodes', Permission.LabMonitorView],

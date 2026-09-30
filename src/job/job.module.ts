@@ -33,7 +33,7 @@ import { NotificationModule } from '../notification/notification.module';
     forwardRef(() => WorkflowModule),
     forwardRef(() => CommentModule),
     forwardRef(() => SOWModule),
-    ActivityModule,
+    forwardRef(() => ActivityModule),
     SecureDnaModule,
     AclidModule,
     DampLabServicesModule,

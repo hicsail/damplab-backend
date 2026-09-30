@@ -33,6 +33,10 @@ describe('mayReadJobFinancials', () => {
   it('does not admit a job with no client email to every user without one', () => {
     expect(mayReadJobFinancials({ sub: 'creator-sub' }, user({ email: undefined }))).toBe(false);
   });
+
+  it('lets a job member read it', () => {
+    expect(mayReadJobFinancials({ ...job, memberEmails: ['member@bu.edu'] }, user({ email: 'Member@BU.edu' }))).toBe(true);
+  });
 });
 
 describe('assertMayReadJobFinancials', () => {

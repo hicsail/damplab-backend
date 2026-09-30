@@ -80,3 +80,25 @@ describe('resolveJobEquipmentBookingAccess', () => {
     expect(v.canBook).toBe(false);
   });
 });
+
+describe('job members (B3: book equipment for the job)', () => {
+  it('treats a member like the owner', () => {
+    const verdict = resolveJobEquipmentBookingAccess(
+      { sub: 'owner-sub', email: 'owner@x.org', memberEmails: ['member@x.org'] },
+      { sub: 'member-sub', email: 'Member@x.org', hasInventoryBook: true, hasJobsViewAll: false, hasBillingView: false },
+      [{ nodeId: 'n1', bookers: [] }],
+      true
+    );
+    expect(verdict.status).toBe(JobBookingAccessStatus.OPEN);
+  });
+
+  it('still hides the job from a stranger', () => {
+    const verdict = resolveJobEquipmentBookingAccess(
+      { sub: 'owner-sub', email: 'owner@x.org', memberEmails: ['member@x.org'] },
+      { sub: 'x', email: 'x@x.org', hasInventoryBook: true, hasJobsViewAll: false, hasBillingView: false },
+      [{ nodeId: 'n1', bookers: [] }],
+      true
+    );
+    expect(verdict.status).toBe(JobBookingAccessStatus.HIDDEN);
+  });
+});

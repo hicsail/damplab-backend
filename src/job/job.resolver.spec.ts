@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { JobResolver } from './job.resolver';
-import { HomologyScreeningStatus, JobState } from './job.model';
+import { CustomerCategory, HomologyScreeningStatus, JobState } from './job.model';
 import { Role } from '../auth/roles/roles.enum';
 
 describe('JobResolver.saveJobWorkflows customer edit gate', () => {
@@ -20,7 +20,7 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
       customerActionRequired: 'EDIT_WORKFLOW',
       workflows: []
     };
-    const jobService: any = { findById: jest.fn(async () => job) };
+    const jobService: any = { findById: jest.fn(async () => job), claimSubIfPrimary: jest.fn(async (j: any) => j) };
     const saveWorkflows = jest.fn(async () => job);
     const jobVersionService: any = { saveWorkflows };
     const activityService: any = { createEvent: jest.fn(async () => undefined) };
@@ -42,6 +42,18 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
     await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, user);
 
     expect(saveWorkflows).toHaveBeenCalledTimes(1);
+  });
+
+  it('names the caller as the uploader, so the version service checks spreadsheet keys', async () => {
+    const { resolver, saveWorkflows } = harness(JobState.CHANGES_REQUESTED);
+    await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, user);
+    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: 'customer-1' });
+  });
+
+  it('names an empty uploader for a caller without a sub, so no new key is accepted', async () => {
+    const { resolver, saveWorkflows } = harness(JobState.SUBMITTED);
+    await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, { ...user, sub: undefined, realm_access: { roles: [Role.DamplabStaff] } });
+    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: '' });
   });
 });
 
@@ -527,5 +539,413 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     const { resolver, getScreen } = kycHarness(job);
     await expect(resolver.refreshJobAclidScreening('job-1', owner)).rejects.toThrow(new BadRequestException('No Aclid screen on this job'));
     expect(getScreen).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobResolver.createJob — clients, members and description', () => {
+  const customer: any = { sub: 'customer-9', email: 'Customer@Example.org', preferred_username: 'Customer', realm_access: { roles: [] } };
+  const admin: any = { sub: 'admin-1', email: 'tech@bu.edu', preferred_username: 'Tech', realm_access: { roles: [Role.DamplabStaff] } };
+
+  function harness(account: any = { sub: 'client-kc', username: 'cara', customerCategory: CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC }): {
+    resolver: JobResolver;
+    create: jest.Mock;
+    byUser: jest.Mock;
+    byEmail: jest.Mock;
+  } {
+    const create = jest.fn(async (input: any) => ({ _id: 'job-1', name: input.name, ...input }));
+    const jobService: any = { create, findById: jest.fn(async () => ({ _id: 'job-1', name: 'Job' })) };
+    const jobVersionService: any = { snapshotLiveWorkflows: jest.fn(async () => []), appendVersion: jest.fn(async () => undefined) };
+    const activityService: any = { createEvent: jest.fn(async () => undefined) };
+    const byUser = jest.fn(async () => CustomerCategory.INTERNAL_CUSTOMERS);
+    const byEmail = jest.fn(async () => account);
+    const keycloakService: any = { resolveCustomerCategoryForUser: byUser, resolveClientAccountByEmail: byEmail };
+    const jobScreeningService: any = { screenJobInBackground: jest.fn(), screenJob: jest.fn() };
+    const resolver = new JobResolver(
+      jobService,
+      {} as any,
+      {} as any,
+      activityService,
+      {} as any,
+      {} as any,
+      {} as any,
+      jobVersionService,
+      {} as any,
+      keycloakService,
+      { dispatch: jest.fn() } as any,
+      jobScreeningService,
+      {} as any
+    );
+    return { resolver, create, byUser, byEmail };
+  }
+
+  it('refuses clientEmail from a caller without job:submit-for-client, before writing anything (F2)', async () => {
+    const { resolver, create, byEmail } = harness();
+    await expect(resolver.createJob({ name: 'J', workflows: [], clientEmail: 'client@bu.edu' } as any, customer)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(create).not.toHaveBeenCalled();
+    expect(byEmail).not.toHaveBeenCalled();
+  });
+
+  it("makes a staff-submitted job the client's: their sub, email, username and category, with staff recorded as submitter only (B28, F3, B11)", async () => {
+    const { resolver, create, byUser, byEmail } = harness();
+    await resolver.createJob({ name: 'J', workflows: [], clientEmail: 'client@bu.edu', memberEmails: ['B@x.org', 'client@bu.edu', 'b@x.org'] } as any, admin);
+    expect(byEmail).toHaveBeenCalledTimes(1);
+    expect(byEmail).toHaveBeenCalledWith('client@bu.edu');
+    expect(byUser).not.toHaveBeenCalled();
+    expect(create.mock.calls[0][0]).toMatchObject({
+      sub: 'client-kc',
+      email: 'client@bu.edu',
+      username: 'cara',
+      clientEmail: 'client@bu.edu',
+      memberEmails: ['b@x.org'],
+      customerCategory: CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC,
+      submittedBy: { sub: 'admin-1', email: 'tech@bu.edu', name: 'Tech' }
+    });
+  });
+
+  it('leaves sub and username unset when the client has no account (ownership rests on the email)', async () => {
+    const { resolver, create } = harness({});
+    await resolver.createJob({ name: 'J', workflows: [], clientEmail: 'new@bu.edu' } as any, admin);
+    const input = create.mock.calls[0][0];
+    expect(input.sub).toBeUndefined();
+    expect(input.username).toBeUndefined();
+    expect(input.email).toBe('new@bu.edu');
+    expect(input.customerCategory).toBeUndefined();
+  });
+
+  it("lets any submitter add members; the submitter's own email is dropped (B10, B12)", async () => {
+    const { resolver, create, byUser } = harness();
+    await resolver.createJob({ name: 'J', workflows: [], memberEmails: [' Friend@X.org ', 'customer@example.org'], description: 'For lab 4' } as any, customer);
+    expect(byUser).toHaveBeenCalled();
+    expect(create.mock.calls[0][0]).toMatchObject({
+      sub: 'customer-9',
+      email: 'Customer@Example.org',
+      memberEmails: ['friend@x.org'],
+      description: 'For lab 4',
+      customerCategory: CustomerCategory.INTERNAL_CUSTOMERS
+    });
+    expect(create.mock.calls[0][0].submittedBy).toBeUndefined();
+  });
+
+  it('allows an empty member list', async () => {
+    const { resolver, create } = harness();
+    await resolver.createJob({ name: 'J', workflows: [] } as any, customer);
+    expect(create.mock.calls[0][0].memberEmails).toEqual([]);
+  });
+
+  it('rejects a malformed member email', async () => {
+    const { resolver, create } = harness();
+    await expect(resolver.createJob({ name: 'J', workflows: [], memberEmails: ['nope'] } as any, customer)).rejects.toBeInstanceOf(BadRequestException);
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('JobResolver resolve fields — memberEmails and primaryClientEmail', () => {
+  const resolver = new JobResolver({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+
+  it('resolves a legacy row from the list pipeline that has no memberEmails at all', () => {
+    const legacy: any = { sub: 's', email: 'Owner@x.org' };
+    expect(resolver.memberEmails(legacy)).toEqual([]);
+    expect(resolver.primaryClientEmail(legacy)).toBe('owner@x.org');
+  });
+
+  it('names the client as primary on a (legacy, unmigrated) staff-submitted job and never lists it as a member', () => {
+    const job: any = { sub: 's', email: 'tech@bu.edu', clientEmail: 'client@bu.edu', memberEmails: ['client@bu.edu', 'b@x.org'] };
+    expect(resolver.primaryClientEmail(job)).toBe('client@bu.edu');
+    expect(resolver.memberEmails(job)).toEqual(['b@x.org']);
+  });
+});
+
+describe('JobResolver — client ownership consequences (B29, B31)', () => {
+  const client: any = { sub: 'client-kc', email: 'client@bu.edu', preferred_username: 'cara', realm_access: { roles: [] } };
+
+  it('ownJobById claims the sub for the primary client and returns the claimed job', async () => {
+    const job: any = { _id: 'job-1', email: 'client@bu.edu', clientEmail: 'client@bu.edu', submittedBy: { sub: 'admin-1' } };
+    const claimSubIfPrimary = jest.fn(async (j: any, u: any) => ({ ...j, sub: u.sub }));
+    const resolver = new JobResolver(
+      { findById: async () => job, claimSubIfPrimary } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    expect((await resolver.ownJobById('job-1', client))?.sub).toBe('client-kc');
+    expect(claimSubIfPrimary).toHaveBeenCalledWith(job, client);
+  });
+
+  it('refuses the staff submitter on ownJobById — submittedBy grants nothing (B28)', async () => {
+    const job: any = { _id: 'job-1', sub: 'client-kc', email: 'client@bu.edu', clientEmail: 'client@bu.edu', submittedBy: { sub: 'admin-1', email: 'tech@bu.edu' } };
+    const resolver = new JobResolver(
+      { findById: async () => job, claimSubIfPrimary: async (j: any) => j } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    expect(await resolver.ownJobById('job-1', { sub: 'admin-1', email: 'tech@bu.edu', realm_access: { roles: [] } } as any)).toBeNull();
+  });
+
+  it("changeJobCustomerCategory updates the client's Keycloak account, not the staff submitter's (B31)", async () => {
+    const job: any = { _id: 'job-1', sub: 'client-kc', email: 'client@bu.edu', clientEmail: 'client@bu.edu', submittedBy: { sub: 'admin-1' } };
+    const setUserCustomerCategory = jest.fn(async () => undefined);
+    const updateCustomerCategoryForSub = jest.fn(async () => [job]);
+    const resolver = new JobResolver(
+      { findById: async () => job, updateCustomerCategoryForSub } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { syncServicesFromJobWorkflows: jest.fn(async () => undefined) } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { isConfigured: () => true, setUserCustomerCategory } as any,
+      {} as any,
+      {} as any,
+      {} as any
+    );
+    await resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS);
+    expect(setUserCustomerCategory).toHaveBeenCalledWith('client-kc', CustomerCategory.INTERNAL_CUSTOMERS);
+    expect(updateCustomerCategoryForSub).toHaveBeenCalledWith('client-kc', CustomerCategory.INTERNAL_CUSTOMERS);
+  });
+
+  it('staff "created by me" also finds jobs they submitted for a client; a client never gets that widening', async () => {
+    const findJobsForViewer: jest.Mock = jest.fn(async () => ({ items: [], totalCount: 0 }));
+    const resolver = new JobResolver({ findJobsForViewer } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    await resolver.jobsForViewer({ scope: 'CREATED_BY_ME' } as any, { sub: 'admin-1', email: 'tech@bu.edu', realm_access: { roles: [Role.DamplabStaff] } } as any);
+    await resolver.jobsForViewer({} as any, client);
+    expect(findJobsForViewer.mock.calls[0][1]).toMatchObject({ includeSubmittedBy: true });
+    expect(findJobsForViewer.mock.calls[1][1]).toMatchObject({ includeSubmittedBy: false });
+  });
+});
+
+describe('JobResolver — members act as the owner (B2–B4)', () => {
+  const member: any = { sub: 'member-sub', email: 'Member@X.org', preferred_username: 'Member', realm_access: { roles: [] } };
+  const namedClient: any = { sub: 'client-sub', email: 'client@bu.edu', preferred_username: 'Client', realm_access: { roles: [] } };
+  const strangerUser: any = { sub: 'stranger', email: 'stranger@x.org', preferred_username: 'S', realm_access: { roles: [] } };
+  // A legacy, unmigrated staff submission (sub/email still the technician's): the
+  // named client must still act through clientEmail (B4). New-style jobs are covered in Task 4.
+  const baseJob = (over: any = {}): any => ({
+    _id: 'job-1',
+    name: 'Job',
+    sub: 'staff-sub',
+    email: 'tech@bu.edu',
+    clientEmail: 'client@bu.edu',
+    memberEmails: ['member@x.org'],
+    workflows: [],
+    ...over
+  });
+
+  function harness(job: any): { resolver: JobResolver; saveWorkflows: jest.Mock; updateState: jest.Mock; addAttachments: jest.Mock } {
+    const saveWorkflows = jest.fn(async () => job);
+    const updateState = jest.fn(async (_j: any, state: any) => ({ ...job, state }));
+    const addAttachments = jest.fn(async () => job);
+    const jobService: any = { findById: jest.fn(async () => job), updateState, addAttachments, claimSubIfPrimary: jest.fn(async (j: any) => j) };
+    const jobVersionService: any = { saveWorkflows, appendStateEvent: jest.fn(async () => undefined) };
+    const activityService: any = { createEvent: jest.fn(async () => undefined) };
+    const sowService: any = { syncServicesFromJobWorkflows: jest.fn(async () => undefined) };
+    const jobScreeningService: any = { screenJobInBackground: jest.fn() };
+    const resolver = new JobResolver(
+      jobService,
+      {} as any,
+      {} as any,
+      activityService,
+      {} as any,
+      sowService,
+      {} as any,
+      jobVersionService,
+      {} as any,
+      {} as any,
+      {} as any,
+      jobScreeningService,
+      {} as any
+    );
+    return { resolver, saveWorkflows, updateState, addAttachments };
+  }
+
+  it('ownJobById opens the job for a member and returns null to a stranger', async () => {
+    const { resolver } = harness(baseJob());
+    expect(await resolver.ownJobById('job-1', member)).toMatchObject({ _id: 'job-1' });
+    expect(await resolver.ownJobById('job-1', strangerUser)).toBeNull();
+  });
+
+  it.each([
+    ['member', member],
+    ['client named on a staff-submitted job (B4)', namedClient]
+  ])('lets the %s save the workflow while edit access is granted', async (_label, caller) => {
+    const { resolver, saveWorkflows } = harness(baseJob({ state: JobState.CHANGES_REQUESTED, customerActionRequired: 'EDIT_WORKFLOW' }));
+    await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, caller);
+    expect(saveWorkflows).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a stranger saving the workflow', async () => {
+    const { resolver, saveWorkflows } = harness(baseJob({ state: JobState.CHANGES_REQUESTED, customerActionRequired: 'EDIT_WORKFLOW' }));
+    await expect(resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, strangerUser)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(saveWorkflows).not.toHaveBeenCalled();
+  });
+
+  it('lets a member resubmit', async () => {
+    const job = baseJob({ state: JobState.CHANGES_REQUESTED });
+    const { resolver, updateState } = harness(job);
+    await resolver.changeJobState(job, JobState.SUBMITTED, member);
+    expect(updateState).toHaveBeenCalled();
+  });
+
+  it('lets a member add attachments and refuses a stranger', async () => {
+    const { resolver, addAttachments } = harness(baseJob());
+    await resolver.addJobAttachments('job-1', [{ filename: 'a.pdf', key: 'k', contentType: 'application/pdf', size: 1 }] as any, member);
+    expect(addAttachments).toHaveBeenCalled();
+    await expect(resolver.addJobAttachments('job-1', [] as any, strangerUser)).rejects.toThrow(/permission/);
+  });
+});
+
+describe('JobResolver member management and description (B7–B9, B17)', () => {
+  const member: any = { sub: 'member-sub', email: 'member@x.org', preferred_username: 'Member', realm_access: { roles: [] } };
+  const primary: any = { sub: 'client-sub', email: 'client@bu.edu', preferred_username: 'Client', realm_access: { roles: [] } };
+  const adminUser: any = { sub: 'admin', email: 'admin@bu.edu', preferred_username: 'Admin', realm_access: { roles: [Role.DamplabStaff] } };
+  const tech: any = { sub: 'tech', email: 'tech@bu.edu', preferred_username: 'Tech', realm_access: { roles: [Role.Technician] } };
+  const strangerUser: any = { sub: 'x', email: 'x@x.org', preferred_username: 'X', realm_access: { roles: [] } };
+
+  function harness(over: any = {}): { resolver: JobResolver; job: any; jobService: any; createEvent: jest.Mock } {
+    const job: any = { _id: 'job-1', name: 'Job', sub: 'staff-sub', email: 'tech@bu.edu', clientEmail: 'client@bu.edu', memberEmails: ['member@x.org'], state: JobState.CLOSED, ...over };
+    const jobService: any = {
+      findById: jest.fn(async () => job),
+      addMember: jest.fn(async (_id: string, email: string) => ({ ...job, memberEmails: [...job.memberEmails, email] })),
+      removeMember: jest.fn(async (_id: string, email: string) => ({ ...job, memberEmails: job.memberEmails.filter((e: string) => e !== email) })),
+      setDescription: jest.fn(async (_id: string, description?: string) => ({ ...job, description })),
+      claimSubIfPrimary: jest.fn(async (j: any) => j)
+    };
+    const createEvent = jest.fn(async () => undefined);
+    const resolver = new JobResolver(jobService, {} as any, {} as any, { createEvent } as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+    return { resolver, job, jobService, createEvent };
+  }
+
+  it('adds a normalized email in any state, even a closed job, and records who did it', async () => {
+    const { resolver, jobService, createEvent } = harness();
+    const updated = await resolver.addJobMember('job-1', '  New@Y.org ', member);
+    expect(jobService.addMember).toHaveBeenCalledWith('job-1', 'new@y.org');
+    expect(updated.memberEmails).toContain('new@y.org');
+    expect(createEvent.mock.calls[0][0].message).toMatch(/new@y\.org/);
+    expect(createEvent.mock.calls[0][0].actorDisplayName).toBe('Member');
+  });
+
+  it('is idempotent for an existing member or the primary', async () => {
+    const { resolver, jobService, createEvent } = harness();
+    await resolver.addJobMember('job-1', 'MEMBER@x.org', member);
+    await resolver.addJobMember('job-1', 'client@bu.edu', member);
+    expect(jobService.addMember).not.toHaveBeenCalled();
+    expect(createEvent).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed email', async () => {
+    const { resolver } = harness();
+    await expect(resolver.addJobMember('job-1', 'not-an-email', member)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('lets damplab-staff manage members, and refuses a technician who is not a member, and a stranger', async () => {
+    const { resolver } = harness();
+    await expect(resolver.addJobMember('job-1', 'a@b.org', adminUser)).resolves.toBeDefined();
+    await expect(resolver.addJobMember('job-1', 'a@b.org', tech)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(resolver.removeJobMember('job-1', 'member@x.org', strangerUser)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('refuses to remove the primary client', async () => {
+    const { resolver } = harness();
+    await expect(resolver.removeJobMember('job-1', 'Client@BU.edu', adminUser)).rejects.toThrow("The primary client can't be removed");
+  });
+
+  it('lets a member remove themselves, and treats a non-member removal as a no-op', async () => {
+    const { resolver, jobService } = harness();
+    const updated = await resolver.removeJobMember('job-1', 'member@x.org', member);
+    expect(updated.memberEmails).toEqual([]);
+    jobService.removeMember.mockClear();
+    await resolver.removeJobMember('job-1', 'nobody@x.org', primary);
+    expect(jobService.removeMember).not.toHaveBeenCalled();
+  });
+
+  it('404s on a missing job', async () => {
+    const { resolver, jobService } = harness();
+    jobService.findById.mockResolvedValueOnce(null);
+    await expect(resolver.addJobMember('job-1', 'a@b.org', member)).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('sets the description for a member or a jobs:view-all holder, trimmed, in any state', async () => {
+    const { resolver, jobService } = harness();
+    await resolver.setJobDescription('job-1', member, '  For lab 4 ');
+    expect(jobService.setDescription).toHaveBeenLastCalledWith('job-1', 'For lab 4');
+    await resolver.setJobDescription('job-1', tech, '');
+    expect(jobService.setDescription).toHaveBeenLastCalledWith('job-1', undefined);
+  });
+
+  it('refuses a stranger and an over-long description', async () => {
+    const { resolver } = harness();
+    await expect(resolver.setJobDescription('job-1', strangerUser, 'x')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(resolver.setJobDescription('job-1', member, 'x'.repeat(501))).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('JobResolver.reviewJob — owner notification (F4)', () => {
+  it.each(['ACCEPT', 'REQUEST_CLARIFICATION', 'REQUEST_EDITS', 'REQUEST_APPROVAL'])('dispatches JOB_REVIEWED for %s, keyed on the operation id', async (decision) => {
+    const dispatch = jest.fn();
+    const reviewJob = jest.fn(async () => ({ _id: 'job-1', name: 'Job' }));
+    const resolver = new JobResolver(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { reviewJob } as any,
+      {} as any,
+      { dispatch } as any,
+      {} as any,
+      {} as any
+    );
+    const staff: any = { sub: 'staff-1', email: 's@bu.edu', preferred_username: 'Staff', realm_access: { roles: [Role.DamplabStaff] } };
+    await resolver.reviewJob({ operationId: 'op-1', jobId: 'job-1', decision } as any, staff);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'JOB_REVIEWED', jobId: 'job-1', actorSub: 'staff-1', operationId: 'job-reviewed:op-1' }));
+    expect(dispatch.mock.calls[0][0].title).toBeTruthy();
+  });
+
+  it('does not notify when the review fails', async () => {
+    const dispatch = jest.fn();
+    const resolver = new JobResolver(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {
+        reviewJob: jest.fn(async () => {
+          throw new BadRequestException('no');
+        })
+      } as any,
+      {} as any,
+      { dispatch } as any,
+      {} as any,
+      {} as any
+    );
+    await expect(resolver.reviewJob({ operationId: 'op-2', jobId: 'job-1', decision: 'ACCEPT' } as any, { sub: 's', realm_access: { roles: [] } } as any)).rejects.toBeInstanceOf(BadRequestException);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

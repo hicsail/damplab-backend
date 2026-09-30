@@ -14,10 +14,13 @@ import { CancelJobInput, JobReviewDecision, RejectJobReviewInput, RequestJobEdit
 import { customerMayEdit } from './job-editing';
 import { CustomerActionRequired, Job, JobDocument, JobState } from './job.model';
 import { JobReviewCommandKind, JobReviewOperation, JobReviewOperationDocument, JobReviewOperationStatus } from './job-review-operation.model';
+import { isJobMember } from './job-membership';
 import { jobVersionAuthorOrg } from '../job-version/author-org';
 
 export interface JobReviewActor {
   sub: string;
+  /** Token email; with sub, what isJobMember matches on. */
+  email?: string;
   name: string;
   /**
    * The actor's realm roles, straight off their token.
@@ -266,7 +269,7 @@ export class JobReviewService {
 
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
-    if (job.sub !== actor.sub) throw new ForbiddenException('You do not have permission to respond to this job review.');
+    if (!isJobMember(job, actor)) throw new ForbiddenException('You do not have permission to respond to this job review.');
     if (job.state !== JobState.CHANGES_REQUESTED || !job.customerActionRequired) {
       throw new BadRequestException('This job is not awaiting a customer response.');
     }
@@ -889,7 +892,7 @@ export class JobReviewService {
   // can move underneath them.
   //
   // Ownership is the gate, not a role. These mirror `signSow` and
-  // `respondToJobReview`, which check `job.sub` rather than carrying a
+  // `respondToJobReview`, which check `isJobMember` rather than carrying a
   // @RequirePermission — a customer acting on their own job holds no permission
   // beyond the baseline.
   // ---------------------------------------------------------------------------
@@ -915,7 +918,7 @@ export class JobReviewService {
 
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
-    if (job.sub !== actor.sub) throw new ForbiddenException('You do not have permission to act on this job.');
+    if (!isJobMember(job, actor)) throw new ForbiddenException('You do not have permission to act on this job.');
     await precondition(job);
 
     const operation = await this.createOperation(

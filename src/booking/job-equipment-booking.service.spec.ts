@@ -244,6 +244,14 @@ describe('BookingService.createForJob', () => {
     });
   });
 
+  it("books to the job's owner, falling back to the booker while the client has no account yet", async () => {
+    const { svc, created } = make();
+    await svc.createForJob({ ...params, job: { ...params.job, sub: undefined } } as any);
+    await svc.createForJob({ ...params, job: { ...params.job, sub: 'client-kc' } } as any);
+    expect(created[0].ownerSub).toBe('booker-sub');
+    expect(created[1].ownerSub).toBe('client-kc');
+  });
+
   it('leaves rate and cost undefined when the category resolves no price', async () => {
     const { svc, created } = make();
     await svc.createForJob({ ...params, service: { _id: 'svc-1', pricing: {} } } as any);

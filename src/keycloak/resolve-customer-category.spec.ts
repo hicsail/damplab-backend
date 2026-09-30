@@ -74,3 +74,74 @@ describe('resolveCustomerCategoryForUser', () => {
     expect(await service().resolveCustomerCategoryForUser(undefined)).toBeUndefined();
   });
 });
+
+describe('resolveClientAccountByEmail', () => {
+  function byEmail(opts: { configured?: boolean; user?: { id: string; username?: string; email?: string } | null; groups?: unknown[]; throws?: boolean } = {}): { instance: any; warnings: string[] } {
+    const warnings: string[] = [];
+    const instance = Object.create(KeycloakService.prototype) as any;
+    instance.logger = { warn: (msg: string): void => void warnings.push(msg) };
+    instance.isConfigured = (): boolean => opts.configured !== false;
+    instance.findUserByExactEmail = async (): Promise<unknown> => {
+      if (opts.throws) throw new Error('keycloak unreachable');
+      return opts.user === undefined ? { id: 'kc-1', username: 'cara', email: 'client@bu.edu' } : opts.user;
+    };
+    instance.getUserGroups = async (): Promise<unknown[]> => opts.groups ?? [];
+    return { instance, warnings };
+  }
+
+  it("returns the named client's sub, username and pricing group — never the submitter's", async () => {
+    const { instance } = byEmail({ groups: ACADEMIC_GROUP });
+    expect(await instance.resolveClientAccountByEmail('client@bu.edu')).toEqual({ sub: 'kc-1', username: 'cara', customerCategory: CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC });
+  });
+
+  it('keeps the account ids when the client has no pricing group', async () => {
+    const { instance, warnings } = byEmail({ groups: [] });
+    expect(await instance.resolveClientAccountByEmail('client@bu.edu')).toEqual({ sub: 'kc-1', username: 'cara', customerCategory: undefined });
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it('is empty, with a warning, when no account has that email', async () => {
+    const { instance, warnings } = byEmail({ user: null });
+    expect(await instance.resolveClientAccountByEmail('nobody@bu.edu')).toEqual({});
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it('is empty, with a warning, when the lookup fails', async () => {
+    const { instance, warnings } = byEmail({ throws: true });
+    await expect(instance.resolveClientAccountByEmail('client@bu.edu')).resolves.toEqual({});
+    expect(warnings.length).toBeGreaterThan(0);
+  });
+
+  it('is empty when the Admin API is not configured', async () => {
+    const { instance } = byEmail({ configured: false });
+    expect(await instance.resolveClientAccountByEmail('client@bu.edu')).toEqual({});
+  });
+});
+
+describe('findUserByExactEmail', () => {
+  it('asks for an exact match and keeps only a case-insensitive equal address', async () => {
+    const instance = Object.create(KeycloakService.prototype) as any;
+    instance.realm = 'damplab';
+    const paths: string[] = [];
+    instance.fetchWithToken = async (path: string): Promise<any> => {
+      paths.push(path);
+      return {
+        ok: true,
+        json: async () => [
+          { id: 'a', email: 'client@bu.edu.evil' },
+          { id: 'b', username: 'cara', email: 'Client@BU.edu' }
+        ]
+      };
+    };
+    const found = await instance.findUserByExactEmail(' Client@BU.edu ');
+    expect(paths[0]).toBe('/admin/realms/damplab/users?email=client%40bu.edu&exact=true');
+    expect(found).toMatchObject({ id: 'b', username: 'cara' });
+  });
+
+  it('throws on a failed request so the caller can log it', async () => {
+    const instance = Object.create(KeycloakService.prototype) as any;
+    instance.realm = 'damplab';
+    instance.fetchWithToken = async (): Promise<any> => ({ ok: false, status: 500, text: async () => 'boom' });
+    await expect(instance.findUserByExactEmail('client@bu.edu')).rejects.toThrow(/500/);
+  });
+});

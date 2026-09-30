@@ -4,6 +4,8 @@ import { NotificationEmailService } from './notification-email.service';
 import { NotificationEntity } from './notification.model';
 import { EVENT_RECIPIENT_MAP, RecipientRole, notificationLink } from './notification.constants';
 import { JobService } from '../job/job.service';
+import { jobMemberEmails, jobPrimaryEmail } from '../job/job-membership';
+import { normalizeClientEmail } from '../job/client-email';
 import { KeycloakService } from '../keycloak/keycloak.service';
 
 export interface DispatchInput {
@@ -147,21 +149,21 @@ export class NotificationDispatchService {
           if (!jobId) break;
           const job = await this.jobService.findById(jobId);
           if (!job) break;
-          // The job owner is identified by sub; clientEmail is for staff-submitted jobs.
+          // The job's owner (B28: the client's sub on a staff-submitted job; the
+          // staff submitter in submittedBy is never an owner recipient), then the
+          // primary client and every member by email under a pseudo-sub (they may
+          // have no account yet). Deduped by email, so a client whose sub and
+          // clientEmail are both on the job hears once.
+          const seenEmails = new Set<string>();
           if (job.sub) {
-            recipients.push({
-              sub: job.sub,
-              email: job.email ?? undefined
-            });
+            recipients.push({ sub: job.sub, email: normalizeClientEmail(job.email) ?? job.email ?? undefined });
+            const ownerEmail = normalizeClientEmail(job.email);
+            if (ownerEmail) seenEmails.add(ownerEmail);
           }
-          if (job.clientEmail) {
-            // For staff-submitted jobs, the client may be a different person.
-            // We don't have their sub, so use clientEmail as a pseudo-sub
-            // to ensure they receive at least an email notification.
-            recipients.push({
-              sub: `email:${job.clientEmail}`,
-              email: job.clientEmail
-            });
+          for (const email of [jobPrimaryEmail(job), ...jobMemberEmails(job)]) {
+            if (!email || seenEmails.has(email)) continue;
+            seenEmails.add(email);
+            recipients.push({ sub: `email:${email}`, email });
           }
           break;
         }

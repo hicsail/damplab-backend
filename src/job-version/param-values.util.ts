@@ -48,6 +48,20 @@ function stableStringify(value: unknown): string {
 /** Canonical string form, so nested object key order is not a difference. */
 export function canonicalizeParamValue(value: unknown): string {
   if (value === null || value === undefined) return '';
+  // A structured value (a lab-swapped sample sheet) can be stored as a JSON
+  // string; read it as the object it holds so key order is not a difference.
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') return stableStringify(parsed);
+      } catch {
+        // not JSON: compare as the plain string it is
+      }
+    }
+    return value;
+  }
   if (typeof value !== 'object') return String(value);
   return stableStringify(value);
 }

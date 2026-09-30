@@ -203,8 +203,11 @@ describe('jobs staff submitted for a client', () => {
       await F.reviewJob(ctx, 'staff', ownJob.id, 'ACCEPT', `op-accept-${ownJob.id}`);
       const ownSow = await F.createSowForJob(ctx, 'staff', ownJob.id);
 
-      // Put the staff SOW back the way createForJob used to leave it.
+      // Put the staff SOW, and the job it belongs to, back the way they were written
+      // before the fix: job.email was the technician's (a staff-submitted job is now
+      // the client's, so a legacy row has to be recreated by hand).
       const sows = ctx.connection.collection('sows');
+      await ctx.connection.collection('jobs').updateOne({ _id: new mongoose.Types.ObjectId(staffJobId) }, { $set: { email: ACTORS.staff.email } });
       await sows.updateOne({ _id: new mongoose.Types.ObjectId(staffSow.id) }, { $set: { clientEmail: ACTORS.staff.email } });
 
       const report = await backfillSowClientEmail(ctx.connection.db as any, { log: () => undefined });
@@ -299,10 +302,11 @@ describe('jobs staff submitted for a client', () => {
 
     expect(asClient.ownJobById.clientEmail).toBe('client@bu.test');
     expect(asStaff.jobById.clientEmail).toBe('client@bu.test');
-    // The header names the client from these two and credits the submitter from
-    // the other two, so all four have to survive the round trip.
+    // The header names the client from these and credits the submitter from
+    // submittedBy. A staff-submitted job is the client's: its email is the client's
+    // and, with no Keycloak in the harness, its username is unset (B28).
     expect(asStaff.jobById.clientDisplayName).toBe('Cara Client');
-    expect(asStaff.jobById.username).toBe(ACTORS.staff.preferred_username);
-    expect(asStaff.jobById.email).toBe(ACTORS.staff.email);
+    expect(asStaff.jobById.username).toBeNull();
+    expect(asStaff.jobById.email).toBe('client@bu.test');
   });
 });

@@ -1,7 +1,7 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Role } from '../auth/roles/roles.enum';
 import { User } from '../auth/user.interface';
-import { matchesClientEmail } from '../job/client-email';
+import { isJobMember, JobMembershipSubject } from '../job/job-membership';
 
 /**
  * Who may read a given SOW.
@@ -10,8 +10,8 @@ import { matchesClientEmail } from '../job/client-email';
  * reads are restricted to DampLab staff, the customer who owns the underlying job,
  * and trusted external systems authenticating with an API key.
  *
- * Ownership matches on sub, email, or the clientEmail staff recorded when they
- * submitted the job on someone's behalf. Reading and signing share this one
+ * Ownership is `isJobMember`: the submitter's sub, the job's primary email, or a
+ * member email. Reading and signing share this one
  * definition (signSow reaches it via assertJobOwner), which is what keeps a
  * customer who can sign a SOW able to read it.
  */
@@ -20,13 +20,8 @@ export function isStaff(user: User | undefined): boolean {
   return (user?.realm_access?.roles ?? []).includes(Role.DamplabStaff);
 }
 
-export function isJobOwner(job: { email?: string; sub?: string; clientEmail?: string } | null | undefined, user: User | undefined): boolean {
-  if (!job || !user) return false;
-  // Guard against a job with no owner fields matching a user with none either.
-  if (job.sub && user.sub && job.sub === user.sub) return true;
-  if (job.email && user.email && job.email === user.email) return true;
-  if (matchesClientEmail(job.clientEmail, user.email)) return true;
-  return false;
+export function isJobOwner(job: JobMembershipSubject | null | undefined, user: User | undefined): boolean {
+  return isJobMember(job, user);
 }
 
 /**
@@ -38,11 +33,11 @@ export function isApiKeyCaller(user: User | undefined): boolean {
   return user?.apiKey === true;
 }
 
-export function canReadSow(job: { email?: string; sub?: string; clientEmail?: string } | null | undefined, user: User | undefined): boolean {
+export function canReadSow(job: JobMembershipSubject | null | undefined, user: User | undefined): boolean {
   return isStaff(user) || isApiKeyCaller(user) || isJobOwner(job, user);
 }
 
-export function assertCanReadSow(job: { email?: string; sub?: string; clientEmail?: string } | null | undefined, user: User | undefined): void {
+export function assertCanReadSow(job: JobMembershipSubject | null | undefined, user: User | undefined): void {
   if (!canReadSow(job, user)) {
     throw new ForbiddenException('You do not have permission to view this SOW');
   }
@@ -73,7 +68,7 @@ export function assertStaff(user: User | undefined, action = 'perform this actio
  * `action` names what was attempted — telling someone who tried to decline that
  * they cannot "sign" reads as the wrong refusal for the wrong act.
  */
-export function assertJobOwner(job: { email?: string; sub?: string; clientEmail?: string } | null | undefined, user: User | undefined, action = 'sign'): void {
+export function assertJobOwner(job: JobMembershipSubject | null | undefined, user: User | undefined, action = 'sign'): void {
   if (!isJobOwner(job, user)) {
     throw new ForbiddenException(`Only the customer who owns this job can ${action} its SOW`);
   }

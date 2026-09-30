@@ -14,7 +14,7 @@ import { AccessActor, JobBookingAccessStatus, JobBookingAccessVerdict, resolveJo
 import { JobBookingItem, JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
 import { Booking } from './booking.model';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
-import { matchesClientEmail } from '../job/client-email';
+import { isJobMember } from '../job/job-membership';
 import { normalizeBookerEmails } from './booker-emails';
 
 /** One equipment-use operation of a job, with everything the panel and the mutations need. */
@@ -136,7 +136,7 @@ export class JobEquipmentBookingService {
   async verdict(job: any, user: User, operations: LoadedOperation[]): Promise<JobBookingAccessVerdict> {
     const signed = await this.isSowSigned(String(job._id));
     return resolveJobEquipmentBookingAccess(
-      { sub: job.sub, clientEmail: job.clientEmail, bookingBlocked: job.bookingBlocked, bookingBlockedReason: job.bookingBlockedReason },
+      { sub: job.sub, email: job.email, clientEmail: job.clientEmail, memberEmails: job.memberEmails, bookingBlocked: job.bookingBlocked, bookingBlockedReason: job.bookingBlockedReason },
       this.actorFor(user),
       operations.map((op) => ({ nodeId: op.nodeId, bookers: op.bookers })),
       signed
@@ -252,8 +252,7 @@ export class JobEquipmentBookingService {
 
     const job: any = await this.jobService.findById(String(booking.jobId));
     if (!job) throw new ForbiddenException('You are not authorized to cancel this booking.');
-    if (job.sub && actor.sub && job.sub === actor.sub) return;
-    if (matchesClientEmail(job.clientEmail, actor.email)) return;
+    if (isJobMember(job, actor)) return;
 
     const operations = await this.loadOperations(job);
     const operation = operations.find((op) => op.nodeId === String(booking.nodeId));
