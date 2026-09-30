@@ -53,6 +53,30 @@ describe('backfillParameterSnapshots (B23)', () => {
     expect(database.collections.job_versions.documents[0].workflows[0].nodes[0].parameterSnapshot).toEqual([{ id: 'vol', name: 'Volume', type: 'number', displayValue: '5' }]);
   });
 
+  it('names a parameter the operation takes from a Parameter Set', async () => {
+    const database = db({
+      damplabservices: [{ _id: 'svc3', name: 'PCR', parameters: [{ id: 'vol', name: 'Volume', type: 'number' }], parameterSetIds: ['set1'] }],
+      parametersets: [{ _id: 'set1', name: 'Cycling', parameters: [{ id: 'cycles', name: 'Cycles', type: 'number' }] }],
+      workflownodes: [
+        {
+          _id: 'n5',
+          service: 'svc3',
+          formData: [
+            { id: 'vol', value: 5 },
+            { id: 'cycles', value: 30 }
+          ]
+        }
+      ],
+      job_versions: [{ _id: 'v2', workflows: [{ nodes: [{ id: 'b', serviceId: 'svc3', formData: [{ id: 'cycles', value: 30 }] }] }] }]
+    });
+    await backfillParameterSnapshots(database, { log: () => undefined });
+    expect(database.collections.workflownodes.documents[0].parameterSnapshot).toEqual([
+      { id: 'vol', name: 'Volume', type: 'number', displayValue: '5' },
+      { id: 'cycles', name: 'Cycles', type: 'number', displayValue: '30' }
+    ]);
+    expect(database.collections.job_versions.documents[0].workflows[0].nodes[0].parameterSnapshot).toEqual([{ id: 'cycles', name: 'Cycles', type: 'number', displayValue: '30' }]);
+  });
+
   it('changes nothing the second time', async () => {
     const database = db(fixtures());
     await backfillParameterSnapshots(database, { log: () => undefined });

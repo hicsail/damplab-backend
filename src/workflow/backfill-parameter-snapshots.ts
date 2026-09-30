@@ -18,6 +18,7 @@ import config from '../config';
 import { normalizeClientEmail } from '../job/client-email';
 import { KeycloakService } from '../keycloak/keycloak.service';
 import { buildParameterSnapshot } from './utils/parameter-snapshot.util';
+import { effectiveParameters, ParameterSetLike, setsByIdMap } from '../services/effective-parameters';
 
 export interface ParameterSnapshotBackfillReport {
   nodesScanned: number;
@@ -34,6 +35,11 @@ export async function backfillParameterSnapshots(db: mongoose.mongo.Db, opts: { 
   const report: ParameterSnapshotBackfillReport = { nodesScanned: 0, nodesUpdated: 0, versionsScanned: 0, versionNodesUpdated: 0, missingService: [], failed: [] };
 
   const services = new Map<string, any>();
+  // The raw record holds only the operation's own parameters; the snapshot needs
+  // the effective list, as the loaders give the live paths, or a parameter taken
+  // from a Parameter Set is named by its id.
+  const setsById = setsByIdMap((await db.collection('parametersets').find({}).toArray()) as unknown as ParameterSetLike[]);
+  const withSets = (service: any): any => ({ ...service, parameters: effectiveParameters(service, setsById) });
   for (const service of await db.collection('damplabservices').find({}).toArray()) services.set(String(service._id), service);
 
   const nodes = db.collection('workflownodes');
@@ -47,7 +53,7 @@ export async function backfillParameterSnapshots(db: mongoose.mongo.Db, opts: { 
       continue;
     }
     try {
-      const parameterSnapshot = buildParameterSnapshot(service, node.formData);
+      const parameterSnapshot = buildParameterSnapshot(withSets(service), node.formData);
       if (!opts.dryRun) await nodes.updateOne({ _id: node._id }, { $set: { parameterSnapshot } });
       report.nodesUpdated += 1;
     } catch (error) {
@@ -66,7 +72,7 @@ export async function backfillParameterSnapshots(db: mongoose.mongo.Db, opts: { 
         const service = services.get(String(node.serviceId));
         if (!service) return node;
         try {
-          const parameterSnapshot = buildParameterSnapshot(service, node.formData);
+          const parameterSnapshot = buildParameterSnapshot(withSets(service), node.formData);
           changed += 1;
           return { ...node, parameterSnapshot };
         } catch (error) {
