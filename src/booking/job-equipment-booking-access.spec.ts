@@ -1,10 +1,7 @@
 import { AccessActor, AccessOperation, JobBookingAccessStatus, resolveJobEquipmentBookingAccess } from './job-equipment-booking-access';
 
 const job = { sub: 'creator-sub', clientEmail: 'Client@BU.edu' };
-const ops: AccessOperation[] = [
-  { nodeId: 'node-a', bookers: ['booker@bu.edu'] },
-  { nodeId: 'node-b', bookers: [] }
-];
+const ops: AccessOperation[] = [{ nodeId: 'node-a' }, { nodeId: 'node-b' }];
 
 const actor = (over: Partial<AccessActor> = {}): AccessActor => ({
   sub: 'stranger-sub',
@@ -28,17 +25,21 @@ describe('resolveJobEquipmentBookingAccess', () => {
     expect(v.bookableNodeIds).toEqual(['node-a', 'node-b']);
   });
 
-  it('gives a listed booker only the operation they are listed on', () => {
+  it('hides the job from someone named in a stored booker list who is not on the job (behaviour 6)', () => {
     const v = resolveJobEquipmentBookingAccess(job, actor({ email: 'BOOKER@bu.edu', hasInventoryBook: true }), ops, true);
-    expect(v.status).toBe(JobBookingAccessStatus.OPEN);
-    expect(v.canBook).toBe(true);
-    expect(v.bookableNodeIds).toEqual(['node-a']);
+    expect(v).toEqual({ status: JobBookingAccessStatus.HIDDEN, canBook: false, canBlock: false, bookableNodeIds: [] });
   });
 
-  it('tells a listed booker without the role to ask for access', () => {
-    const v = resolveJobEquipmentBookingAccess(job, actor({ email: 'booker@bu.edu' }), ops, true);
+  it('gives a member holding inventory:book every operation (behaviour 5)', () => {
+    const v = resolveJobEquipmentBookingAccess({ ...job, memberEmails: ['member@bu.edu'] }, actor({ sub: 'member-sub', email: 'Member@BU.edu', hasInventoryBook: true }), ops, true);
+    expect(v.status).toBe(JobBookingAccessStatus.OPEN);
+    expect(v.canBook).toBe(true);
+    expect(v.bookableNodeIds).toEqual(['node-a', 'node-b']);
+  });
+
+  it('tells a member without inventory:book to ask for access (behaviour 7)', () => {
+    const v = resolveJobEquipmentBookingAccess({ ...job, memberEmails: ['member@bu.edu'] }, actor({ sub: 'member-sub', email: 'member@bu.edu' }), ops, true);
     expect(v.status).toBe(JobBookingAccessStatus.NOT_ELIGIBLE);
-    expect(v.canBook).toBe(false);
     expect(v.bookableNodeIds).toEqual([]);
   });
 
@@ -86,7 +87,7 @@ describe('job members (B3: book equipment for the job)', () => {
     const verdict = resolveJobEquipmentBookingAccess(
       { sub: 'owner-sub', email: 'owner@x.org', memberEmails: ['member@x.org'] },
       { sub: 'member-sub', email: 'Member@x.org', hasInventoryBook: true, hasJobsViewAll: false, hasBillingView: false },
-      [{ nodeId: 'n1', bookers: [] }],
+      [{ nodeId: 'n1' }],
       true
     );
     expect(verdict.status).toBe(JobBookingAccessStatus.OPEN);
@@ -96,7 +97,7 @@ describe('job members (B3: book equipment for the job)', () => {
     const verdict = resolveJobEquipmentBookingAccess(
       { sub: 'owner-sub', email: 'owner@x.org', memberEmails: ['member@x.org'] },
       { sub: 'x', email: 'x@x.org', hasInventoryBook: true, hasJobsViewAll: false, hasBillingView: false },
-      [{ nodeId: 'n1', bookers: [] }],
+      [{ nodeId: 'n1' }],
       true
     );
     expect(verdict.status).toBe(JobBookingAccessStatus.HIDDEN);

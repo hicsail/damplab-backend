@@ -134,7 +134,7 @@ export class BookingResolver {
    * Deliberately carries NO `@RequirePermission`, exactly like `ownJobById`: an
    * ordinary client with no inventory permission at all must be able to load their
    * own job page and be told why booking is closed. The scope is enforced inside —
-   * a caller who is neither the job's owner, nor a listed booker, nor staff gets
+   * a caller who is not on the job (primary or member) and is not staff gets
    * `HIDDEN` and no data whatsoever. See `resolver-gates.spec.ts`, which asserts
    * the absence so a later "tidy this up" cannot silently 403 every client.
    */
@@ -182,7 +182,7 @@ export class BookingResolver {
     if (!booking) throw new NotFoundException('Booking not found.');
     if (booking.jobId) {
       // A job-scoped booking's owner is the job, not the person who made it, so
-      // the walk-up owner check below would lock out every listed booker.
+      // the walk-up owner check below would lock out every job member who booked.
       await this.jobEquipmentBookingService.assertMayCancel(booking, user);
     } else if (!this.canManageOthersBookings(user) && booking.ownerSub !== user?.sub) {
       throw new ForbiddenException('You can only cancel your own bookings.');

@@ -174,7 +174,7 @@ export class DampLabService {
     nullable: true,
     defaultValue: false,
     description:
-      'When true, this operation books lab equipment: its canvas nodes carry the reserved start/end/open-end/hours-per-week/booker-email parameters, and its SOW line is priced as hourly rate x projected hours x weeks. Requires at least one bookable item in inventoryRequirements. Affects only nodes created after it is turned on — jobs already submitted keep the parameters they were priced with.'
+      'When true, this operation books lab equipment: its canvas nodes carry the reserved start/end/open-end/hours-per-week parameters, and its SOW line is priced as hourly rate x projected hours x weeks. Requires at least one bookable item in inventoryRequirements. Affects only nodes created after it is turned on — jobs already submitted keep the parameters they were priced with.'
   })
   equipmentUse?: boolean;
 

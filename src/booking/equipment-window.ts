@@ -7,7 +7,6 @@ import {
   EQUIPMENT_START_PARAM_ID,
   dateOnlyToUtcMs
 } from '../pricing/service-pricing.util';
-import { normalizeBookerEmails } from './booker-emails';
 
 /** The estimated window as the canvas recorded it: two date-only strings and a flag. */
 export interface EquipmentWindow {
@@ -18,6 +17,7 @@ export interface EquipmentWindow {
 
 const DAY_MS = 86_400_000;
 
+// __equipBookers is retired, but old nodes still store it as an array; keeping it in the multi-value set is what lets their formData parse unchanged.
 const byId = (rawFormData: unknown): Map<string, unknown> => {
   const entries = normalizeFormDataToArray(rawFormData, new Set([EQUIPMENT_BOOKERS_PARAM_ID]));
   return new Map(entries.map((entry) => [entry.id, entry.value]));
@@ -44,10 +44,6 @@ export function readEquipmentHoursPerWeek(rawFormData: unknown): number | undefi
   const raw = byId(rawFormData).get(EQUIPMENT_HOURS_PER_WEEK_PARAM_ID);
   const n = typeof raw === 'number' ? raw : Number(String(raw ?? '').trim());
   return Number.isFinite(n) && n > 0 ? n : undefined;
-}
-
-export function readEquipmentBookers(rawFormData: unknown): string[] {
-  return normalizeBookerEmails(byId(rawFormData).get(EQUIPMENT_BOOKERS_PARAM_ID));
 }
 
 /**

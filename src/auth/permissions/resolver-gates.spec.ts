@@ -288,7 +288,7 @@ describe('Phase 2b widening — the gate on each operation', () => {
    * page: a customer with no inventory permission must still load it and read
    * "Booking opens once the Statement of Work is signed by both parties." The
    * scope is enforced inside the resolver, which answers HIDDEN and nothing else
-   * to anyone who is not the job's owner, a listed booker, or staff. Gating it on
+   * to anyone who is not on the job or staff. Gating it on
    * inventory:book would 403 every ordinary client on page load.
    */
   it('leaves the job equipment-booking query ungated, with the scope enforced inside', () => {

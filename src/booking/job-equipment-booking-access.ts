@@ -1,6 +1,5 @@
 import { registerEnumType } from '@nestjs/graphql';
 import { isJobMember } from '../job/job-membership';
-import { normalizeBookerEmails } from './booker-emails';
 
 /**
  * Whether this caller may book equipment against this job, and why not when they
@@ -37,10 +36,9 @@ export interface AccessActor {
   hasBillingView: boolean;
 }
 
-/** One equipment-use operation of the job, with its booker list already normalised. */
+/** One equipment-use operation of the job. Eligibility is per job, not per operation. */
 export interface AccessOperation {
   nodeId: string;
-  bookers: string[];
 }
 
 export interface JobBookingAccessVerdict {
@@ -74,16 +72,17 @@ export function resolveJobEquipmentBookingAccess(job: AccessJob, actor: AccessAc
     };
   }
 
-  const [actorEmail] = normalizeBookerEmails(actor.email);
-  const listedNodeIds = actorEmail ? operations.filter((op) => op.bookers.includes(actorEmail)).map((op) => op.nodeId) : [];
-  const isOwner = isJobMember(job, actor);
+  // Booking follows job membership alone: the primary or a member added with
+  // Manage. The old per-operation "Authorized booker emails" list is retired;
+  // a stored value on an old node is ignored here.
+  const isOnJob = isJobMember(job, actor);
 
   // HIDDEN first, and it returns nothing else: a stranger must not learn from the
   // status whether this job exists, whether its SOW is signed, or that the lab has
   // paused it.
-  if (!isOwner && listedNodeIds.length === 0) return HIDDEN;
+  if (!isOnJob) return HIDDEN;
 
-  // Being named on the operation does not grant the lab's equipment-user tier.
+  // Being on the job does not grant the lab's equipment-user tier.
   if (!actor.hasInventoryBook) {
     return { status: JobBookingAccessStatus.NOT_ELIGIBLE, canBook: false, canBlock: false, bookableNodeIds: [] };
   }
@@ -102,6 +101,6 @@ export function resolveJobEquipmentBookingAccess(job: AccessJob, actor: AccessAc
     };
   }
 
-  const bookableNodeIds = isOwner ? operations.map((op) => op.nodeId) : listedNodeIds;
+  const bookableNodeIds = operations.map((op) => op.nodeId);
   return { status: JobBookingAccessStatus.OPEN, canBook: bookableNodeIds.length > 0, canBlock: false, bookableNodeIds };
 }
