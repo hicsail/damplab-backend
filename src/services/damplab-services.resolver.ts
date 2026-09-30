@@ -121,8 +121,16 @@ export class DampLabServicesResolver {
     return (service.parameterSetIds ?? []).map((id) => String(id));
   }
 
+  /**
+   * `services` admits every authenticated caller (see above), and a nested field
+   * has no gate of its own by default — so without this check a client could ask
+   * `services { parameterSets { name description } }` and read what the design's
+   * permission table limits to catalog-editor:read, going around the server-side
+   * gate on the `parameterSets`/`parameterSet` root queries.
+   */
   @ResolveField(() => [ParameterSet])
-  parameterSets(@Parent() service: DampLabService): Promise<ParameterSet[]> {
+  parameterSets(@Parent() service: DampLabService, @CurrentUser() user: User): Promise<ParameterSet[]> {
+    if (!hasPermission(user, Permission.CatalogEditorRead)) return Promise.resolve([]);
     return this.dampLabServices.findParameterSetsFor(service);
   }
 
