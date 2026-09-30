@@ -20,6 +20,7 @@ import { visibleExternalFallbackPrice, visibleFlatPrice, visiblePricing, callerC
 import { effectivePricingMode, resolveCategoryPrice } from '../pricing/service-pricing.util';
 import { ServicePricingMode } from './models/damplab-service.model';
 import { CatalogServiceView } from './dtos/catalog-service-view.dto';
+import { ParameterSet } from '../parameter-sets/parameter-set.model';
 
 @Resolver(() => DampLabService)
 @UseGuards(AuthRolesGuard)
@@ -51,24 +52,36 @@ export class DampLabServicesResolver {
     const services = await this.dampLabServices.findAll();
     const category = callerCustomerCategory(user);
     const seesEverything = canSeeAllPricingTiers(user);
+    // Retired operations reach only the people who retire them. Server-side,
+    // because the page is a client page and its filter is only presentation.
+    const seesHidden = hasPermission(user, Permission.CatalogEditorRead);
 
-    return services.map((service) => {
-      const pricesPerParameter = effectivePricingMode(service) === ServicePricingMode.PARAMETER;
-      return {
-        id: String((service as any)._id ?? (service as any).id),
-        name: service.name,
-        description: service.description,
-        serviceCategoryName: service.serviceCategoryName,
-        unit: service.unit,
-        // Per-parameter services have no single number to quote: the price depends
-        // on what the customer picks. Say so rather than showing a misleading base.
-        price: pricesPerParameter ? undefined : resolveCategoryPrice(service as any, category),
-        pricingModeLabel: pricesPerParameter ? 'Based on selected options' : 'Operation price',
-        parameterCount: Array.isArray(service.parameters) ? service.parameters.length : 0,
-        pricing: seesEverything ? service.pricing : undefined,
-        parameters: seesEverything ? service.parameters : undefined
-      };
-    });
+    return services
+      .filter((service) => seesHidden || service.hiddenFromClients !== true)
+      .map((service) => {
+        const pricesPerParameter = effectivePricingMode(service) === ServicePricingMode.PARAMETER;
+        return {
+          id: String((service as any)._id ?? (service as any).id),
+          name: service.name,
+          description: service.description,
+          serviceCategoryName: service.serviceCategoryName,
+          unit: service.unit,
+          // Per-parameter services have no single number to quote: the price depends
+          // on what the customer picks. Say so rather than showing a misleading base.
+          price: pricesPerParameter ? undefined : resolveCategoryPrice(service as any, category),
+          pricingModeLabel: pricesPerParameter ? 'Based on selected options' : 'Operation price',
+          parameterCount: Array.isArray(service.parameters) ? service.parameters.length : 0,
+          pricing: seesEverything ? service.pricing : undefined,
+          parameters: seesEverything ? service.parameters : undefined,
+          hiddenFromClients: service.hiddenFromClients === true
+        };
+      });
+  }
+
+  @Query(() => [ID], { description: 'Ids of soft-deleted operations. The operations spreadsheet upload uses it to tell "deleted" from "unknown".' })
+  @RequirePermission(Permission.CatalogEditorRead)
+  deletedServiceIds(): Promise<string[]> {
+    return this.dampLabServices.findDeletedIds();
   }
 
   @Mutation(() => DampLabService)
@@ -100,6 +113,25 @@ export class DampLabServicesResolver {
   @ResolveField()
   allowedConnections(@Parent() service: DampLabService): Promise<DampLabService[]> {
     return this.dampLabServices.findByIds(service.allowedConnections);
+  }
+
+  /** As strings: the stored ObjectIds serialize through `ID` anyway, this makes it explicit. */
+  @ResolveField(() => [ID])
+  parameterSetIds(@Parent() service: DampLabService): string[] {
+    return (service.parameterSetIds ?? []).map((id) => String(id));
+  }
+
+  /**
+   * `services` admits every authenticated caller (see above), and a nested field
+   * has no gate of its own by default — so without this check a client could ask
+   * `services { parameterSets { name description } }` and read what the design's
+   * permission table limits to catalog-editor:read, going around the server-side
+   * gate on the `parameterSets`/`parameterSet` root queries.
+   */
+  @ResolveField(() => [ParameterSet])
+  parameterSets(@Parent() service: DampLabService, @CurrentUser() user: User): Promise<ParameterSet[]> {
+    if (!hasPermission(user, Permission.CatalogEditorRead)) return Promise.resolve([]);
+    return this.dampLabServices.findParameterSetsFor(service);
   }
 
   /**

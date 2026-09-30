@@ -12,7 +12,7 @@ import { ID, InputType, OmitType, PartialType, Field } from '@nestjs/graphql';
  * `services/dtos/update.dto.spec.ts`, which pins this for every partial input.
  */
 @InputType()
-export class ServiceChange extends PartialType(OmitType(DampLabService, ['_id', 'allowedConnections', 'isDeleted'] as const), { decorator: InputType, omitDefaultValues: true }) {
+export class ServiceChange extends PartialType(OmitType(DampLabService, ['_id', 'allowedConnections', 'isDeleted', 'ownParameters'] as const), { decorator: InputType, omitDefaultValues: true }) {
   @Field(() => [ID], { nullable: true })
   allowedConnections: string[];
 }

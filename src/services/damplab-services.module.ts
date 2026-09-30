@@ -7,9 +7,16 @@ import { DampLabServices } from './damplab-services.services';
 import { DampLabService, DampLabServiceSchema } from './models/damplab-service.model';
 import { ServiceUpdatePipe } from './update.pipe';
 import { InventoryModule } from '../inventory/inventory.module';
+import { ParameterSet, ParameterSetSchema } from '../parameter-sets/parameter-set.model';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: DampLabService.name, schema: DampLabServiceSchema }]), InventoryModule],
+  imports: [
+    MongooseModule.forFeature([
+      { name: DampLabService.name, schema: DampLabServiceSchema },
+      { name: ParameterSet.name, schema: ParameterSetSchema }
+    ]),
+    InventoryModule
+  ],
   providers: [DampLabServicesResolver, DampLabServices, DampLabServicePipe, ServiceUpdatePipe, CreateServicePipe],
   exports: [DampLabServices, DampLabServicePipe]
 })
