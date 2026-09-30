@@ -170,7 +170,16 @@ export class BookingService {
       base.cost = rate != null ? round2(qty * rate) : undefined;
     }
 
-    return this.model.create(base);
+    const created = await this.model.create(base);
+    // Guard against concurrent bookings that slipped past the pre-check.
+    if (kind === BookingKind.TIMED) {
+      const postConflicts = await this.availability.findItemConflicts({ itemIds: [item.id], start: base.startTime, end: base.endTime, excludeBookingId: String(created._id) });
+      if (postConflicts.length > 0) {
+        await this.model.deleteOne({ _id: created._id });
+        throw new BadRequestException('That item was just booked by someone else for the selected time.');
+      }
+    }
+    return created;
   }
 
   /**
@@ -194,7 +203,7 @@ export class BookingService {
     // Legacy jobs carry no display id; the database id is still a stable handle.
     const jobDisplayId = job.jobId || String(job._id);
 
-    return this.model.create({
+    const created = await this.model.create({
       inventoryItem: item.id,
       inventoryName: item.name,
       inventoryType: item.type,
@@ -218,6 +227,13 @@ export class BookingService {
       notes: params.notes?.trim() || `Job #${jobDisplayId} · ${params.nodeLabel}`,
       history: [{ at: new Date(), action: 'CREATED', bySub: actor.sub, byName: actor.name }]
     });
+    // Guard against concurrent bookings that slipped past the pre-check.
+    const postConflicts = await this.availability.findItemConflicts({ itemIds: [String(item.id)], start, end, excludeBookingId: String(created._id) });
+    if (postConflicts.length > 0) {
+      await this.model.deleteOne({ _id: created._id });
+      throw new BadRequestException('That item was just booked by someone else for the selected time.');
+    }
+    return created;
   }
 
   /**
