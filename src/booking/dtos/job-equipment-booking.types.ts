@@ -55,7 +55,7 @@ export class JobBookingOperation {
   @Field(() => ID, { nullable: true })
   serviceId?: string;
 
-  @Field(() => Boolean, { description: 'What the Book button obeys: a listed booker is listed per operation.' })
+  @Field(() => Boolean, { description: 'What the Book button obeys: true for every operation when the caller is on the job and may book.' })
   canBook: boolean;
 
   @Field(() => JobBookingWindow)
@@ -67,7 +67,7 @@ export class JobBookingOperation {
   @Field(() => [JobBookingItem])
   items: JobBookingItem[];
 
-  @Field(() => [String], { description: 'Normalised authorised-booker emails.' })
+  @Field(() => [String], { deprecationReason: 'Retired: booking is by job membership. Always empty; removed in a later release.' })
   bookers: string[];
 }
 

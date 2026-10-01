@@ -1,4 +1,4 @@
-import { isOutsideWindow, readEquipmentBookers, readEquipmentHoursPerWeek, readEquipmentWindow } from './equipment-window';
+import { isOutsideWindow, readEquipmentHoursPerWeek, readEquipmentWindow } from './equipment-window';
 
 const formData = [
   { id: '__equipStart', value: '2026-01-05' },
@@ -11,16 +11,14 @@ const formData = [
 const at = (iso: string): Date => new Date(iso);
 
 describe('reading the reserved parameters', () => {
-  it('reads the window, the hours and the bookers', () => {
+  it('reads the window and the hours, even from formData that still stores a booker list', () => {
     expect(readEquipmentWindow(formData)).toEqual({ start: '2026-01-05', end: '2026-01-09', openEnd: false });
     expect(readEquipmentHoursPerWeek(formData)).toBe(6);
-    expect(readEquipmentBookers(formData)).toEqual(['booker@bu.edu']);
   });
 
   it('returns an empty window for a node with no reserved parameters', () => {
     expect(readEquipmentWindow([{ id: 'other', value: 'x' }])).toEqual({ start: undefined, end: undefined, openEnd: false });
     expect(readEquipmentHoursPerWeek([])).toBeUndefined();
-    expect(readEquipmentBookers([])).toEqual([]);
   });
 
   it('treats the string "true" as open-ended, like a stored checkbox', () => {

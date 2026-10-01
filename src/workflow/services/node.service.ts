@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Inject, NotFoundException, forwardRef } from '@nestjs/common';
+import { ParameterSnapshotEntry } from '../models/parameter-snapshot.model';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
@@ -215,7 +216,9 @@ export class WorkflowNodeService {
     value: string,
     multiValueParamIds: Set<string>,
     /** The node's new fallback price, given the formData as it will be stored. */
-    priceFor?: (formData: FormDataEntry[]) => number
+    priceFor?: (formData: FormDataEntry[]) => number,
+    /** The node's parameter snapshot, given the formData as it will be stored. */
+    snapshotFor?: (formData: FormDataEntry[]) => ParameterSnapshotEntry[]
   ): Promise<WorkflowNode> {
     const entries = normalizeFormDataToArray(node.formData, multiValueParamIds);
     const index = entries.findIndex((entry) => entry.id === parameterId);
@@ -223,6 +226,7 @@ export class WorkflowNodeService {
     else entries[index] = { ...entries[index], value };
     const $set: Record<string, unknown> = { formData: entries };
     if (priceFor) $set.price = priceFor(entries);
+    if (snapshotFor) $set.parameterSnapshot = snapshotFor(entries);
     const updated = await this.workflowNodeModel.findOneAndUpdate({ _id: node._id }, { $set }, { new: true });
     if (!updated) throw new NotFoundException(`WorkflowNode with ID ${node._id} not found`);
     return updated;

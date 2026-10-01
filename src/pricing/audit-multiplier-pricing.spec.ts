@@ -6,6 +6,11 @@ function db(services: unknown[]): any {
   return { collection: () => ({ find: () => ({ toArray: async (): Promise<unknown[]> => services }) }) };
 }
 
+/** A Db serving a different array per collection name. */
+function dbByCollection(collections: Record<string, unknown[]>): any {
+  return { collection: (name: string) => ({ find: () => ({ toArray: async (): Promise<unknown[]> => collections[name] ?? [] }) }) };
+}
+
 describe('audit: which services a priced multiplier reprices', () => {
   it('flags a PARAMETER-mode service whose multiplier parameter carries a price', async () => {
     const report = await auditMultiplierPricing(
@@ -67,5 +72,17 @@ describe('audit: which services a priced multiplier reprices', () => {
   it('counts what it scanned, so an empty report can be told from an empty catalog', async () => {
     const report = await auditMultiplierPricing(db([]));
     expect(report).toMatchObject({ scannedServices: 0, parameterModeServices: 0, affected: [] });
+  });
+
+  it('reads a priced multiplier that arrives through a Parameter Set', async () => {
+    const report = await auditMultiplierPricing(
+      dbByCollection({
+        damplabservices: [{ _id: 'svc-3', name: 'Plate reader', pricingMode: 'PARAMETER', parameters: [], parameterSetIds: ['aaaaaaaaaaaaaaaaaaaaaaaa'] }],
+        parametersets: [{ _id: 'aaaaaaaaaaaaaaaaaaaaaaaa', name: 'Hours', parameters: [{ id: 'hours', name: 'Hours in use', type: 'number', isPriceMultiplier: true, price: 40 }] }]
+      })
+    );
+    expect(report.affected).toEqual([
+      { serviceId: 'svc-3', name: 'Plate reader', isDeleted: false, parameters: [{ parameterId: 'hours', parameterName: 'Hours in use', pricedCategories: ['all categories'] }] }
+    ]);
   });
 });

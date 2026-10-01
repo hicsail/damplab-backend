@@ -57,4 +57,7 @@ export class CatalogServiceView {
     description: 'The full parameter definitions, which carry per-parameter prices. **Null without internal-fields:read.**'
   })
   parameters?: unknown;
+
+  @Field(() => Boolean, { description: 'Retired for clients. Only callers with catalog-editor:read ever receive a row where this is true.' })
+  hiddenFromClients: boolean;
 }

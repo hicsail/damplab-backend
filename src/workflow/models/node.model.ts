@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { DampLabService } from '../../services/models/damplab-service.model';
 import { Field, ID, ObjectType, registerEnumType, Float } from '@nestjs/graphql';
 import JSON from 'graphql-type-json';
+import { ParameterSnapshotEntry } from './parameter-snapshot.model';
 
 export enum WorkflowNodeState {
   QUEUED,
@@ -31,7 +32,8 @@ export class WorkflowNode {
   @Field({ description: 'Human readable name of the service' })
   label: string;
 
-  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: 'WorkflowNode' })
+  // F6: was 'WorkflowNode'. Only the ref string changes; stored ids are untouched.
+  @Prop({ type: mongoose.Schema.Types.ObjectId, ref: DampLabService.name })
   @Field(() => DampLabService, { nullable: true, description: 'The service this node represents' })
   service: mongoose.Types.ObjectId | DampLabService | null;
 
@@ -44,6 +46,14 @@ export class WorkflowNode {
     description: 'Parameters defined earlier in the graph. Always returned as an array of { id, value }; multi-value params have value: string[]. Stored in array shape for new/updated nodes.'
   })
   formData: any;
+
+  @Prop({ type: [mongoose.Schema.Types.Mixed], required: false, default: undefined })
+  @Field(() => [ParameterSnapshotEntry], {
+    nullable: true,
+    description:
+      'Every saved parameter value with the name, type and display text its service gave it when this node was last written. Stays readable after the service changes or is deleted. Null on nodes never written since this existed (see the backfill).'
+  })
+  parameterSnapshot?: ParameterSnapshotEntry[];
 
   @Prop({ type: mongoose.Schema.Types.Mixed })
   @Field(() => JSON, {

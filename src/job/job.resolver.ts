@@ -4,7 +4,9 @@ import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInpu
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
 import { AclidScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
-import { matchesClientEmail } from './client-email';
+import { normalizeMemberEmailList, jobMemberEmails, jobPrimaryEmail, isJobMember, isValidEmail } from './job-membership';
+import { normalizeJobDescription } from './job-description';
+import { normalizeClientEmail } from './client-email';
 import { callerMayAccessJob } from './job-access';
 import { JobService } from './job.service';
 import { WorkflowService } from '../workflow/workflow.service';
@@ -35,8 +37,9 @@ import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 import { assertJobContractWritable } from './job-editing';
 import { assertMaySubmitEquipmentUse } from './equipment-use-gate';
-import { KeycloakService } from '../keycloak/keycloak.service';
-import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
+import { assertMaySubmitHiddenServices } from './hidden-service-gate';
+import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
+import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
@@ -88,9 +91,16 @@ export class JobResolver {
   private assertContractWritable(job: Job, user: User): void {
     assertJobContractWritable(job, {
       isStaff: (user.realm_access?.roles ?? []).includes(Role.DamplabStaff),
-      isOwner: job.sub === user.sub
+      isOwner: isJobMember(job, user)
     });
   }
+
+  private static readonly REVIEW_NOTIFICATION_TITLES: Record<JobReviewDecision, string> = {
+    [JobReviewDecision.ACCEPT]: 'Your job was accepted',
+    [JobReviewDecision.REQUEST_CLARIFICATION]: 'The DAMP Lab has a question about your job',
+    [JobReviewDecision.REQUEST_EDITS]: 'The DAMP Lab asked for changes to your job',
+    [JobReviewDecision.REQUEST_APPROVAL]: 'The DAMP Lab asked you to approve changes to your job'
+  };
 
   constructor(
     private readonly jobService: JobService,
@@ -208,7 +218,8 @@ export class JobResolver {
       viewerEmail: user.email,
       createdBySub: seesEveryJob ? requested.createdBySub : undefined,
       createdByClient: seesEveryJob ? requested.createdByClient : undefined,
-      assigneeId: seesEveryJob ? requested.assigneeId : undefined
+      assigneeId: seesEveryJob ? requested.assigneeId : undefined,
+      includeSubmittedBy: seesEveryJob
     });
   }
 
@@ -234,9 +245,8 @@ export class JobResolver {
   @Query(() => Job, { nullable: true })
   async ownJobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
     const job = await this.jobService.findById(id);
-    if (job?.sub === user.sub) return job;
-    if (matchesClientEmail(job?.clientEmail, user.email)) return job;
-    return null;
+    if (!job || !isJobMember(job, user)) return null;
+    return this.jobService.claimSubIfPrimary(job, user);
   }
 
   @Query(() => Job)
@@ -263,9 +273,18 @@ export class JobResolver {
 
   @Mutation(() => Job)
   async createJob(@Args('createJobInput', { type: () => CreateJobInput }, CreateJobPipe) createJobInput: CreateJobPreProcessed, @CurrentUser() user: User): Promise<Job> {
+    // F2: submitting on someone's behalf is a staff act. The UI hides the form;
+    // this is its server-side twin, checked before anything is written.
+    const clientEmail = createJobInput.clientEmail;
+    if (clientEmail && !hasPermission(user, Permission.JobSubmitForClient)) {
+      throw new ForbiddenException('Only staff can submit a job on behalf of a client.');
+    }
+    const memberEmails = normalizeMemberEmailList(createJobInput.memberEmails, clientEmail ?? user.email);
     // Server-side twin of the palette hiding equipment-use operations from
     // plain clients. Checked before anything is written.
     assertMaySubmitEquipmentUse(user, createJobInput.workflows);
+    // Retired operations stay valid on existing jobs; only a new job is refused.
+    assertMaySubmitHiddenServices(user, createJobInput.workflows);
     // Not derived from the token alone. Pricing lives on Keycloak groups, and a
     // group reaches a token only when the realm's client carries a Group
     // Membership mapper — so a customer correctly placed in
@@ -274,13 +293,19 @@ export class JobResolver {
     // reads the token first and falls back to the Admin API, which is what makes
     // group membership actually decide the price, as the access matrix says it
     // does.
-    const customerCategory: CustomerCategory | undefined = await this.keycloakService.resolveCustomerCategoryForUser(user);
+    // B28 + F3: a job staff submit for a client is the client's. One exact-email
+    // lookup gives their account (the job's sub/username) and their pricing
+    // category; the staff member is recorded in submittedBy and owns nothing.
+    const clientAccount: ClientAccount | null = clientEmail ? await this.keycloakService.resolveClientAccountByEmail(clientEmail) : null;
+    const customerCategory: CustomerCategory | undefined = clientAccount ? clientAccount.customerCategory : await this.keycloakService.resolveCustomerCategoryForUser(user);
+    const owner = clientEmail
+      ? { sub: clientAccount?.sub, email: clientEmail, username: clientAccount?.username, submittedBy: { sub: user.sub, email: user.email, name: user.preferred_username ?? user.email } }
+      : { sub: user.sub, email: user.email, username: user.preferred_username };
     const created = await this.jobService.create({
       ...createJobInput,
-      username: user.preferred_username,
+      ...owner,
+      memberEmails,
       clientDisplayName: (createJobInput as any)?.clientDisplayName,
-      sub: user.sub,
-      email: user.email,
       customerCategory
     });
     // v1 is the submission itself, so the first technician edit has something to
@@ -524,7 +549,7 @@ export class JobResolver {
    */
   @Mutation(() => Job, {
     description:
-      'Staff-only. Change pricing category for a job owner: updates their Keycloak pricing group, every job under that account, and reprices SOW billing cores (documents stay stale until staff refresh).'
+      "Staff-only. Change pricing category for a job's client: updates their Keycloak pricing group, every job under that account, and reprices SOW billing cores (documents stay stale until staff refresh)."
   })
   @Roles(Role.DamplabStaff)
   async changeJobCustomerCategory(@Args('jobId', { type: () => ID }) jobId: string, @Args('customerCategory', { type: () => CustomerCategory }) customerCategory: CustomerCategory): Promise<Job> {
@@ -533,6 +558,7 @@ export class JobResolver {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
 
+    // `job.sub` is the client's (B28/B31); on a job whose client has no account yet only this job is updated.
     // Account-wide: Keycloak group first (staff path / when Admin API is available), then all jobs for this sub.
     if (job.sub && this.keycloakService.isConfigured()) {
       try {
@@ -591,7 +617,7 @@ export class JobResolver {
       throw new Error('Job not found');
     }
     const roles = user.realm_access?.roles ?? [];
-    const isOwner = job.sub === user.sub;
+    const isOwner = isJobMember(job, user);
     const isStaff = roles.includes(Role.DamplabStaff);
     if (!isOwner && !isStaff) {
       throw new Error('You do not have permission to modify this job');
@@ -625,7 +651,7 @@ export class JobResolver {
       throw new Error('Job not found');
     }
     const roles = user.realm_access?.roles ?? [];
-    const isOwner = job.sub === user.sub;
+    const isOwner = isJobMember(job, user);
     const isStaff = roles.includes(Role.DamplabStaff);
     if (!isOwner && !isStaff) {
       throw new Error('You do not have permission to modify this job');
@@ -643,6 +669,60 @@ export class JobResolver {
     if (!updated) {
       throw new Error('Unable to update job attachments');
     }
+    return updated;
+  }
+
+  /** Members and damplab-staff manage the member list, in any job state (B9). */
+  private async jobForMemberManagement(jobId: string, user: User): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
+    if (!isStaff && !isJobMember(job, user)) throw new ForbiddenException('You do not have permission to change who is on this job');
+    // B29: the primary client acting on their job claims its account id if unset.
+    return this.jobService.claimSubIfPrimary(job, user);
+  }
+
+  @Mutation(() => Job, { description: "Add a person (by email) with the same access as the job's primary client. Idempotent. Open to the job's members and damplab-staff." })
+  @RequirePermission(Permission.JobsView)
+  async addJobMember(@Args('jobId', { type: () => ID }) jobId: string, @Args('email') email: string, @CurrentUser() user: User): Promise<Job> {
+    const job = await this.jobForMemberManagement(jobId, user);
+    const normalized = normalizeClientEmail(email);
+    if (!normalized || !isValidEmail(normalized)) throw new BadRequestException('Enter a valid email address.');
+    if (normalized === jobPrimaryEmail(job) || jobMemberEmails(job).includes(normalized)) return job;
+    const updated = await this.jobService.addMember(jobId, normalized);
+    if (!updated) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    const actor = user.preferred_username ?? user.email ?? undefined;
+    await this.activityService.createEvent({ type: ActivityEventType.JOB_UPDATED, message: `${actor ?? 'Someone'} added ${normalized} to job "${job.name}"`, actorDisplayName: actor, jobId });
+    return updated;
+  }
+
+  @Mutation(() => Job, { description: "Remove a member from the job. The primary client can't be removed. Open to the job's members (including removing themselves) and damplab-staff." })
+  @RequirePermission(Permission.JobsView)
+  async removeJobMember(@Args('jobId', { type: () => ID }) jobId: string, @Args('email') email: string, @CurrentUser() user: User): Promise<Job> {
+    const job = await this.jobForMemberManagement(jobId, user);
+    const normalized = normalizeClientEmail(email);
+    if (normalized && normalized === jobPrimaryEmail(job)) throw new BadRequestException("The primary client can't be removed");
+    if (!normalized || !jobMemberEmails(job).includes(normalized)) return job;
+    const updated = await this.jobService.removeMember(jobId, normalized);
+    if (!updated) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    const actor = user.preferred_username ?? user.email ?? undefined;
+    await this.activityService.createEvent({ type: ActivityEventType.JOB_UPDATED, message: `${actor ?? 'Someone'} removed ${normalized} from job "${job.name}"`, actorDisplayName: actor, jobId });
+    return updated;
+  }
+
+  @Mutation(() => Job, { description: 'Set or clear the job description (trimmed, at most 500 characters). Any job state; creates no job version. Open to members and jobs:view-all.' })
+  @RequirePermission(Permission.JobsView)
+  async setJobDescription(
+    @Args('jobId', { type: () => ID }) jobId: string,
+    @CurrentUser() user: User,
+    @Args('description', { type: () => String, nullable: true }) description?: string | null
+  ): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    if (!hasPermission(user, Permission.JobsViewAll) && !isJobMember(job, user)) throw new ForbiddenException('You do not have permission to change this job');
+    await this.jobService.claimSubIfPrimary(job, user);
+    const updated = await this.jobService.setDescription(jobId, normalizeJobDescription(description));
+    if (!updated) throw new NotFoundException(`Job with ID ${jobId} not found`);
     return updated;
   }
 
@@ -669,7 +749,7 @@ export class JobResolver {
 
     const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
     if (!isStaff) {
-      const isOwner = job.sub === user.sub;
+      const isOwner = isJobMember(job, user);
       const isResubmission = job.state === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
       if (!isOwner || !isResubmission) {
         throw new ForbiddenException('You do not have permission to change the state of this job');
@@ -712,11 +792,25 @@ export class JobResolver {
   })
   @Roles(Role.DamplabStaff)
   async reviewJob(@Args('input', { type: () => ReviewJobInput }) input: ReviewJobInput, @CurrentUser() user: User): Promise<Job> {
-    return this.jobReviewService.reviewJob(input, {
+    const reviewed = await this.jobReviewService.reviewJob(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
+    const title = JobResolver.REVIEW_NOTIFICATION_TITLES[input.decision] ?? 'Your job was reviewed';
+    // Keyed on the review's own operation id, so a retried review makes one
+    // notification per recipient rather than one per attempt.
+    this.notificationDispatch.dispatch({
+      eventType: 'JOB_REVIEWED',
+      title,
+      message: input.message?.trim() || `${title}: "${reviewed?.name ?? 'your job'}"`,
+      jobId: input.jobId,
+      actorSub: user.sub,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      operationId: `job-reviewed:${input.operationId}`
+    });
+    return reviewed;
   }
 
   @Mutation(() => Job, {
@@ -726,6 +820,7 @@ export class JobResolver {
     return this.jobReviewService.respondToJobReview(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -737,6 +832,7 @@ export class JobResolver {
     return this.jobReviewService.rejectJobReview(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -748,6 +844,7 @@ export class JobResolver {
     return this.jobReviewService.cancelJob(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -759,6 +856,7 @@ export class JobResolver {
     return this.jobReviewService.requestJobEditAccess(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -771,6 +869,7 @@ export class JobResolver {
     return this.jobReviewService.withdrawJobFromCustomer(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -783,6 +882,7 @@ export class JobResolver {
     return this.jobReviewService.withdrawJobAcceptance(input, {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
+      email: user.email,
       claims: user.realm_access?.roles ?? []
     });
   }
@@ -815,8 +915,8 @@ export class JobResolver {
    * Replace the job's workflow graph with what the editor produced, and record
    * the result as a new version.
    *
-   * Staff may edit any job that is not CLOSED. Customers may edit only their own
-   * job, and only while staff have enabled editing on it.
+   * Staff may edit any job that is not CLOSED. Customers may edit only a job they are a member of
+   * and only while staff have enabled editing on it.
    */
   @Mutation(() => Job, {
     description: "Replace a job's workflow graph from the workflow editor and record the result as a new job version."
@@ -828,8 +928,9 @@ export class JobResolver {
     }
 
     this.assertContractWritable(job, user);
+    await this.jobService.claimSubIfPrimary(job, user);
 
-    const updated = await this.jobVersionService.saveWorkflows(input, this.versionAuthor(user, job));
+    const updated = await this.jobVersionService.saveWorkflows(input, this.versionAuthor(user, job), { uploaderSub: user.sub ?? '' });
 
     // The billing core has moved. This is a no-op on a job with no SOW, which is
     // most jobs being edited; where there is one it flags the document stale so
@@ -849,6 +950,16 @@ export class JobResolver {
   @ResolveField()
   async workflows(@Parent() job: Job): Promise<Workflow[]> {
     return this.workflowService.findByIds(job.workflows.map((workflow) => workflow._id));
+  }
+
+  @ResolveField(() => [String], { name: 'memberEmails', description: 'Additional people with the same access as the primary client. Never contains the primary.' })
+  memberEmails(@Parent() job: Job): string[] {
+    return jobMemberEmails(job);
+  }
+
+  @ResolveField(() => String, { name: 'primaryClientEmail', description: 'The primary client: clientEmail when staff submitted on their behalf, otherwise the submitter email. Cannot be removed.' })
+  primaryClientEmail(@Parent() job: Job): string {
+    return jobPrimaryEmail(job) ?? '';
   }
 
   @ResolveField(() => [JobAttachment], {

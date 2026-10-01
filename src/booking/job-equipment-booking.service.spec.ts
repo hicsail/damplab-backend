@@ -59,7 +59,7 @@ const user = (over: any = {}): any => ({ sub: 'creator-sub', email: 'creator@bu.
 const bookerUser = (over: any = {}): any => user({ sub: 'creator-sub', email: 'creator@bu.edu', realm_access: { roles: ['client-unassisted-equipment-user'] }, ...over });
 
 describe('JobEquipmentBookingService.loadOperations', () => {
-  it('keeps only equipment-use operations, with their window, hours and bookers', async () => {
+  it('keeps only equipment-use operations, with their window and hours', async () => {
     const ops = await build().loadOperations(job);
     expect(ops).toHaveLength(1);
     expect(ops[0]).toMatchObject({
@@ -67,9 +67,9 @@ describe('JobEquipmentBookingService.loadOperations', () => {
       label: 'Bioanalyzer time',
       serviceId: 'svc-1',
       window: { start: '2026-01-05', end: '2026-01-09', openEnd: false },
-      hoursPerWeek: 6,
-      bookers: ['booker@bu.edu']
+      hoursPerWeek: 6
     });
+    expect(ops[0]).not.toHaveProperty('bookers');
   });
 
   it('lists the bookable items and marks only the timed one schedulable', async () => {
@@ -144,6 +144,7 @@ const buildWithWriter = (over: { sowStatus?: string; job?: any } = {}): { servic
   const written: any[] = [];
   const bookings = {
     findByJob: async (): Promise<any[]> => [],
+    findById: async (): Promise<any> => ({ _id: 'bk-1', jobId: 'job-1', nodeId: 'node-a' }),
     createForJob: async (params: any): Promise<{ _id: string }> => {
       written.push(params);
       return { _id: 'bk-new' };
@@ -198,6 +199,43 @@ describe('JobEquipmentBookingService.create', () => {
   });
 });
 
+describe('membership is the only way to book (behaviours 5, 6, 8)', () => {
+  // nodeEquip stores __equipBookers: ['Booker@BU.edu'] — an old job's retired list.
+  const listedStranger = (): any => bookerUser({ sub: 'listed-sub', email: 'booker@bu.edu' });
+  const member = (): any => bookerUser({ sub: 'member-sub', email: 'member@bu.edu' });
+  const memberJob = { ...job, memberEmails: ['member@bu.edu'] };
+  const slotInput = { jobId: 'job-1', nodeId: 'node-a', inventoryItemId: 'item-timed', ...slot };
+
+  it('hides the view from someone the stored list names but who is not on the job', async () => {
+    const view = await build({ sowStatus: 'FINAL' }).view('job-1', listedStranger());
+    expect(view).toEqual({
+      access: { status: JobBookingAccessStatus.HIDDEN, canBook: false, canBlock: false, reason: undefined },
+      operations: [],
+      bookings: []
+    });
+  });
+
+  it('refuses their create and update', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'FINAL' });
+    await expect(service.create(slotInput as any, listedStranger())).rejects.toThrow(ForbiddenException);
+    await expect(service.update('bk-1', { ...slot, reason: 'moved' } as any, listedStranger())).rejects.toThrow(ForbiddenException);
+  });
+
+  it('opens every operation to a member holding inventory:book, and still lists existing bookings', async () => {
+    const view = await build({ sowStatus: 'FINAL', job: memberJob }).view('job-1', member());
+    expect(view.access.status).toBe(JobBookingAccessStatus.OPEN);
+    expect(view.operations.map((op) => [op.nodeId, op.canBook])).toEqual([['node-a', true]]);
+    expect(view.operations[0].bookers).toEqual([]);
+    expect(view.bookings.map((b: any) => b._id)).toEqual(['bk-1']);
+  });
+
+  it('lets a member create a booking', async () => {
+    const { service, written } = buildWithWriter({ sowStatus: 'FINAL', job: memberJob });
+    await service.create(slotInput as any, member());
+    expect(written[0].nodeId).toBe('node-a');
+  });
+});
+
 describe('BookingService.createForJob', () => {
   const make = (conflicts: any[] = []): { svc: BookingService; created: any[] } => {
     const created: any[] = [];
@@ -244,6 +282,14 @@ describe('BookingService.createForJob', () => {
     });
   });
 
+  it("books to the job's owner, falling back to the booker while the client has no account yet", async () => {
+    const { svc, created } = make();
+    await svc.createForJob({ ...params, job: { ...params.job, sub: undefined } } as any);
+    await svc.createForJob({ ...params, job: { ...params.job, sub: 'client-kc' } } as any);
+    expect(created[0].ownerSub).toBe('booker-sub');
+    expect(created[1].ownerSub).toBe('client-kc');
+  });
+
   it('leaves rate and cost undefined when the category resolves no price', async () => {
     const { svc, created } = make();
     await svc.createForJob({ ...params, service: { _id: 'svc-1', pricing: {} } } as any);
@@ -273,9 +319,14 @@ describe('JobEquipmentBookingService.assertMayCancel', () => {
     await expect(service.assertMayCancel(booking, user({ sub: 'creator-sub', email: 'creator@bu.edu' }) as any)).resolves.toBeUndefined();
   });
 
-  it('lets a listed booker of that operation cancel', async () => {
+  it('refuses a former listed booker who did not create the booking (behaviour 9)', async () => {
     const { service } = buildWithWriter({ sowStatus: 'FINAL' });
-    await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'BOOKER@bu.edu' }) as any)).resolves.toBeUndefined();
+    await expect(service.assertMayCancel(booking, user({ sub: 'x', email: 'BOOKER@bu.edu' }) as any)).rejects.toThrow('You are not authorized to cancel this booking.');
+  });
+
+  it('lets a job member cancel', async () => {
+    const { service } = buildWithWriter({ sowStatus: 'FINAL', job: { ...job, memberEmails: ['member@bu.edu'] } });
+    await expect(service.assertMayCancel(booking, user({ sub: 'member-sub', email: 'member@bu.edu' }) as any)).resolves.toBeUndefined();
   });
 
   it('lets whoever made the booking cancel it', async () => {

@@ -16,9 +16,11 @@
  *
  * Idempotent, and conservative: a SOW whose clientEmail is neither the stale
  * submitter address nor already correct is assumed to have been edited by hand
- * and is left alone.
+ * and is left alone. Order-independent with backfill:parameter-snapshots, which
+ * moves the submitter from job.email to job.submittedBy.
  */
 import mongoose from 'mongoose';
+import { parseScriptFlags } from '../script-flags';
 import { normalizeClientEmail } from '../job/client-email';
 
 export interface BackfillReport {
@@ -70,8 +72,11 @@ export async function backfillSowClientEmail(db: mongoose.mongo.Db, opts: { dryR
         continue;
       }
 
-      const submitter = normalizeClientEmail(job.email as string | undefined);
-      if (current !== submitter) {
+      // The staff address the bug copied: job.email until backfill:parameter-snapshots
+      // converts the job to the client, submittedBy.email after it — so this backfill
+      // finds the same SOWs whichever of the two runs first.
+      const submitters = new Set([normalizeClientEmail(job.email as string | undefined), normalizeClientEmail(job.submittedBy?.email as string | undefined)].filter(Boolean));
+      if (!current || !submitters.has(current)) {
         // Neither the bug's signature nor already correct: someone changed it.
         report.skipped += 1;
         log(`sow ${sowId}: clientEmail "${sow.clientEmail}" is neither the submitter's nor the client's, leaving alone`);
@@ -105,10 +110,10 @@ function toJobId(jobId: unknown): any {
 }
 
 async function main(): Promise<void> {
-  const dryRun = process.argv.includes('--dry') || process.argv.includes('--dry-run');
+  const { dryRun } = parseScriptFlags(process.argv.slice(2));
   const uri = process.env.MONGO_URI;
   if (!uri) {
-    console.error('MONGO_URI is not set. Run with: node --env-file=.env dist/src/sow/backfill-sow-client-email.js');
+    console.error('MONGO_URI is not set. Run with: node --env-file=.env dist/sow/backfill-sow-client-email.js');
     process.exit(1);
   }
 

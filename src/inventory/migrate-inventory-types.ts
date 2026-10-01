@@ -6,8 +6,14 @@
  *   npm run migrate:inventory-types -- --dry   # report only
  *
  * Idempotent: items already using the new enum values are skipped.
+ *
+ * Maps only the four legacy enum values below. `type` has been a free string
+ * since #72, so any other value (a lab's own "Freezer", "Centrifuge", ...) is
+ * deliberate data and is left alone — this script must never overwrite it.
  */
 import mongoose from 'mongoose';
+import { SUGGESTED_INVENTORY_TYPES } from './inventory.model';
+import { parseScriptFlags } from '../script-flags';
 
 const TYPE_MAP: Record<string, string> = {
   ROBOT: 'EQUIPMENT',
@@ -17,12 +23,12 @@ const TYPE_MAP: Record<string, string> = {
   // CONSUMABLE stays CONSUMABLE — no mapping needed
 };
 
-const NEW_TYPES = new Set(['EQUIPMENT', 'HOOD', 'STORAGE', 'CONSUMABLE']);
-
 interface MigrationReport {
   scanned: number;
   migrated: number;
   skipped: number;
+  /** Free-string types this script does not know; never rewritten. */
+  leftAlone: Array<{ id: string; type: string }>;
   failed: Array<{ id: string; error: string }>;
 }
 
@@ -30,7 +36,7 @@ export async function migrateInventoryTypes(db: mongoose.mongo.Db, opts: { dryRu
   const log = opts.log ?? console.log;
   const items = db.collection('inventoryitems');
 
-  const report: MigrationReport = { scanned: 0, migrated: 0, skipped: 0, failed: [] };
+  const report: MigrationReport = { scanned: 0, migrated: 0, skipped: 0, leftAlone: [], failed: [] };
   const cursor = items.find({});
 
   for await (const raw of cursor) {
@@ -39,17 +45,12 @@ export async function migrateInventoryTypes(db: mongoose.mongo.Db, opts: { dryRu
     const currentType = raw.type as string | undefined;
 
     try {
-      if (!currentType || NEW_TYPES.has(currentType)) {
+      const mappedType = currentType && Object.prototype.hasOwnProperty.call(TYPE_MAP, currentType) ? TYPE_MAP[currentType] : undefined;
+      if (!mappedType) {
         report.skipped += 1;
+        if (currentType && !SUGGESTED_INVENTORY_TYPES.includes(currentType)) report.leftAlone.push({ id, type: currentType });
         continue;
       }
-
-      const newType = TYPE_MAP[currentType];
-      if (!newType) {
-        log(`unknown type "${currentType}" on ${raw.name ?? id}, mapping to EQUIPMENT`);
-      }
-
-      const mappedType = newType ?? 'EQUIPMENT';
 
       if (opts.dryRun) {
         log(`[dry] ${raw.name ?? id}: ${currentType} → ${mappedType}`);
@@ -69,10 +70,10 @@ export async function migrateInventoryTypes(db: mongoose.mongo.Db, opts: { dryRu
 }
 
 async function main(): Promise<void> {
-  const dryRun = process.argv.includes('--dry') || process.argv.includes('--dry-run');
+  const { dryRun } = parseScriptFlags(process.argv.slice(2));
   const uri = process.env.MONGO_URI;
   if (!uri) {
-    console.error('MONGO_URI is not set. Run with: node --env-file=.env dist/src/inventory/migrate-inventory-types.js');
+    console.error('MONGO_URI is not set. Run with: node --env-file=.env dist/inventory/migrate-inventory-types.js');
     process.exit(1);
   }
 
@@ -87,7 +88,9 @@ async function main(): Promise<void> {
     console.log('\n--- Inventory type migration ---');
     console.log(`scanned : ${report.scanned}`);
     console.log(`migrated: ${report.migrated}${dryRun ? ' (would be)' : ''}`);
-    console.log(`skipped : ${report.skipped} (already new type)`);
+    console.log(`skipped : ${report.skipped} (not a legacy value)`);
+    console.log(`left alone: ${report.leftAlone.length} (custom types, never rewritten)`);
+    for (const item of report.leftAlone) console.log(`  ${item.id}: "${item.type}"`);
     console.log(`failed  : ${report.failed.length}`);
     for (const f of report.failed) console.error(`  ${f.id}: ${f.error}`);
 

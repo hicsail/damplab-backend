@@ -10,7 +10,10 @@ import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../workfl
 import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.model';
 import { DampLabServices } from '../services/damplab-services.services';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
+import { ParameterSnapshotEntry } from '../workflow/models/parameter-snapshot.model';
+import { buildParameterSnapshot } from '../workflow/utils/parameter-snapshot.util';
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
+import { isSampleSheetParam, keyBelongsToUploader, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
 import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
 
 /** Fields on a live WorkflowNode that a save is allowed to write. Everything else — state, assigneeId, startedAt, completedSteps, usedInventory, inventory reservations — belongs to the lab and is never touched here. */
@@ -21,6 +24,7 @@ type NodeContentPatch = {
   formData: unknown;
   price: number | undefined;
   reactNode: Record<string, unknown>;
+  parameterSnapshot: ParameterSnapshotEntry[];
 };
 
 /** Mongoose models declare `_id: string` on these classes, so ids come back needing a widening conversion. */
@@ -34,6 +38,8 @@ interface PreparedNode {
   clientId: string;
   patch: NodeContentPatch;
   snapshot: JobVersionNode;
+  /** Ids of this node's uploaded-file parameters (`file` and `sampleSheet`), whose stored keys are presigned on read. */
+  fileParamIds: string[];
 }
 
 /**
@@ -352,6 +358,7 @@ export class JobVersionService {
       formData: Array.isArray(node.formData) ? node.formData : [],
       additionalInstructions: node.additionalInstructions ?? '',
       price: node.price,
+      parameterSnapshot: Array.isArray(node.parameterSnapshot) ? node.parameterSnapshot : undefined,
       position: position && typeof position.x === 'number' && typeof position.y === 'number' ? { x: position.x, y: position.y } : undefined
     };
   }
@@ -517,10 +524,23 @@ export class JobVersionService {
       edges: (workflow.edges ?? []).map((edge) => ({ id: edge.id, source: edge.source, target: edge.target }))
     }));
 
-    return this.saveWorkflows({ jobId, workflows, note } as SaveJobWorkflowsInput, author, opts);
+    // The version's own names for its values. Passed out of band (never through
+    // SaveNodeInput, which clients can set) so a restore can re-label a value the
+    // catalogue has since dropped.
+    const priorSnapshotsByClientId = new Map<string, ParameterSnapshotEntry[]>();
+    for (const workflow of source.workflows ?? []) {
+      for (const node of workflow.nodes ?? []) {
+        if (Array.isArray(node.parameterSnapshot)) priorSnapshotsByClientId.set(node.id, node.parameterSnapshot);
+      }
+    }
+    return this.saveWorkflows({ jobId, workflows, note } as SaveJobWorkflowsInput, author, { ...opts, priorSnapshotsByClientId });
   }
 
-  async saveWorkflows(input: SaveJobWorkflowsInput, author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string }, opts: { visibleToCustomer?: boolean } = {}): Promise<Job> {
+  async saveWorkflows(
+    input: SaveJobWorkflowsInput,
+    author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string },
+    opts: { visibleToCustomer?: boolean; uploaderSub?: string; priorSnapshotsByClientId?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]> } = {}
+  ): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
 
@@ -534,8 +554,9 @@ export class JobVersionService {
     // Prepared first, deliberately: it resolves each node against the catalogue
     // and normalizes formData, so the guard below compares like with like. It
     // only reads, so nothing is written if the guard then rejects.
-    const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined);
+    const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined, this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId));
     this.assertWorkInFlightUntouched(liveNodes, prepared);
+    if (opts.uploaderSub !== undefined) this.assertSampleSheetKeysAllowed(liveNodes, prepared, opts.uploaderSub);
 
     // Which nodes existed before this save, across every tree. Node deletion is
     // decided once, globally, at the end — never per tree.
@@ -617,6 +638,19 @@ export class JobVersionService {
     return [...ids];
   }
 
+  /** Earlier names per node: the live node's snapshot, overridden by a restored version's. */
+  private priorSnapshots(liveNodes: Map<string, LiveNode>, fromVersion?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]>): Map<string, ParameterSnapshotEntry[]> {
+    const merged = new Map<string, ParameterSnapshotEntry[]>();
+    const clientIds = new Set([...liveNodes.keys(), ...(fromVersion?.keys() ?? [])]);
+    for (const clientId of clientIds) {
+      const byId = new Map<string, ParameterSnapshotEntry>();
+      for (const entry of liveNodes.get(clientId)?.parameterSnapshot ?? []) byId.set(entry.id, entry);
+      for (const entry of fromVersion?.get(clientId) ?? []) byId.set(entry.id, entry);
+      merged.set(clientId, [...byId.values()]);
+    }
+    return merged;
+  }
+
   /** Every live node on the job, keyed by client-side id. */
   private async loadLiveNodes(job: Job): Promise<Map<string, LiveNode>> {
     const byClientId = new Map<string, LiveNode>();
@@ -627,6 +661,48 @@ export class JobVersionService {
       for (const node of nodes) byClientId.set(node.id, node as LiveNode);
     }
     return byClientId;
+  }
+
+  /**
+   * B20: a file or spreadsheet swapped in the editor must be one already stored
+   * on that parameter, or one this caller uploaded (both kinds share the
+   * `workflow-parameters/{sub}/` prefix). The node resolver presigns a download
+   * for every stored key, so accepting a foreign key would let the writer read
+   * someone else's upload.
+   *
+   * Fails closed: every raw formData entry for a guarded parameter is checked
+   * (duplicate ids included, array elements included), and a non-empty value
+   * with no parseable key is refused unless it is exactly what is stored.
+   * An empty `uploaderSub` names nobody, so no new key is accepted. Opt-in:
+   * only `saveJobWorkflows` names an uploader; restore and withdraw replay keys
+   * from history on purpose.
+   */
+  private assertSampleSheetKeysAllowed(liveNodes: Map<string, LiveNode>, prepared: PreparedNode[][], uploaderSub: string): void {
+    const flatten = (value: unknown): unknown[] => (Array.isArray(value) ? value.flatMap(flatten) : [value]);
+    const isBlank = (v: unknown): boolean => v === null || v === undefined || v === '';
+    const raw = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
+    for (const workflow of prepared) {
+      for (const node of workflow) {
+        if (!node.fileParamIds.length) continue;
+        const guarded = new Set(node.fileParamIds);
+        const stored = new Map<string, unknown[]>();
+        for (const entry of (liveNodes.get(node.clientId)?.formData ?? []) as Array<{ id?: unknown; value?: unknown }>) {
+          if (typeof entry?.id === 'string' && guarded.has(entry.id)) stored.set(entry.id, [...(stored.get(entry.id) ?? []), ...flatten(entry.value)]);
+        }
+        for (const entry of (node.patch.formData ?? []) as Array<{ id?: unknown; value?: unknown }>) {
+          if (typeof entry?.id !== 'string' || !guarded.has(entry.id)) continue;
+          const before = stored.get(entry.id) ?? [];
+          const beforeKeys = new Set(before.map(sampleSheetKeyOf).filter((k): k is string => !!k));
+          const beforeRaw = new Set(before.filter((v) => !isBlank(v)).map(raw));
+          for (const value of flatten(entry.value)) {
+            if (isBlank(value)) continue;
+            const key = sampleSheetKeyOf(value);
+            const allowed = key ? beforeKeys.has(key) || (uploaderSub !== '' && keyBelongsToUploader(key, uploaderSub)) : beforeRaw.has(raw(value));
+            if (!allowed) throw new BadRequestException(`The file on "${node.patch.label}" was not uploaded by you. Upload it again and retry.`);
+          }
+        }
+      }
+    }
   }
 
   /**
@@ -670,7 +746,11 @@ export class JobVersionService {
    * editing user's — otherwise a technician saving a customer's job would
    * silently reprice it at staff rates.
    */
-  private async prepareWorkflows(workflows: SaveWorkflowInput[], category: CustomerCategory | undefined): Promise<PreparedNode[][]> {
+  private async prepareWorkflows(
+    workflows: SaveWorkflowInput[],
+    category: CustomerCategory | undefined,
+    priorByClientId: Map<string, ParameterSnapshotEntry[]> = new Map()
+  ): Promise<PreparedNode[][]> {
     const serviceIds = [...new Set(workflows.flatMap((w) => w.nodes.map((n) => String(n.serviceId))))];
     const services = new Map<string, any>();
     for (const id of serviceIds) {
@@ -684,16 +764,22 @@ export class JobVersionService {
         const service = services.get(String(node.serviceId));
         const formData = normalizeFormDataToArray(node.formData, getMultiValueParamIds(service.parameters));
         const price = calculateServiceCost(service, formData, undefined, category);
+        // From the normalized formData that is persisted, so the card cannot disagree with the stored value.
+        const parameterSnapshot = buildParameterSnapshot(service, formData, priorByClientId.get(node.id));
         const position = node.position ? { x: node.position.x, y: node.position.y } : undefined;
 
         return {
           clientId: node.id,
+          fileParamIds: (Array.isArray(service.parameters) ? service.parameters : [])
+            .filter((p: any) => p && typeof p.id === 'string' && (p.type === 'file' || isSampleSheetParam(p)))
+            .map((p: any) => p.id),
           patch: {
             label: node.label ?? service.name,
             service: new mongoose.Types.ObjectId(String(service._id)),
             additionalInstructions: node.additionalInstructions ?? '',
             formData,
             price,
+            parameterSnapshot,
             // Minimal, so nothing the client invented can ride along. Hydration
             // reads only `position` back out of this.
             reactNode: { id: node.id, type: 'selectorNode', position: position ?? { x: 0, y: 0 } }
@@ -706,6 +792,7 @@ export class JobVersionService {
             formData,
             additionalInstructions: node.additionalInstructions ?? '',
             price,
+            parameterSnapshot,
             position
           }
         };
@@ -739,6 +826,7 @@ export class JobVersionService {
               additionalInstructions: node.patch.additionalInstructions,
               formData: node.patch.formData,
               price: node.patch.price,
+              parameterSnapshot: node.patch.parameterSnapshot,
               reactNode: node.patch.reactNode
             }
           })
@@ -752,6 +840,7 @@ export class JobVersionService {
           additionalInstructions: node.patch.additionalInstructions,
           formData: node.patch.formData,
           price: node.patch.price,
+          parameterSnapshot: node.patch.parameterSnapshot,
           reactNode: node.patch.reactNode,
           state: WorkflowNodeState.QUEUED
         });

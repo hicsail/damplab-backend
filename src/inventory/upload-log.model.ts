@@ -1,12 +1,18 @@
-import { ObjectType, Field, ID, Int, InputType } from '@nestjs/graphql';
+import { ObjectType, Field, ID, Int, InputType, registerEnumType } from '@nestjs/graphql';
 import { Schema, Prop, SchemaFactory } from '@nestjs/mongoose';
 import mongoose from 'mongoose';
 import JSON from 'graphql-type-json';
 
+export enum UploadEntityType {
+  INVENTORY = 'INVENTORY',
+  OPERATION = 'OPERATION'
+}
+registerEnumType(UploadEntityType, { name: 'UploadEntityType' });
+
 /** A before/after snapshot for one item affected by an upload. */
-@ObjectType({ description: 'Before/after snapshot of a single inventory item affected by an upload.' })
+@ObjectType({ description: 'Before/after snapshot of the inventory item or operation affected by an upload.' })
 export class FieldSnapshot {
-  @Field(() => ID, { description: 'The inventory item id.' })
+  @Field(() => ID, { description: 'Id of the inventory item or operation.' })
   itemId: string;
 
   @Field({ description: 'What happened: CREATE, UPDATE, REACTIVATE, or SKIP.' })
@@ -36,7 +42,7 @@ export class FieldSnapshotInput {
 
 const FieldSnapshotSchema = new mongoose.Schema(
   {
-    itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem', required: true },
+    itemId: { type: mongoose.Schema.Types.ObjectId, required: true },
     action: { type: String, required: true },
     before: { type: mongoose.Schema.Types.Mixed },
     after: { type: mongoose.Schema.Types.Mixed }
@@ -44,9 +50,9 @@ const FieldSnapshotSchema = new mongoose.Schema(
   { _id: false }
 );
 
-/** An audit log entry for a bulk inventory upload. */
+/** An audit log entry for a bulk inventory or operations upload. */
 @Schema({ timestamps: true })
-@ObjectType({ description: 'Audit log for a bulk inventory upload.' })
+@ObjectType({ description: 'Audit log for a bulk inventory or operations upload.' })
 export class UploadLog {
   @Field(() => ID, { name: 'id', description: 'Database generated id.' })
   id: string;
@@ -94,6 +100,10 @@ export class UploadLog {
   @Prop({ type: [FieldSnapshotSchema], default: [] })
   @Field(() => [FieldSnapshot], { description: 'Per-item before/after snapshots.' })
   fieldSnapshots: FieldSnapshot[];
+
+  @Prop({ type: String, enum: Object.values(UploadEntityType), default: UploadEntityType.INVENTORY })
+  @Field(() => UploadEntityType, { defaultValue: UploadEntityType.INVENTORY, description: 'What was uploaded. Logs written before this field existed are inventory uploads.' })
+  entityType: UploadEntityType;
 }
 
 export type UploadLogDocument = UploadLog & mongoose.Document;

@@ -1,12 +1,11 @@
-import * as mongoose from 'mongoose';
-
 /**
  * The client email on a job, and how it is compared.
  *
- * When staff submit a job for a client, the job's `sub` and `email` belong to the
- * staff member — they come from the submitter's token. `clientEmail` is the only
- * link back to the client, and unlike every other identity field on a job it is
- * *typed by hand* into the staff submission form. So `Client@BU.edu` and
+ * When staff submit a job for a client, the job's `sub` and `email` are the
+ * client's (the account found by exact email; `sub` is unset if they have none
+ * yet). The staff member is recorded in `submittedBy` and owns nothing.
+ * `clientEmail` is the typed address, and unlike every other identity field on a
+ * job it is *typed by hand* into the staff submission form. So `Client@BU.edu` and
  * `client@bu.edu` are the same person, and an exact `===` against the Keycloak
  * address silently hides the job.
  *
@@ -28,27 +27,6 @@ export function matchesClientEmail(jobClientEmail: string | null | undefined, us
 }
 
 /**
- * The "jobs this person owns" filter: their own submissions, plus the ones staff
- * submitted naming them.
- *
- * `$expr`/`$toLower` rather than a plain equality so a row written before emails
- * were normalised still matches. The guard is load-bearing, not defensive: with
- * no address to match, `$toLower` of a missing `clientEmail` is `""`, which would
- * equal an empty needle and hand the caller every job that has no client email —
- * that is to say, every ordinary job in the collection.
- */
-export function ownedJobsFilter(sub: string, email: string | null | undefined): mongoose.FilterQuery<any> {
-  const normalized = normalizeClientEmail(email);
-  if (!normalized) return { sub };
-  // $trim as well as $toLower: normalizeClientEmail trims, so a stored value with
-  // stray padding would compare unequal here while comparing equal in JS -- the
-  // list would hide a job the detail page happily opens. ($trim of a missing
-  // field is null, and $toLower of null is "", which the guard above has already
-  // ruled out as a needle.)
-  return { $or: [{ sub }, { $expr: { $eq: [{ $toLower: { $trim: { input: '$clientEmail' } } }, normalized] } }] };
-}
-
-/**
  * The address that identifies a job's *client*, as a Mongo expression.
  *
  * `clientEmail` when staff submitted on someone's behalf, otherwise the
@@ -61,6 +39,6 @@ export function ownedJobsFilter(sub: string, email: string | null | undefined): 
  * filtering and the ownership checks all agree on who is who.
  */
 export function effectiveClientEmailExpr(): Record<string, unknown> {
-  const raw = { $cond: [{ $gt: [{ $strLenCP: { $ifNull: ['$clientEmail', ''] } }, 0] }, '$clientEmail', { $ifNull: ['$email', ''] }] };
+  const raw = { $cond: [{ $gt: [{ $strLenCP: { $trim: { input: { $ifNull: ['$clientEmail', ''] } } } }, 0] }, '$clientEmail', { $ifNull: ['$email', ''] }] };
   return { $toLower: { $trim: { input: raw } } };
 }

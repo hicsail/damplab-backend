@@ -1085,3 +1085,179 @@ describe('restoreVersion — event versions', () => {
     await expect(harness.service.restoreVersion(JOB_ID, harness.versions[0].versionNumber, author, 'Reverted')).rejects.toThrow(/no workflow to restore/);
   });
 });
+
+describe('saveWorkflows — parameter snapshot (B21, B22)', () => {
+  it('writes the snapshot on the live node and copies it into the version', async () => {
+    const { service, nodes, versions } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'vol', value: 7 }] })], edges: [] }] } as any, author);
+    const expected = [{ id: 'vol', name: 'Volume', type: 'number', displayValue: '7' }];
+    expect(nodes[0].parameterSnapshot).toEqual(expected);
+    expect(versions[0].workflows[0].nodes[0].parameterSnapshot).toEqual(expected);
+  });
+
+  it('writes the snapshot on a node the save creates', async () => {
+    const { service, nodes } = buildHarness({ nodes: [liveNode()] });
+    await service.saveWorkflows(
+      { jobId: JOB_ID, note: 'added', workflows: [{ workflowId: WF_ID, nodes: [inputNode(), inputNode({ id: 'b', formData: [{ id: 'vol', value: 3 }] })], edges: [] }] } as any,
+      author
+    );
+    expect(nodes.find((n) => n.id === 'b').parameterSnapshot).toEqual([{ id: 'vol', name: 'Volume', type: 'number', displayValue: '3' }]);
+  });
+
+  it("keeps a removed parameter's name on the first save after the catalogue drops it", async () => {
+    const { service, nodes } = buildHarness({
+      nodes: [
+        liveNode({
+          formData: [
+            { id: 'vol', value: 10 },
+            { id: 'gone', value: 'x' }
+          ],
+          parameterSnapshot: [{ id: 'gone', name: 'Old parameter', type: 'text', displayValue: 'x' }]
+        })
+      ]
+    });
+    await service.saveWorkflows(
+      {
+        jobId: JOB_ID,
+        note: 'edited',
+        workflows: [
+          {
+            workflowId: WF_ID,
+            nodes: [
+              inputNode({
+                formData: [
+                  { id: 'vol', value: 10 },
+                  { id: 'gone', value: 'x' }
+                ]
+              })
+            ],
+            edges: []
+          }
+        ]
+      } as any,
+      author
+    );
+    expect(nodes[0].parameterSnapshot).toContainEqual({ id: 'gone', name: 'Old parameter', type: 'text', displayValue: 'x' });
+  });
+
+  it("restores a version with that version's names, even when the live node has lost them", async () => {
+    const harness = buildHarness({ nodes: [liveNode()] });
+    await harness.service.saveWorkflows({ jobId: JOB_ID, note: 'v1', workflows: [{ workflowId: WF_ID, nodes: [inputNode()], edges: [] }] } as any, author);
+    const v1 = harness.versions[0];
+    // The catalogue drops the parameter and the live node's snapshot is lost.
+    (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({ ...SERVICE_A, parameters: [] });
+    harness.nodes[0].parameterSnapshot = [];
+    await harness.service.restoreVersion(JOB_ID, v1.versionNumber, author, 'Reverted');
+    expect(harness.nodes[0].parameterSnapshot).toEqual([{ id: 'vol', name: 'Volume', type: 'number', displayValue: '10' }]);
+  });
+
+  it('snapshots the normalized value that is stored, not the raw input', async () => {
+    const { service, nodes } = buildHarness({ nodes: [liveNode()] });
+    const dropdown = {
+      _id: SVC_A,
+      name: 'Gibson Assembly',
+      price: 100,
+      parameters: [
+        {
+          id: 'enz',
+          name: 'Enzyme',
+          type: 'dropdown',
+          options: [
+            { id: 'e1', name: 'BsaI' },
+            { id: 'e2', name: 'BsmBI' }
+          ]
+        }
+      ]
+    };
+    (service as any).dampLabServices.findOneActive = async (): Promise<any> => dropdown;
+    await service.saveWorkflows(
+      { jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'enz', value: ['e1', 'e2'] }] })], edges: [] }] } as any,
+      author
+    );
+    expect(nodes[0].formData).toEqual([{ id: 'enz', value: 'e1' }]);
+    expect(nodes[0].parameterSnapshot).toEqual([{ id: 'enz', name: 'Enzyme', type: 'dropdown', displayValue: 'BsaI' }]);
+  });
+});
+
+describe('saveWorkflows — samples-spreadsheet keys (B20)', () => {
+  const SHEET_SERVICE = { ...SERVICE_A, parameters: [{ id: 'sheet', name: 'Samples', type: 'sampleSheet' }] };
+  const sheet = (key: string): string => JSON.stringify({ filename: 'a.xlsx', key, sampleCount: 2 });
+  const setup = (): Harness => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: [{ id: 'sheet', value: sheet('workflow-parameters/owner/old.xlsx') }] })] });
+    (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => SHEET_SERVICE;
+    return harness;
+  };
+  const save = (harness: Harness, key: string, opts: any): Promise<any> =>
+    harness.service.saveWorkflows(
+      { jobId: JOB_ID, note: 'sheet', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData: [{ id: 'sheet', value: sheet(key) }] })], edges: [] }] } as any,
+      author,
+      opts
+    );
+
+  it('accepts the unchanged stored key', async () => {
+    await expect(save(setup(), 'workflow-parameters/owner/old.xlsx', { uploaderSub: 'member' })).resolves.toBeDefined();
+  });
+
+  it("accepts a key under the caller's own upload prefix", async () => {
+    const harness = setup();
+    await save(harness, 'workflow-parameters/member/new.xlsx', { uploaderSub: 'member' });
+    expect(harness.nodes[0].parameterSnapshot).toEqual([{ id: 'sheet', name: 'Samples', type: 'sampleSheet', displayValue: 'a.xlsx' }]);
+  });
+
+  it("rejects someone else's key before writing anything", async () => {
+    const harness = setup();
+    await expect(save(harness, 'workflow-parameters/other/stolen.xlsx', { uploaderSub: 'member' })).rejects.toBeInstanceOf(BadRequestException);
+    expect(harness.versions).toHaveLength(0);
+  });
+
+  const saveRaw = (harness: Harness, formData: any[], opts: any = { uploaderSub: 'member' }): Promise<any> =>
+    harness.service.saveWorkflows({ jobId: JOB_ID, note: 'sheet', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData })], edges: [] }] } as any, author, opts);
+  const FOREIGN = 'workflow-parameters/other/stolen.xlsx';
+  const OWN = 'workflow-parameters/member/new.xlsx';
+
+  it('rejects a foreign key hidden behind a duplicate id', async () => {
+    const harness = setup();
+    await expect(
+      saveRaw(harness, [
+        { id: 'sheet', value: sheet(FOREIGN) },
+        { id: 'sheet', value: sheet(OWN) }
+      ])
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(harness.versions).toHaveLength(0);
+  });
+
+  it('rejects a foreign key inside an array value, and accepts an array of allowed keys', async () => {
+    const multi = (): Harness => {
+      const harness = setup();
+      (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({
+        ...SERVICE_A,
+        parameters: [{ id: 'sheet', name: 'Samples', type: 'sampleSheet', allowMultipleValues: true }]
+      });
+      return harness;
+    };
+    await expect(saveRaw(multi(), [{ id: 'sheet', value: [sheet(OWN), sheet(FOREIGN)] }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(multi(), [{ id: 'sheet', value: [sheet(OWN), sheet('workflow-parameters/owner/old.xlsx')] }])).resolves.toBeDefined();
+  });
+
+  it('rejects a non-empty value with no parseable key unless it is what is stored', async () => {
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: 'not json' }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: JSON.stringify({ filename: 'a.xlsx', notUploaded: true }) }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: '' }])).resolves.toBeDefined();
+  });
+
+  it('guards file parameters the same way', async () => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: [{ id: 'f', value: sheet('workflow-parameters/owner/old.pdf') }] })] });
+    (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({ ...SERVICE_A, parameters: [{ id: 'f', name: 'File', type: 'file' }] });
+    await expect(saveRaw(harness, [{ id: 'f', value: sheet(FOREIGN) }])).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(harness, [{ id: 'f', value: sheet(OWN) }])).resolves.toBeDefined();
+  });
+
+  it('accepts no new key when the uploader is empty (caller without a sub)', async () => {
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: sheet('workflow-parameters//x.xlsx') }], { uploaderSub: '' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(saveRaw(setup(), [{ id: 'sheet', value: sheet('workflow-parameters/owner/old.xlsx') }], { uploaderSub: '' })).resolves.toBeDefined();
+  });
+
+  it('does not check keys when no uploader is named (restore and withdraw)', async () => {
+    await expect(save(setup(), 'workflow-parameters/other/older.xlsx', {})).resolves.toBeDefined();
+  });
+});

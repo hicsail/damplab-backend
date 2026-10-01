@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { resolveCategoryPrice, RUN_COUNT_PARAM_ID } from './service-pricing.util';
 import { CustomerCategory } from './customer-category';
+import { effectiveParameters, setsByIdMap } from '../services/effective-parameters';
 
 /**
  * Read-only audit: which catalog services are repriced by scoping a priced
@@ -71,6 +72,8 @@ function pricedCategoriesFor(param: unknown): string[] {
 
 export async function auditMultiplierPricing(db: mongoose.mongo.Db): Promise<MultiplierPricingAuditReport> {
   const services = await db.collection('damplabservices').find({}).toArray();
+  const sets = await db.collection('parametersets').find({}).toArray();
+  const setsById = setsByIdMap(sets as any);
 
   const report: MultiplierPricingAuditReport = {
     scannedServices: services.length,
@@ -83,7 +86,7 @@ export async function auditMultiplierPricing(db: mongoose.mongo.Db): Promise<Mul
     if ((service as any).pricingMode !== 'PARAMETER') continue;
     report.parameterModeServices += 1;
 
-    const parameters = Array.isArray((service as any).parameters) ? (service as any).parameters : [];
+    const parameters = effectiveParameters(service as any, setsById);
     const affectedParams: AffectedParameter[] = [];
 
     for (const param of parameters) {

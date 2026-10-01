@@ -207,7 +207,8 @@ export class BookingService {
       inventoryItem: item.id,
       inventoryName: item.name,
       inventoryType: item.type,
-      ownerSub: job.sub,
+      // The job's client. A staff-submitted job whose client has no account yet has no sub (B28); bill the booker's account rather than fail the required field.
+      ownerSub: job.sub || actor.sub,
       ownerEmail: job.email,
       ownerName: job.clientDisplayName || job.username,
       ownerInstitution: job.institute,

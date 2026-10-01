@@ -9,6 +9,7 @@ import { StationResolver } from '../../station/station.resolver';
 import { ProtocolMapResolver } from '../../protocol-map/protocol-map.resolver';
 import { TemplateResolver } from '../../template/template.resolver';
 import { JobResolver } from '../../job/job.resolver';
+import { CommentResolver } from '../../comment/comment.resolver';
 import { SecureDnaResolver } from '../../securedna/securedna.resolver';
 import { WorkflowResolver } from '../../workflow/workflow.resolver';
 import { WorkflowNodeResolver } from '../../workflow/resolvers/node.resolver';
@@ -29,6 +30,9 @@ import { PermissionsResolver } from './permissions.resolver';
 import { InvoiceResolver } from '../../invoice/invoice.resolver';
 import { JobPaymentResolver } from '../../job-payment/job-payment.resolver';
 import { JobChargeResolver } from '../../job-payment/job-charge.resolver';
+import { ParameterSetsResolver } from '../../parameter-sets/parameter-sets.resolver';
+import { UploadLogResolver } from '../../inventory/upload-log.resolver';
+import { CatalogExportResolver } from '../../catalog-export/catalog-export.resolver';
 
 /**
  * The gate on each operation, asserted directly against the decoration metadata.
@@ -108,6 +112,20 @@ const GATES: Row[] = [
   [JobResolver, 'startJobCustomerVerification', Permission.JobsView],
   [JobResolver, 'refreshJobAclidScreening', Permission.JobsView],
 
+  // Collaborators. Baseline, scoped inside: membership (or damplab-staff /
+  // jobs:view-all) is checked in the resolver, the way the KYC mutations are.
+  [JobResolver, 'addJobMember', Permission.JobsView],
+  [JobResolver, 'removeJobMember', Permission.JobsView],
+  [JobResolver, 'setJobDescription', Permission.JobsView],
+
+  // Comments (F1). Baseline, scoped inside to the job's members and jobs:view-all.
+  [CommentResolver, 'commentsByJobId', Permission.JobsView],
+  [CommentResolver, 'commentById', Permission.JobsView],
+  [CommentResolver, 'commentsByNodeId', Permission.JobsView],
+  [CommentResolver, 'createComment', Permission.JobsView],
+  [CommentResolver, 'updateComment', Permission.JobsView],
+  [CommentResolver, 'deleteComment', Permission.JobsView],
+
   // /lab-monitor/:screen
   [WorkflowNodeResolver, 'getLabMonitorNodes', Permission.LabMonitorView],
   [WorkflowNodeResolver, 'getLabMonitorStaffList', Permission.LabMonitorView],
@@ -182,6 +200,18 @@ const GATES: Row[] = [
   [CategoryResolver, 'createCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'updateCategory', Permission.CatalogEditorWrite],
   [CategoryResolver, 'deleteCategory', Permission.CatalogEditorWrite],
+  [DampLabServicesResolver, 'deletedServiceIds', Permission.CatalogEditorRead],
+  [ParameterSetsResolver, 'parameterSets', Permission.CatalogEditorRead],
+  [ParameterSetsResolver, 'parameterSet', Permission.CatalogEditorRead],
+  [ParameterSetsResolver, 'createParameterSet', Permission.CatalogEditorWrite],
+  [ParameterSetsResolver, 'updateParameterSet', Permission.CatalogEditorWrite],
+  [ParameterSetsResolver, 'deleteParameterSet', Permission.CatalogEditorWrite],
+  [CatalogExportResolver, 'catalogExport', Permission.CatalogEditorWrite],
+
+  // Upload history. Was @Roles(DamplabStaff), which 403'd the technicians the
+  // route admits (F4).
+  [UploadLogResolver, 'uploadLogs', Permission.CatalogEditorRead],
+  [UploadLogResolver, 'uploadLog', Permission.CatalogEditorRead],
 
   // Samples spreadsheets. The blank template is catalog data — staff attach it,
   // and anyone who can see the catalog may download it, because the canvas is
@@ -258,7 +288,7 @@ describe('Phase 2b widening — the gate on each operation', () => {
    * page: a customer with no inventory permission must still load it and read
    * "Booking opens once the Statement of Work is signed by both parties." The
    * scope is enforced inside the resolver, which answers HIDDEN and nothing else
-   * to anyone who is not the job's owner, a listed booker, or staff. Gating it on
+   * to anyone who is not on the job or staff. Gating it on
    * inventory:book would 403 every ordinary client on page load.
    */
   it('leaves the job equipment-booking query ungated, with the scope enforced inside', () => {
@@ -281,6 +311,15 @@ describe('Phase 2b widening — the gate on each operation', () => {
     expect(rolesOn(JobChargeResolver, 'jobCharges')).toBeUndefined();
     expect(permissionOn(InvoiceResolver, 'invoicesByJobId')).toBeUndefined();
     expect(rolesOn(InvoiceResolver, 'invoicesByJobId')).toBeUndefined();
+  });
+
+  /**
+   * The write depends on *what* was uploaded — inventory:write for an inventory
+   * log, catalog-editor:write for an operations log — so it is an inline check.
+   */
+  it('leaves createUploadLog on an inline per-type check, not a decoration', () => {
+    expect(permissionOn(UploadLogResolver, 'createUploadLog')).toBeUndefined();
+    expect(rolesOn(UploadLogResolver, 'createUploadLog')).toBeUndefined();
   });
 
   it('leaves no @Roles behind on any of them', () => {

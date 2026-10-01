@@ -55,6 +55,12 @@ describe('SOW read access', () => {
     // ...but staff still get through, so a dangling jobId is not a lockout for them.
     expect(canReadSow(null, staff)).toBe(true);
   });
+
+  it('allows a member of the job to read and act as owner', () => {
+    const withMember = { ...job, memberEmails: ['colleague@lab.org'] };
+    expect(canReadSow(withMember, user({ sub: 'sub-colleague', email: 'Colleague@lab.org' }))).toBe(true);
+    expect(isJobOwner(withMember, user({ sub: 'sub-colleague', email: 'colleague@lab.org' }))).toBe(true);
+  });
 });
 
 describe('invoiceBlockedReason', () => {

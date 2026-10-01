@@ -1,5 +1,5 @@
 import { JobState } from '../../job/job.model';
-import { findSampleSheetParam, keyBelongsToUploader, sampleCountFromValue, sampleSheetReplaceBlockedReason, templateKeyOf } from './sample-sheet.util';
+import { findSampleSheetParam, keyBelongsToUploader, sampleCountFromValue, sampleSheetKeyOf, sampleSheetReplaceBlockedReason, templateKeyOf } from './sample-sheet.util';
 
 describe('sample-sheet.util', () => {
   describe('sampleCountFromValue', () => {
@@ -68,5 +68,15 @@ describe('sample-sheet.util', () => {
       expect(sampleSheetReplaceBlockedReason({ state: JobState.CANCELLED })).toMatch(/cancelled/);
       expect(sampleSheetReplaceBlockedReason({ state: JobState.REJECTED })).toMatch(/not accepted/);
     });
+  });
+});
+
+describe('sampleSheetKeyOf', () => {
+  it('reads the key from a stored JSON string or a round-tripped object', () => {
+    expect(sampleSheetKeyOf(JSON.stringify({ filename: 'a.xlsx', key: 'workflow-parameters/u/1' }))).toBe('workflow-parameters/u/1');
+    expect(sampleSheetKeyOf({ filename: 'a.xlsx', key: 'workflow-parameters/u/1', url: 'https://x' })).toBe('workflow-parameters/u/1');
+  });
+  it('is undefined for no file, no key, or junk', () => {
+    for (const v of [null, undefined, '', 'not json', JSON.stringify({ filename: 'a.xlsx', notUploaded: true }), 42]) expect(sampleSheetKeyOf(v)).toBeUndefined();
   });
 });

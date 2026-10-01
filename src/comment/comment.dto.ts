@@ -36,10 +36,10 @@ export class CreateCommentInput {
   @Field({ description: 'Content of the comment' })
   content: string;
 
-  @Field({ description: 'Username or email of the person creating the comment' })
+  @Field({ description: "Ignored. The author is taken from the caller's token." })
   author: string;
 
-  @Field(() => CommentAuthorType, { description: 'Type of author (STAFF or CLIENT)' })
+  @Field(() => CommentAuthorType, { description: "Ignored. STAFF or CLIENT is derived from the caller's roles." })
   authorType: CommentAuthorType;
 
   @Field({ description: 'If true, only visible to staff; if false, visible to both staff and client', defaultValue: false, nullable: true })

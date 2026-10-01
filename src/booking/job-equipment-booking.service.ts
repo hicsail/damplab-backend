@@ -9,13 +9,12 @@ import { BookingService } from './booking.service';
 import { Permission } from '../auth/permissions/permission.enum';
 import { hasPermission } from '../auth/permissions/permissions';
 import { User } from '../auth/user.interface';
-import { EquipmentWindow, readEquipmentBookers, readEquipmentHoursPerWeek, readEquipmentWindow } from './equipment-window';
+import { EquipmentWindow, readEquipmentHoursPerWeek, readEquipmentWindow } from './equipment-window';
 import { AccessActor, JobBookingAccessStatus, JobBookingAccessVerdict, resolveJobEquipmentBookingAccess } from './job-equipment-booking-access';
 import { JobBookingItem, JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
 import { Booking } from './booking.model';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
-import { matchesClientEmail } from '../job/client-email';
-import { normalizeBookerEmails } from './booker-emails';
+import { isJobMember } from '../job/job-membership';
 
 /** One equipment-use operation of a job, with everything the panel and the mutations need. */
 export interface LoadedOperation {
@@ -25,7 +24,6 @@ export interface LoadedOperation {
   service: any;
   window: EquipmentWindow;
   hoursPerWeek?: number;
-  bookers: string[];
   items: JobBookingItem[];
 }
 
@@ -126,7 +124,6 @@ export class JobEquipmentBookingService {
         service,
         window: readEquipmentWindow((node as any).formData),
         hoursPerWeek: readEquipmentHoursPerWeek((node as any).formData),
-        bookers: readEquipmentBookers((node as any).formData),
         items
       });
     }
@@ -136,9 +133,9 @@ export class JobEquipmentBookingService {
   async verdict(job: any, user: User, operations: LoadedOperation[]): Promise<JobBookingAccessVerdict> {
     const signed = await this.isSowSigned(String(job._id));
     return resolveJobEquipmentBookingAccess(
-      { sub: job.sub, clientEmail: job.clientEmail, bookingBlocked: job.bookingBlocked, bookingBlockedReason: job.bookingBlockedReason },
+      { sub: job.sub, email: job.email, clientEmail: job.clientEmail, memberEmails: job.memberEmails, bookingBlocked: job.bookingBlocked, bookingBlockedReason: job.bookingBlockedReason },
       this.actorFor(user),
-      operations.map((op) => ({ nodeId: op.nodeId, bookers: op.bookers })),
+      operations.map((op) => ({ nodeId: op.nodeId })),
       signed
     );
   }
@@ -229,21 +226,20 @@ export class JobEquipmentBookingService {
         window: { start: op.window.start, end: op.window.end, openEnd: op.window.openEnd },
         hoursPerWeek: op.hoursPerWeek,
         items: op.items,
-        bookers: op.bookers
+        // Deprecated field kept so an older UI's query still validates; always empty.
+        bookers: []
       })),
       bookings: await this.bookings.findByJob(String(job._id))
     };
   }
 
   /**
-   * Who may cancel a job-scoped booking.
-   *
-   * Wider than the walk-up rule (owner-only) and deliberately so: the booking's
-   * owner is the JOB, so its `ownerSub` is the job creator's and a listed booker
-   * would otherwise be unable to undo their own reservation. Note this is
-   * independent of the SOW state and of the lab's pause — a paused job's existing
-   * bookings must still be cancellable, which is what "it never touches existing
-   * bookings" means.
+   * Who may cancel a job-scoped booking: staff, whoever made it, and anyone on
+   * the job. Wider than the walk-up rule (owner-only) because the booking's
+   * owner is the JOB, so its `ownerSub` is the job creator's and a member who
+   * booked would otherwise be unable to undo their own reservation. Independent
+   * of the SOW state and of the lab's pause — a paused job's existing bookings
+   * must still be cancellable.
    */
   async assertMayCancel(booking: any, user: User): Promise<void> {
     const actor = this.actorFor(user);
@@ -251,14 +247,7 @@ export class JobEquipmentBookingService {
     if (booking.createdBySub && actor.sub && booking.createdBySub === actor.sub) return;
 
     const job: any = await this.jobService.findById(String(booking.jobId));
-    if (!job) throw new ForbiddenException('You are not authorized to cancel this booking.');
-    if (job.sub && actor.sub && job.sub === actor.sub) return;
-    if (matchesClientEmail(job.clientEmail, actor.email)) return;
-
-    const operations = await this.loadOperations(job);
-    const operation = operations.find((op) => op.nodeId === String(booking.nodeId));
-    const [actorEmail] = normalizeBookerEmails(actor.email);
-    if (operation && actorEmail && operation.bookers.includes(actorEmail)) return;
+    if (job && isJobMember(job, actor)) return;
 
     throw new ForbiddenException('You are not authorized to cancel this booking.');
   }

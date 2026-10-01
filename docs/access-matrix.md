@@ -49,8 +49,8 @@ access group. See `damplab-backend/src/pricing/pricing-groups.ts`.
 | `bugs:report` | ✓ | ✓ | ✓ | ✓ |
 | `bugbacklog:view` | ✓ | ✓ | | |
 | `catalog:view` — the services catalog page | ✓ | ✓ | ✓ | ✓ |
-| `catalog-editor:read` | ✓ | ✓ | | |
-| `catalog-editor:write` | ✓ | | | |
+| `catalog-editor:read` — Catalog Editor (read), Parameter Sets, upload history, sees operations hidden from clients | ✓ | ✓ | | |
+| `catalog-editor:write` — edit operations/sets/bundles/categories, operations upload, Download Catalog | ✓ | | | |
 | `protocol-library:read` | ✓ | ✓ | | |
 | `protocol-library:write` | ✓ | ✓ | | |
 | `lab-layout:read` | ✓ | ✓ | | |
@@ -105,6 +105,8 @@ exist when the matrix was written.
 | `bench:use` | Admin + Technician + Equipment User | **Admin + Technician** | 2026-09-18. Reverses the amendment above; equipment users lose My Bench. |
 | `labmonitor:view` | Admin + Technician + Equipment User | **Admin + Technician** | 2026-09-18. Equipment users lose the Lab Monitors. |
 | `releasenotes:view` | Everyone (baseline) | **Admin + Technician** | 2026-09-18. Release Notes is a staff page. Leaves the baseline, so plain clients lose it too — the floor must stay a subset of every tier. `/release_notes` now sits behind `PrivateRouteReleaseNotes`. |
+| Job membership | Jobs you own = the submitter's `sub`, or the `clientEmail` staff typed | **The primary client + every address in `memberEmails`; a staff submitter owns nothing** | 2026-09-29. A job has a primary client (`clientEmail ?? email`) and any number of members with the same powers. A job staff submit for a client is the client's: its `sub`/`email`/`username` are the client's, and the staff member is recorded in `submittedBy`, which grants nothing (staff keep access through `jobs:view-all` and their roles). Every "jobs you own" rule — reads, edits, review responses, cancel, SOW sign/decline, billing reads, comments, attachments, KYC, booking — goes through `isJobMember` (`src/job/job-membership.ts`). Members are added or removed by a member or `damplab-staff`; the primary cannot be removed. `changeJobCustomerCategory` acts on the client's account. |
+| `job:submit-for-client` | UI-only | **Enforced on the server** | 2026-09-29. `createJob` with `clientEmail` from a caller without the permission is Forbidden (F2). |
 
 Two notes on the equipment-user grants, because a bare table edit misses both:
 
@@ -134,7 +136,7 @@ that is the only coupling between grouping and permission.
 | *(Announcements here is the read-only feed at `/announcements`, `announcements:read` — baseline. The editor is "Edit Announcements" under Admin Operational Tools, `announcements:write`.)* | |
 | **Technician Tools** | Staff submit job, My Bench |
 | **Operational Tools** | Inventory Availability, Inventory Schedule |
-| **Admin Operational Tools** | Release Notes, Catalog & Inventory Editor, Protocol Library, Lab Layout, Edit Announcements, Billing, AI Lab Assistant |
+| **Admin Operational Tools** | Release Notes, Catalog Editor, Protocol Library, Lab Layout, Edit Announcements, Billing, AI Lab Assistant |
 | **Admin Management Tools** | Customer Management, API Keys, Data Translation, Lab Monitor North, Lab Monitor South, Lab Status TV |
 
 Two deliberate oddities, both consequences of the topical grouping:
@@ -151,7 +153,7 @@ Two deliberate oddities, both consequences of the topical grouping:
 
 | Was | Now | Route |
 |---|---|---|
-| Catalog Editor | Catalog & Inventory Editor | `/edit` |
+| Catalog Editor | Catalog Editor *(Phase 1 had appended "and Inventory"; dropped again by the catalog-editor-updates run)* | `/edit` |
 | Protocol Map | Protocol Library | `/protocol-map` |
 | Lab Stations | Lab Layout | `/stations` |
 | Usage Billing | Billing | `/usage-billing` |
@@ -163,3 +165,13 @@ Two deliberate oddities, both consequences of the topical grouping:
 
 Routes are unchanged; only labels move. Each rename must land in three places —
 the homepage button, `AppBreadcrumbs`' `STATIC` map, and the page's own heading.
+
+## Catalog Editor resolver gates (catalog-editor-updates)
+
+| Operation | Gate |
+|---|---|
+| `parameterSets`, `parameterSet`, `deletedServiceIds`, `uploadLogs`, `uploadLog` | `catalog-editor:read` |
+| `createParameterSet`, `updateParameterSet`, `deleteParameterSet`, `catalogExport` | `catalog-editor:write` |
+| `createUploadLog` | inline: `inventory:write` for an INVENTORY log, `catalog-editor:write` for an OPERATION log |
+| `catalogServices` | `catalog:view`; operations hidden from clients are returned only to `catalog-editor:read` |
+| `createJob` | refuses a node whose operation is hidden from clients unless the caller holds `catalog-editor:read` |
