@@ -71,6 +71,29 @@ describe('backfillSowClientEmail', () => {
     expect(report.skipped).toBe(1);
   });
 
+  it('still finds the SOW after the staff-submitted job was converted to the client', async () => {
+    // backfill:parameter-snapshots moves the technician from job.email to submittedBy.
+    const converted = job('job1', { email: 'jane@bu.edu', submittedBy: { sub: 'staff-sub', email: 'Tech@DampLab.org', name: 'tess' } });
+    const fixtures = { sows: [sow('sow1', 'job1', 'tech@damplab.org')], jobs: [converted], sow_versions: [] };
+    const database = db(fixtures);
+
+    const report = await backfillSowClientEmail(database, { log: () => undefined });
+
+    expect(fixtures.sows[0].clientEmail).toBe('jane@bu.edu');
+    expect(report.corrected).toBe(1);
+  });
+
+  it('leaves a hand-edited address alone on a converted job too', async () => {
+    const converted = job('job1', { email: 'jane@bu.edu', submittedBy: { sub: 'staff-sub', email: 'tech@damplab.org', name: 'tess' } });
+    const fixtures = { sows: [sow('sow1', 'job1', 'someone.else@bu.edu')], jobs: [converted], sow_versions: [] };
+    const database = db(fixtures);
+
+    const report = await backfillSowClientEmail(database, { log: () => undefined });
+
+    expect(fixtures.sows[0].clientEmail).toBe('someone.else@bu.edu');
+    expect(report.skipped).toBe(1);
+  });
+
   it('is idempotent', async () => {
     const fixtures = { sows: [sow('sow1', 'job1', 'tech@damplab.org')], jobs: [job('job1')], sow_versions: [] };
     const database = db(fixtures);

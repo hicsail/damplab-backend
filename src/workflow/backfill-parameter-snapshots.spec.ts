@@ -128,6 +128,18 @@ describe('migrateStaffSubmittedJobs (B32)', () => {
     expect(report).toMatchObject({ converted: 2, failed: [{ id: 'j6' }] });
   });
 
+  it('logs each job it converts, on a dry run too, so the run can be reviewed before applying', async () => {
+    const lines: string[] = [];
+    await migrateStaffSubmittedJobs(db({ jobs: jobs() }), lookup, { dryRun: true, log: (msg) => lines.push(msg) });
+    expect(lines).toEqual(
+      expect.arrayContaining([
+        '[dry] job j1: owner tech@bu.edu → client@bu.edu (client account cara)',
+        '[dry] job j2: owner tech@bu.edu → new@bu.edu (no client account yet; claimed at first sign-in)'
+      ])
+    );
+    expect(lines.filter((line) => line.includes('owner'))).toHaveLength(2);
+  });
+
   it('changes nothing the second time', async () => {
     const database = db({ jobs: jobs() });
     await migrateStaffSubmittedJobs(database, lookup, { log: () => undefined });

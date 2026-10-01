@@ -13,6 +13,7 @@
  * Nothing runs this automatically.
  */
 import mongoose from 'mongoose';
+import { parseScriptFlags } from '../script-flags';
 import { ConfigService } from '@nestjs/config';
 import config from '../config';
 import { normalizeClientEmail } from '../job/client-email';
@@ -174,6 +175,10 @@ export async function migrateStaffSubmittedJobs(
         }
       }
       report.converted += 1;
+      // One line per job, dry run included: the dry run is the only review of which
+      // jobs change hands before they do.
+      const owner = account?.sub ? `client account ${account.username ?? account.sub}` : 'no client account yet; claimed at first sign-in';
+      log(`${opts.dryRun ? '[dry] ' : ''}job ${job._id}: owner ${job.email ?? '(none)'} → ${clientEmail} (${owner})`);
       submitter = $set.submittedBy as { email?: string };
     }
 
@@ -187,6 +192,7 @@ export async function migrateStaffSubmittedJobs(
     for (const comment of commentsByJob.get(String(job._id)) ?? []) {
       if (comment.authorType !== 'CLIENT' || normalizeClientEmail(comment.author) !== staffEmail) continue;
       if (!opts.dryRun) await comments.updateOne({ _id: comment._id }, { $set: { author: clientEmail } });
+      log(`${opts.dryRun ? '[dry] ' : ''}job ${job._id}: comment ${comment._id} author ${comment.author} → ${clientEmail}`);
       report.commentsRepaired += 1;
     }
   }
@@ -194,7 +200,7 @@ export async function migrateStaffSubmittedJobs(
 }
 
 async function main(): Promise<void> {
-  const dryRun = process.argv.includes('--dry') || process.argv.includes('--dry-run');
+  const { dryRun } = parseScriptFlags(process.argv.slice(2));
   const uri = process.env.MONGO_URI;
   if (!uri) {
     console.error('MONGO_URI is not set. Run with: npm run backfill:parameter-snapshots');
