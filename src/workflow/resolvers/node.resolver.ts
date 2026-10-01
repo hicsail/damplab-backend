@@ -1,4 +1,4 @@
-import { Logger, NotFoundException, UseGuards } from '@nestjs/common';
+import { BadRequestException, Logger, NotFoundException, UseGuards } from '@nestjs/common';
 import { WorkflowNode, WorkflowNodeState } from '../models/node.model';
 import { Parent, Resolver, ResolveField, Mutation, Query, ID, Args, Float } from '@nestjs/graphql';
 import { DampLabServices } from '../../services/damplab-services.services';
@@ -62,6 +62,14 @@ export class WorkflowNodeResolver {
     @Args('workflowNode', { type: () => ID }, WorkflowNodePipe) workflowNode: WorkflowNode,
     @Args('newState', { type: () => WorkflowNodeState }) newState: WorkflowNodeState
   ): Promise<WorkflowNode> {
+    // Enforce dependency order for forward transitions only. Backward
+    // transitions (undo/correction) are always allowed.
+    if (newState === WorkflowNodeState.IN_PROGRESS || newState === WorkflowNodeState.COMPLETE) {
+      const ready = await this.nodeService.isNodeReady(String(workflowNode._id));
+      if (!ready) {
+        throw new BadRequestException('This operation cannot be started yet — predecessor operations are not complete.');
+      }
+    }
     const updated = (await this.nodeService.updateState(workflowNode, newState))!;
     const serviceName = this.nodeDisplayName(updated);
     const jobId = await this.resolveJobId(String(updated._id));

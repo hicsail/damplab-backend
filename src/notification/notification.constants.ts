@@ -68,6 +68,11 @@ export const EVENT_RECIPIENT_MAP: Record<string, EventRecipientConfig> = {
     recipients: [RecipientRole.ALL_STAFF],
     excludeActor: true,
     emailWorthy: false
+  },
+  // Bug tracking. Recipient is resolved from the BugReport, not via roles.
+  BUG_DEPLOYED_TO_STAGING: {
+    recipients: [],
+    emailWorthy: true
   }
 };
 
