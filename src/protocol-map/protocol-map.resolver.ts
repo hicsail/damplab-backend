@@ -217,7 +217,8 @@ export class ProtocolMapResolver {
         status,
         equipment,
         requiresNoEquipment,
-        issues
+        issues,
+        paramTags: m?.paramTags ?? []
       };
     });
 

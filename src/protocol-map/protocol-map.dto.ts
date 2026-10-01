@@ -62,6 +62,7 @@ export class ResolvedStep {
   @Field(() => [ResolvedEquipment]) equipment: ResolvedEquipment[];
   @Field(() => Boolean) requiresNoEquipment: boolean;
   @Field(() => [String], { description: 'Validation problems for this step (empty if clean).' }) issues: string[];
+  @Field(() => JSON, { nullable: true, description: 'Parameter tags from the protocol map: [{ label, value }].' }) paramTags?: any;
 }
 
 @ObjectType({ description: 'A protocol resolved into the full step → service → equipment → station chain.' })
