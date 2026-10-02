@@ -7,6 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import config from './config';
 import { GraphQLModule } from '@nestjs/graphql';
 import { ApolloDriver, ApolloDriverConfig } from '@nestjs/apollo';
+import { graphqlOptions } from './graphql-options';
 import { DampLabServicesModule } from './services/damplab-services.module';
 import { ParameterSetsModule } from './parameter-sets/parameter-sets.module';
 import { CatalogExportModule } from './catalog-export/catalog-export.module';
@@ -44,10 +45,13 @@ import { AclidModule } from './aclid/aclid.module';
   imports: [
     HealthModule,
     getConfigModule(),
-    GraphQLModule.forRoot<ApolloDriverConfig>({
+    // Async so graphqlOptions reads ConfigService (after .env is loaded); see
+    // graphql-options.ts for why stack traces are set explicitly.
+    GraphQLModule.forRootAsync<ApolloDriverConfig>({
       driver: ApolloDriver,
-      autoSchemaFile: true,
-      graphiql: true
+      imports: [ConfigModule],
+      useFactory: graphqlOptions,
+      inject: [ConfigService]
     }),
 
     // Load the MongoDB connection based on the config service
