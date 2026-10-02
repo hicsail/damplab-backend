@@ -220,6 +220,7 @@ const GATES: Row[] = [
   // named client, jobs:view-all), the way the KYC mutations are.
   [SampleSheetResolver, 'sampleSheetTemplateUploadUrl', Permission.CatalogEditorWrite],
   [SampleSheetResolver, 'sampleSheetTemplateUrl', Permission.CatalogView],
+  [SampleSheetResolver, 'parameterSetSampleSheetTemplateUrl', Permission.CatalogEditorRead],
   [SampleSheetResolver, 'replaceSampleSheet', Permission.JobsView],
 
   // Learning Hub. `training:read` is baseline; whether *drafts* come back is

@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { normalizeSetName, normalizeSetParameters } from './parameter-set.rules';
+import { effectiveParameters, setsByIdMap } from '../services/effective-parameters';
 
 describe('normalizeSetName', () => {
   it('trims', () => expect(normalizeSetName('  Buffers ')).toBe('Buffers'));
@@ -13,6 +14,13 @@ describe('normalizeSetName', () => {
 describe('normalizeSetParameters', () => {
   it('strips paramGroupId and provenance keys', () => {
     expect(normalizeSetParameters([{ id: 'a', name: 'A', paramGroupId: 'g', fromParameterSetId: 'x', fromParameterSetName: 'y' }])).toEqual([{ id: 'a', name: 'A' }]);
+  });
+  it('keeps a samples-spreadsheet template, and the operation using the set gets it', () => {
+    const templateFile = { key: 'sample-sheet-templates/abc.xlsx', filename: 'blank.xlsx' };
+    const parameters = normalizeSetParameters([{ id: 'sheet', type: 'sampleSheet', templateFile }]);
+    expect(parameters).toEqual([{ id: 'sheet', type: 'sampleSheet', templateFile }]);
+    const set = { _id: 'set-1', name: 'Samples', parameters };
+    expect(effectiveParameters({ parameters: [], parameterSetIds: ['set-1'] }, setsByIdMap([set]))[0]).toMatchObject({ id: 'sheet', type: 'sampleSheet', templateFile });
   });
   it('rejects a non-list', () => expect(() => normalizeSetParameters({})).toThrow('parameters must be a list.'));
   it('rejects a parameter without an id', () => expect(() => normalizeSetParameters([{ name: 'A' }])).toThrow('Parameter 1 has no id.'));

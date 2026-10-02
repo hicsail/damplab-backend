@@ -225,9 +225,7 @@ export class JobEquipmentBookingService {
         canBook: verdict.bookableNodeIds.includes(op.nodeId),
         window: { start: op.window.start, end: op.window.end, openEnd: op.window.openEnd },
         hoursPerWeek: op.hoursPerWeek,
-        items: op.items,
-        // Deprecated field kept so an older UI's query still validates; always empty.
-        bookers: []
+        items: op.items
       })),
       bookings: await this.bookings.findByJob(String(job._id))
     };

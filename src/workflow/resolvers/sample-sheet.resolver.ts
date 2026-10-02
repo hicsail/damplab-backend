@@ -76,6 +76,22 @@ export class SampleSheetResolver {
   }
 
   /**
+   * The same template, read off a Parameter Set rather than an operation. The
+   * catalog editor needs it because a set is edited on its own page, where
+   * there is no operation to name; customers never call it — on the canvas the
+   * set's parameter is already in the operation's effective list above.
+   */
+  @Query(() => String, { nullable: true, description: 'A short-lived download URL for the blank template on a Parameter Set’s samples-spreadsheet parameter, or null when there is none.' })
+  @RequirePermission(Permission.CatalogEditorRead)
+  async parameterSetSampleSheetTemplateUrl(@Args('parameterSetId', { type: () => ID }) parameterSetId: string, @Args('parameterId') parameterId: string): Promise<string | null> {
+    const set = await this.dampLabServices.findParameterSet(parameterSetId);
+    const param = findSampleSheetParam(set?.parameters, parameterId);
+    const key = templateKeyOf(param);
+    if (!key) return null;
+    return this.files.createPresignedDownload(key, param?.templateFile?.contentType);
+  }
+
+  /**
    * Scope is enforced here rather than by the gate, the same way the KYC
    * mutations do it: the baseline `jobs:view` lets every customer reach the
    * mutation, and `callerMayAccessJob` then admits only the job's owner, the

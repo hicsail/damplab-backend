@@ -66,9 +66,6 @@ export class JobBookingOperation {
 
   @Field(() => [JobBookingItem])
   items: JobBookingItem[];
-
-  @Field(() => [String], { deprecationReason: 'Retired: booking is by job membership. Always empty; removed in a later release.' })
-  bookers: string[];
 }
 
 @ObjectType({ description: "Everything the job page's equipment-booking panel needs, in one round trip." })

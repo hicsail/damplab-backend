@@ -225,7 +225,7 @@ describe('membership is the only way to book (behaviours 5, 6, 8)', () => {
     const view = await build({ sowStatus: 'FINAL', job: memberJob }).view('job-1', member());
     expect(view.access.status).toBe(JobBookingAccessStatus.OPEN);
     expect(view.operations.map((op) => [op.nodeId, op.canBook])).toEqual([['node-a', true]]);
-    expect(view.operations[0].bookers).toEqual([]);
+    expect(view.operations[0]).not.toHaveProperty('bookers');
     expect(view.bookings.map((b: any) => b._id)).toEqual(['bk-1']);
   });
 
