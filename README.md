@@ -70,4 +70,4 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 
 ## License
 
-Nest is [MIT licensed](LICENSE).
+The DAMPLab Canvas backend is [MIT licensed](LICENSE), copyright Boston University - Software & Application Innovation Lab.
