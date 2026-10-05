@@ -93,10 +93,12 @@ export class AvailabilityService {
 
     // --- Timed calendar bookings ---
     // COMPLETED holds its slot too: confirming usage sets it, and staff may
-    // confirm a booking before it runs. Only a cancellation frees the slot.
+    // confirm a booking before it runs. So does TENTATIVE — a client's request
+    // awaiting approval reserves the space. Only a cancellation (or a decline,
+    // which is one) frees the slot.
     const bookingFilter: any = {
       kind: 'TIMED',
-      status: { $in: ['RESERVED', 'IN_USE', 'COMPLETED'] },
+      status: { $in: ['TENTATIVE', 'RESERVED', 'IN_USE', 'COMPLETED'] },
       startTime: { $lt: reqEnd },
       endTime: { $gt: reqStart }
     };

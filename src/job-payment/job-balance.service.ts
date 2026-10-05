@@ -17,7 +17,7 @@ function round2(n: number): number {
 }
 
 /** Confirmed, not cancelled — the only bookings that are billable. */
-const isBillable = (booking: any): boolean => booking?.usageConfirmed === true && String(booking?.status) !== 'CANCELLED';
+const isBillable = (booking: any): boolean => booking?.usageConfirmed === true && !['CANCELLED', 'TENTATIVE'].includes(String(booking?.status));
 
 /**
  * The hours behind one line.

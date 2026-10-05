@@ -42,12 +42,18 @@ export class BookingResolver {
   }
 
   /**
-   * Any authenticated user can book — deliberately left open, as the checklist's
-   * regression floor requires. Callers who cannot manage others' bookings always
-   * book for themselves; owner overrides from the client are dropped.
+   * A walk-up booking: equipment booked with no job behind it. Lab staff only
+   * (`jobs:view-all`) since 2026-10-05 — a client books through a job, where the
+   * booking is billed to the job and waits on the lab's approval. This used to be
+   * open to any authenticated user (phase 2b's regression floor); the amendment is
+   * recorded in docs/access-matrix.md. Callers who cannot manage others' bookings
+   * always book for themselves; owner overrides from the client are dropped.
    */
   @Mutation(() => Booking)
   async createBooking(@Args('input', { type: () => CreateBookingInput }) input: CreateBookingInput, @CurrentUser() user: User): Promise<Booking> {
+    if (!hasPermission(user, Permission.JobsViewAll)) {
+      throw new ForbiddenException('Equipment is booked through a job: open the job and use Book Time on its Equipment Booking card.');
+    }
     const cleaned: CreateBookingInput = { ...input };
     if (!this.canManageOthersBookings(user)) {
       // Force self-ownership for non-staff (ignore any owner overrides from the client).
@@ -91,6 +97,22 @@ export class BookingResolver {
   @RequirePermission(Permission.InventoryBook)
   async createJobEquipmentBooking(@Args('input', { type: () => CreateJobEquipmentBookingInput }) input: CreateJobEquipmentBookingInput, @CurrentUser() user: User): Promise<Booking> {
     return this.jobEquipmentBookingService.create(input, user);
+  }
+
+  /**
+   * The lab's answer to a client's tentative booking. `inventory:write` is
+   * Administrator-only — the same line as managing other people's bookings.
+   */
+  @Mutation(() => Booking, { description: 'Approve a tentative booking: it becomes RESERVED and the client is notified. Administrators only.' })
+  @RequirePermission(Permission.InventoryWrite)
+  async approveBooking(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Booking> {
+    return this.jobEquipmentBookingService.approve(id, user);
+  }
+
+  @Mutation(() => Booking, { description: 'Decline a tentative booking, with a reason the client sees: the slot is freed and the booking cancelled. Administrators only.' })
+  @RequirePermission(Permission.InventoryWrite)
+  async declineBooking(@Args('id', { type: () => ID }) id: string, @Args('reason') reason: string, @CurrentUser() user: User): Promise<Booking> {
+    return this.jobEquipmentBookingService.decline(id, reason, user);
   }
 
   /** Move or re-note a job-scoped booking. Refused once it has been billed. */
@@ -167,7 +189,7 @@ export class BookingResolver {
     @Args('actualQuantity', { type: () => Int, nullable: true }) actualQuantity: number | null,
     @CurrentUser() user: User
   ): Promise<Booking> {
-    return this.bookingService.confirmUsage(id, actualHours ?? null, actualQuantity ?? null, this.displayName(user));
+    return this.bookingService.confirmUsage(id, actualHours ?? null, actualQuantity ?? null, this.displayName(user), user?.sub);
   }
 
   /**

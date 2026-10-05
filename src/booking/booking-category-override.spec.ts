@@ -17,7 +17,14 @@ import { User } from '../auth/user.interface';
  */
 
 const staff = { sub: 'sub-staff', email: 'tech@bu.edu', realm_access: { roles: ['damplab-staff'] } } as unknown as User;
-const customer = { sub: 'sub-customer', email: 'cara@lab.org', realm_access: { roles: [] } } as unknown as User;
+/**
+ * Since 2026-10-05 a walk-up booking is lab staff's alone (`jobs:view-all`), so
+ * the caller who cannot name a tier is now a technician: staff, but without the
+ * Administrator's `inventory:write`. Named `customer` because the rule it pins —
+ * book for yourself, at your own tier — is the one a customer was held to.
+ */
+const customer = { sub: 'sub-customer', email: 'cara@lab.org', realm_access: { roles: ['technician'] } } as unknown as User;
+const client = { sub: 'sub-client', email: 'cara@lab.org', realm_access: { roles: ['client-unassisted-equipment-user'] } } as unknown as User;
 
 function harness(): { resolver: BookingResolver; seen: any[] } {
   const seen: any[] = [];
@@ -94,6 +101,15 @@ describe('createBooking and the pricing tier', () => {
 
     await resolver.createBooking(input(), customer);
 
-    expect(seen[0].actor).toMatchObject({ sub: 'sub-customer', realm_access: { roles: [] } });
+    expect(seen[0].actor).toMatchObject({ sub: 'sub-customer', realm_access: { roles: ['technician'] } });
+  });
+});
+
+describe('createBooking is for lab staff only', () => {
+  it('refuses a client — equipment users book through a job — before anything is written', async () => {
+    const { resolver, seen } = harness();
+    await expect(resolver.createBooking(input(), client)).rejects.toThrow(/booked through a job/);
+    await expect(resolver.createBooking(input(), { sub: 'x', email: 'x@x.org', realm_access: { roles: [] } } as unknown as User)).rejects.toThrow(/booked through a job/);
+    expect(seen).toEqual([]);
   });
 });

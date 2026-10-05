@@ -11,6 +11,7 @@ import { JobModule } from '../job/job.module';
 import { SOWModule } from '../sow/sow.module';
 import { WorkflowModule } from '../workflow/workflow.module';
 import { DampLabServicesModule } from '../services/damplab-services.module';
+import { NotificationModule } from '../notification/notification.module';
 
 /**
  * Job / SOW / Workflow are imported through `forwardRef` because they already
@@ -26,7 +27,10 @@ import { DampLabServicesModule } from '../services/damplab-services.module';
     forwardRef(() => SOWModule),
     forwardRef(() => WorkflowModule),
     DampLabServicesModule,
-    KeycloakModule
+    KeycloakModule,
+    // Booking requests and the lab's answers notify people. NotificationModule
+    // reaches JobModule, which this module already forward-references.
+    forwardRef(() => NotificationModule)
   ],
   providers: [BookingService, BookingResolver, JobEquipmentBookingService],
   exports: [BookingService, JobEquipmentBookingService]

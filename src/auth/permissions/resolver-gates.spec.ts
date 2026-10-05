@@ -189,6 +189,8 @@ const GATES: Row[] = [
   [BookingResolver, 'createJobEquipmentBooking', Permission.InventoryBook],
   [BookingResolver, 'updateJobEquipmentBooking', Permission.InventoryBook],
   [BookingResolver, 'setJobBookingBlock', Permission.BillingView],
+  [BookingResolver, 'approveBooking', Permission.InventoryWrite],
+  [BookingResolver, 'declineBooking', Permission.InventoryWrite],
 
   // /edit
   [DampLabServicesResolver, 'createService', Permission.CatalogEditorWrite],

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { formatEmailForLog, notificationLogOnly } from './notification-log';
 
 export interface SendEmailInput {
   to: string;
@@ -17,6 +18,7 @@ export class NotificationEmailService {
   private readonly fromAddress: string;
   private readonly enabled: boolean;
   private readonly appBaseUrl: string;
+  private readonly logOnly: boolean;
   private readonly timeoutMs = 10_000;
 
   constructor(private readonly configService: ConfigService) {
@@ -25,10 +27,18 @@ export class NotificationEmailService {
     this.fromAddress = this.configService.get<string>('notifications.mailgunFromAddress') ?? 'DampLab <noreply@mail.sail.codes>';
     this.enabled = this.configService.get<string>('notifications.emailEnabled') === 'true';
     this.appBaseUrl = this.configService.get<string>('notifications.appBaseUrl') ?? 'https://damplab-canvas.sail.codes';
+    this.logOnly = notificationLogOnly(this.configService);
+    if (this.logOnly) this.logger.warn('NOTIFICATION_LOG_ONLY is on: emails are written to this log and never sent.');
   }
 
   /** Fire-and-forget: caller should not await this. */
   send(input: SendEmailInput): void {
+    // Ahead of the enabled check: locally email is off, and the point is to see
+    // what would have gone out.
+    if (this.logOnly) {
+      this.logger.log(formatEmailForLog({ to: input.to, subject: input.subject, message: input.message, linkUrl: this.linkUrl(input.link) }));
+      return;
+    }
     if (!this.enabled) return;
     if (!this.apiKey) {
       this.logger.warn('Mailgun API key not configured; skipping email');
@@ -71,8 +81,12 @@ export class NotificationEmailService {
     }
   }
 
+  private linkUrl(link?: string): string {
+    return link ? `${this.appBaseUrl}${link}` : this.appBaseUrl;
+  }
+
   private buildHtml(input: SendEmailInput): string {
-    const linkUrl = input.link ? `${this.appBaseUrl}${input.link}` : this.appBaseUrl;
+    const linkUrl = this.linkUrl(input.link);
     return `
 <!DOCTYPE html>
 <html>

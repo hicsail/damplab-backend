@@ -11,6 +11,12 @@ export enum BookingKind {
 registerEnumType(BookingKind, { name: 'BookingKind' });
 
 export enum BookingStatus {
+  /**
+   * Requested by a client and holding its slot, but not yet approved by the lab.
+   * Approval makes it RESERVED; a decline cancels it (history says DECLINED).
+   * Never billable: usage cannot be confirmed until it is approved.
+   */
+  TENTATIVE = 'TENTATIVE',
   RESERVED = 'RESERVED',
   IN_USE = 'IN_USE',
   COMPLETED = 'COMPLETED',
@@ -37,7 +43,7 @@ export class BookingHistoryEntry {
   at: Date;
 
   @Prop({ required: true })
-  @Field({ description: 'CREATED, UPDATED or CANCELLED.' })
+  @Field({ description: 'CREATED, UPDATED, APPROVED, DECLINED, USAGE_CONFIRMED or CANCELLED.' })
   action: string;
 
   @Prop({ required: false })
@@ -49,7 +55,7 @@ export class BookingHistoryEntry {
   byName?: string;
 
   @Prop({ required: false })
-  @Field({ nullable: true, description: 'Why the booking was changed. Required on UPDATED.' })
+  @Field({ nullable: true, description: 'Why the booking was changed or declined. Required on UPDATED and DECLINED.' })
   reason?: string;
 
   @Prop({ required: false })
@@ -63,6 +69,14 @@ export class BookingHistoryEntry {
   @Prop({ required: false })
   @Field({ nullable: true })
   previousNotes?: string;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'On USAGE_CONFIRMED for a timed booking: the hours staff recorded.' })
+  actualHours?: number;
+
+  @Prop({ required: false })
+  @Field(() => Float, { nullable: true, description: 'On USAGE_CONFIRMED for a consumable: the quantity staff recorded.' })
+  actualQuantity?: number;
 }
 export const BookingHistoryEntrySchema = SchemaFactory.createForClass(BookingHistoryEntry);
 

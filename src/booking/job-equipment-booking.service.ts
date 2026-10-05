@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { JobService } from '../job/job.service';
 import { SOWService } from '../sow/sow.service';
+import { SowVersionService } from '../sow/sow-version.service';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { DampLabServices } from '../services/damplab-services.services';
@@ -15,6 +16,7 @@ import { JobBookingItem, JobEquipmentBookingView } from './dtos/job-equipment-bo
 import { Booking } from './booking.model';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
 import { isJobMember } from '../job/job-membership';
+import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 
 /** One equipment-use operation of a job, with everything the panel and the mutations need. */
 export interface LoadedOperation {
@@ -59,8 +61,95 @@ export class JobEquipmentBookingService {
     private readonly workflowNodeService: WorkflowNodeService,
     private readonly services: DampLabServices,
     private readonly inventory: InventoryService,
-    private readonly bookings: BookingService
+    private readonly bookings: BookingService,
+    @Inject(forwardRef(() => NotificationDispatchService)) private readonly notifications?: NotificationDispatchService,
+    @Inject(forwardRef(() => SowVersionService)) private readonly sowVersions?: SowVersionService
   ) {}
+
+  /**
+   * The Keycloak subs of the job's Project Manager and Project Lead.
+   *
+   * A versioned SOW keeps them on its versions (`inputs.projectManagerId`), and
+   * its document's `resources` is only the creation-time placeholder — so the
+   * newest version wins, then the one in force, and the document last, for a SOW
+   * written before versioning.
+   */
+  async projectStaffSubs(sow: any): Promise<string[]> {
+    if (!sow) return [];
+    const sowId = String(sow._id ?? sow.id ?? '');
+    const version: any = sowId && this.sowVersions ? (await this.sowVersions.getCurrentVersion(sowId).catch(() => null)) ?? (await this.sowVersions.getActiveVersion(sowId).catch(() => null)) : null;
+    const from = (o: any): string[] => [o?.projectManagerId, o?.projectLeadId].filter((s): s is string => typeof s === 'string' && !!s.trim());
+    const fromVersion = from(version?.inputs);
+    return [...new Set(fromVersion.length ? fromVersion : from(sow.resources))];
+  }
+
+  /**
+   * Whether this caller's booking waits on the lab. Lab staff (`jobs:view-all`)
+   * book confirmed; a client's booking, or a client's change to one, holds the
+   * slot as TENTATIVE until an administrator approves it.
+   */
+  static requiresApproval(user?: User): boolean {
+    return !hasPermission(user, Permission.JobsViewAll);
+  }
+
+  private actorIdentity(user?: User): { sub?: string; email?: string; name?: string } {
+    return { sub: user?.sub, email: user?.email, name: user?.preferred_username || user?.email };
+  }
+
+  /** "Bioanalyzer · Jan 6, 10:00 AM – 12:00 PM", in the lab's time zone (emails have no browser to localise them). */
+  private describe(booking: any): string {
+    const at = (d: unknown): string => new Date(d as string).toLocaleString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const when = booking?.startTime && booking?.endTime ? ` · ${at(booking.startTime)} – ${at(booking.endTime)}` : '';
+    return `${booking?.inventoryName ?? 'Equipment'}${when}`;
+  }
+
+  /**
+   * Tell the job's Project Manager and Project Lead (from its SOW) that a booking
+   * waits on them. With neither named, every administrator hears instead.
+   */
+  private async notifyRequested(booking: any, job: any, user: User, changed: boolean): Promise<void> {
+    if (!this.notifications) return;
+    const sow: any = await this.sowService.findByJobId(String(job._id)).catch(() => null);
+    const staffSubs = await this.projectStaffSubs(sow);
+    const who = user?.preferred_username || user?.email || 'A client';
+    this.notifications.dispatch({
+      eventType: 'EQUIPMENT_BOOKING_REQUESTED',
+      title: changed ? `Booking change awaiting approval: ${job.name ?? 'job'}` : `Booking awaiting approval: ${job.name ?? 'job'}`,
+      message: `${who} ${changed ? 'moved a booking' : 'booked'} ${this.describe(booking)}. The time is held until it is approved or declined.`,
+      jobId: String(job._id),
+      actorSub: user?.sub,
+      actorDisplayName: who,
+      staffSubs
+    });
+  }
+
+  /** Approve a tentative booking: it becomes RESERVED, and the client is told. Administrators only (resolver gate). */
+  async approve(id: string, user: User): Promise<Booking> {
+    const approved: any = await this.bookings.approve(id, this.actorIdentity(user));
+    this.notifications?.dispatch({
+      eventType: 'EQUIPMENT_BOOKING_APPROVED',
+      title: 'Equipment booking approved',
+      message: `Your booking of ${this.describe(approved)} is approved.`,
+      jobId: approved.jobId ? String(approved.jobId) : undefined,
+      actorSub: user?.sub,
+      actorDisplayName: this.actorIdentity(user).name
+    });
+    return approved;
+  }
+
+  /** Decline a tentative booking: the slot is freed, and the client is told why. Administrators only (resolver gate). */
+  async decline(id: string, reason: string, user: User): Promise<Booking> {
+    const declined: any = await this.bookings.decline(id, reason, this.actorIdentity(user));
+    this.notifications?.dispatch({
+      eventType: 'EQUIPMENT_BOOKING_DECLINED',
+      title: 'Equipment booking declined',
+      message: `Your booking of ${this.describe(declined)} was declined: ${reason.trim()}`,
+      jobId: declined.jobId ? String(declined.jobId) : undefined,
+      actorSub: user?.sub,
+      actorDisplayName: this.actorIdentity(user).name
+    });
+    return declined;
+  }
 
   /** The permission-bearing half of the caller, for the pure verdict function. */
   actorFor(user?: User): AccessActor {
@@ -174,7 +263,8 @@ export class JobEquipmentBookingService {
     const full = await this.inventory.find(item.id);
     if (!full) throw new NotFoundException('Inventory item not found.');
 
-    return this.bookings.createForJob({
+    const requiresApproval = JobEquipmentBookingService.requiresApproval(user);
+    const created = await this.bookings.createForJob({
       job,
       nodeId: operation.nodeId,
       nodeLabel: operation.label,
@@ -183,20 +273,22 @@ export class JobEquipmentBookingService {
       startTime: input.startTime,
       endTime: input.endTime,
       notes: input.notes,
-      actor: { sub: user?.sub, email: user?.email, name: user?.preferred_username || user?.email }
+      actor: this.actorIdentity(user),
+      requiresApproval
     });
+    if (requiresApproval) await this.notifyRequested(created, job, user, false);
+    return created;
   }
 
   async update(id: string, input: UpdateJobEquipmentBookingInput, user: User): Promise<Booking> {
     const existing: any = await this.bookings.findById(id);
     if (!existing) throw new NotFoundException('Booking not found.');
     if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
-    await this.authorize(String(existing.jobId), String(existing.nodeId), user);
-    return this.bookings.updateForJob(
-      id,
-      { startTime: input.startTime, endTime: input.endTime, notes: input.notes, reason: input.reason },
-      { sub: user?.sub, email: user?.email, name: user?.preferred_username || user?.email }
-    );
+    const { job } = await this.authorize(String(existing.jobId), String(existing.nodeId), user);
+    const requiresApproval = JobEquipmentBookingService.requiresApproval(user);
+    const updated = await this.bookings.updateForJob(id, { startTime: input.startTime, endTime: input.endTime, notes: input.notes, reason: input.reason }, this.actorIdentity(user), requiresApproval);
+    if (requiresApproval) await this.notifyRequested(updated, job, user, true);
+    return updated;
   }
 
   async view(jobId: string, user: User): Promise<JobEquipmentBookingView> {
@@ -225,7 +317,9 @@ export class JobEquipmentBookingService {
         canBook: verdict.bookableNodeIds.includes(op.nodeId),
         window: { start: op.window.start, end: op.window.end, openEnd: op.window.openEnd },
         hoursPerWeek: op.hoursPerWeek,
-        items: op.items
+        items: op.items,
+        // Deprecated field kept so an older UI's query still validates; always empty.
+        bookers: []
       })),
       bookings: await this.bookings.findByJob(String(job._id))
     };
