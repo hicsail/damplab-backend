@@ -9,6 +9,14 @@ export default (): any => ({
     /** The URI to connect to the database */
     uri: process.env.MONGO_URI || 'mongodb://localhost:27017/damplab'
   },
+  graphql: {
+    /**
+     * Include stack traces in GraphQL error responses. Local development only:
+     * off unless GRAPHQL_STACKTRACES=true, because the deployed compose files do
+     * not pass it through and a trace exposes server internals to any caller.
+     */
+    includeStacktraces: process.env.GRAPHQL_STACKTRACES === 'true'
+  },
   auth: {
     /* The JWKs endpoint at which to fetch keys for verifying JWTs */
     jwksEndpoint: process.env.JWKS_ENDPOINT,
