@@ -462,13 +462,21 @@ export class JobService {
   /**
    * B29: a staff-submitted job for a client with no account yet has no sub.
    * The first time that client (primary email match) opens or edits it, record
-   * their sub. Conditional in Mongo, so it never overwrites and a race is a no-op.
+   * their sub — and their username, when the job has none: staff name a client
+   * by email alone, so this is the first time the job learns who they are.
+   * Conditional in Mongo, so it never overwrites and a race is a no-op.
    */
-  async claimSubIfPrimary(job: Job, user: { sub?: string; email?: string }): Promise<Job> {
+  async claimSubIfPrimary(job: Job, user: { sub?: string; email?: string; preferred_username?: string }): Promise<Job> {
     if (job.sub || !user.sub) return job;
     const email = normalizeClientEmail(user.email);
     if (!email || email !== jobPrimaryEmail(job)) return job;
-    const claimed = await this.jobModel.findOneAndUpdate({ _id: (job as any)._id, $or: [{ sub: { $exists: false } }, { sub: null }, { sub: '' }] }, { $set: { sub: user.sub } }, { new: true }).exec();
+    const claimed = await this.jobModel
+      .findOneAndUpdate(
+        { _id: (job as any)._id, $or: [{ sub: { $exists: false } }, { sub: null }, { sub: '' }] },
+        { $set: { sub: user.sub, ...(!job.username && user.preferred_username ? { username: user.preferred_username } : {}) } },
+        { new: true }
+      )
+      .exec();
     return claimed ?? job;
   }
 

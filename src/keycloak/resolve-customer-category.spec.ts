@@ -1,4 +1,4 @@
-import { KeycloakService } from './keycloak.service';
+import { KeycloakService, accountDisplayName } from './keycloak.service';
 import { CustomerCategory } from '../job/job.model';
 
 /**
@@ -91,12 +91,12 @@ describe('resolveClientAccountByEmail', () => {
 
   it("returns the named client's sub, username and pricing group — never the submitter's", async () => {
     const { instance } = byEmail({ groups: ACADEMIC_GROUP });
-    expect(await instance.resolveClientAccountByEmail('client@bu.edu')).toEqual({ sub: 'kc-1', username: 'cara', customerCategory: CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC });
+    expect(await instance.resolveClientAccountByEmail('client@bu.edu')).toEqual({ sub: 'kc-1', username: 'cara', name: 'cara', customerCategory: CustomerCategory.EXTERNAL_CUSTOMER_ACADEMIC });
   });
 
   it('keeps the account ids when the client has no pricing group', async () => {
     const { instance, warnings } = byEmail({ groups: [] });
-    expect(await instance.resolveClientAccountByEmail('client@bu.edu')).toEqual({ sub: 'kc-1', username: 'cara', customerCategory: undefined });
+    expect(await instance.resolveClientAccountByEmail('client@bu.edu')).toEqual({ sub: 'kc-1', username: 'cara', name: 'cara', customerCategory: undefined });
     expect(warnings.length).toBeGreaterThan(0);
   });
 
@@ -143,5 +143,31 @@ describe('findUserByExactEmail', () => {
     instance.realm = 'damplab';
     instance.fetchWithToken = async (): Promise<any> => ({ ok: false, status: 500, text: async () => 'boom' });
     await expect(instance.findUserByExactEmail('client@bu.edu')).rejects.toThrow(/500/);
+  });
+});
+
+describe('the name on a client account', () => {
+  const service = (user: unknown, configured = true): any => {
+    const instance = Object.create(KeycloakService.prototype) as any;
+    instance.logger = { warn: (): void => undefined };
+    instance.isConfigured = (): boolean => configured;
+    instance.findUserByExactEmail = async (): Promise<unknown> => {
+      if (user === 'throws') throw new Error('keycloak unreachable');
+      return user;
+    };
+    return instance;
+  };
+
+  it('is first and last name where the account has them, else the username', () => {
+    expect(accountDisplayName({ username: 'cara', firstName: 'Cara', lastName: 'Rivera' })).toBe('Cara Rivera');
+    expect(accountDisplayName({ username: 'cara', firstName: ' ', lastName: '' })).toBe('cara');
+    expect(accountDisplayName(null)).toBeUndefined();
+  });
+
+  it('is null while there is no account, when Keycloak is unreachable, and when it is not configured', async () => {
+    await expect(service({ id: 'kc-1', username: 'cara', firstName: 'Cara', lastName: 'Rivera' }).resolveAccountNameByEmail('client@bu.edu')).resolves.toBe('Cara Rivera');
+    await expect(service(null).resolveAccountNameByEmail('client@bu.edu')).resolves.toBeNull();
+    await expect(service('throws').resolveAccountNameByEmail('client@bu.edu')).resolves.toBeNull();
+    await expect(service({ id: 'kc-1', username: 'cara' }, false).resolveAccountNameByEmail('client@bu.edu')).resolves.toBeNull();
   });
 });

@@ -120,6 +120,13 @@ describe('JobService.claimSubIfPrimary (B29)', () => {
     expect(updates[0].filter).toEqual({ _id: 'job-1', $or: [{ sub: { $exists: false } }, { sub: null }, { sub: '' }] });
   });
 
+  it('records their username too when the job has none, and leaves a stored one alone', async () => {
+    const { service, updates } = build();
+    await service.claimSubIfPrimary(unclaimed, { sub: 'client-kc', email: 'client@bu.edu', preferred_username: 'cara' });
+    await service.claimSubIfPrimary({ ...unclaimed, username: 'kept' }, { sub: 'client-kc', email: 'client@bu.edu', preferred_username: 'cara' });
+    expect(updates.map((u) => u.update.$set)).toEqual([{ sub: 'client-kc', username: 'cara' }, { sub: 'client-kc' }]);
+  });
+
   it('never overwrites a set sub, and ignores members and strangers', async () => {
     const { service, updates } = build();
     await service.claimSubIfPrimary({ ...unclaimed, sub: 'someone' }, { sub: 'client-kc', email: 'client@bu.edu' });
