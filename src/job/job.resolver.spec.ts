@@ -612,6 +612,18 @@ describe('JobResolver.createJob — clients, members and description', () => {
     expect(input.customerCategory).toBeUndefined();
   });
 
+  it('names a staff-submitted job from the client’s account, since staff give only the email', async () => {
+    const { resolver, create } = harness({ sub: 'client-kc', username: 'cara', name: 'Cara Rivera' });
+    await resolver.createJob({ name: 'J', workflows: [], clientEmail: 'client@bu.edu' } as any, admin);
+    expect(create.mock.calls[0][0].clientDisplayName).toBe('Cara Rivera');
+  });
+
+  it('leaves the name unset when the client has no account yet', async () => {
+    const { resolver, create } = harness({});
+    await resolver.createJob({ name: 'J', workflows: [], clientEmail: 'new@bu.edu' } as any, admin);
+    expect(create.mock.calls[0][0].clientDisplayName).toBeUndefined();
+  });
+
   it("lets any submitter add members; the submitter's own email is dropped (B10, B12)", async () => {
     const { resolver, create, byUser } = harness();
     await resolver.createJob({ name: 'J', workflows: [], memberEmails: [' Friend@X.org ', 'customer@example.org'], description: 'For lab 4' } as any, customer);
@@ -947,5 +959,49 @@ describe('JobResolver.reviewJob — owner notification (F4)', () => {
     );
     await expect(resolver.reviewJob({ operationId: 'op-2', jobId: 'job-1', decision: 'ACCEPT' } as any, { sub: 's', realm_access: { roles: [] } } as any)).rejects.toBeInstanceOf(BadRequestException);
     expect(dispatch).not.toHaveBeenCalled();
+  });
+});
+
+describe('Job.clientName — the name staff no longer type', () => {
+  const build = (name: string | null = 'Cara Rivera'): { resolver: JobResolver; lookup: jest.Mock } => {
+    const lookup = jest.fn(async () => name);
+    const blank = {} as any;
+    const resolver = new JobResolver(blank, blank, blank, blank, blank, blank, blank, blank, blank, { resolveAccountNameByEmail: lookup } as any, blank, blank, blank);
+    return { resolver, lookup };
+  };
+  const staffSubmitted: any = { _id: 'job-1', email: 'client@bu.edu', clientEmail: 'client@bu.edu', submittedBy: { sub: 'admin-1' } };
+
+  it('uses the stored name without asking Keycloak', async () => {
+    const { resolver, lookup } = build();
+    await expect(resolver.clientName({ ...staffSubmitted, clientDisplayName: 'Dr. Rivera', username: 'cara' })).resolves.toBe('Dr. Rivera');
+    await expect(resolver.clientName({ _id: 'job-2', email: 'cara@bu.edu', username: 'cara' } as any)).resolves.toBe('cara');
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it('keeps the account’s name after the client’s first visit stores their username', async () => {
+    // Pending → registered → opened. claimSubIfPrimary writes sub and username on
+    // that first visit; the header must still read "Cara Rivera", not "cara".
+    const claimed = { ...staffSubmitted, sub: 'client-kc', username: 'cara' };
+    await expect(build(null).resolver.clientName(staffSubmitted)).resolves.toBeNull();
+    await expect(build().resolver.clientName(staffSubmitted)).resolves.toBe('Cara Rivera');
+    await expect(build().resolver.clientName(claimed)).resolves.toBe('Cara Rivera');
+    // Keycloak unreachable: the stored username is better than "pending".
+    await expect(build(null).resolver.clientName(claimed)).resolves.toBe('cara');
+  });
+
+  it('looks the account up by the primary email once it exists', async () => {
+    const { resolver, lookup } = build();
+    await expect(resolver.clientName(staffSubmitted)).resolves.toBe('Cara Rivera');
+    expect(lookup).toHaveBeenCalledWith('client@bu.edu');
+  });
+
+  it('is null while the client has no account, which the job page shows as pending', async () => {
+    await expect(build(null).resolver.clientName(staffSubmitted)).resolves.toBeNull();
+  });
+
+  it('never looks anyone up for a job its own customer submitted', async () => {
+    const { resolver, lookup } = build();
+    await expect(resolver.clientName({ _id: 'job-2', email: 'x@bu.edu' } as any)).resolves.toBeNull();
+    expect(lookup).not.toHaveBeenCalled();
   });
 });

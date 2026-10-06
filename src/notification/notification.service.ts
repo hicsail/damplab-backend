@@ -1,4 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { NOTIFICATION_LOG_TAG, notificationLogOnly } from './notification-log';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { NotificationEntity, NotificationEntityDocument } from './notification.model';
@@ -28,10 +30,15 @@ export class NotificationService {
     @InjectModel(NotificationEntity.name)
     private readonly notificationModel: Model<NotificationEntityDocument>,
     @InjectModel(NotificationPreferencesEntity.name)
-    private readonly preferencesModel: Model<NotificationPreferencesDocument>
+    private readonly preferencesModel: Model<NotificationPreferencesDocument>,
+    @Optional() private readonly config?: ConfigService
   ) {}
 
+  /** Every in-app notification, whichever path stores it (the dispatcher, the bug-deploy notifier). */
   async create(input: CreateNotificationInput): Promise<NotificationEntity> {
+    if (notificationLogOnly(this.config)) {
+      this.logger.log(`${NOTIFICATION_LOG_TAG} in-app ${input.eventType} to=${input.recipientEmail ?? input.recipientSub} — "${input.title}"${input.link ? ` → ${input.link}` : ''}`);
+    }
     return this.notificationModel.create({
       recipientSub: input.recipientSub,
       recipientEmail: input.recipientEmail ?? undefined,

@@ -305,7 +305,9 @@ export class JobResolver {
       ...createJobInput,
       ...owner,
       memberEmails,
-      clientDisplayName: (createJobInput as any)?.clientDisplayName,
+      // Staff name a client by email alone; the name is the account's, when
+      // there is one. The customer checkout still sends the customer's own.
+      clientDisplayName: (createJobInput as any)?.clientDisplayName || clientAccount?.name,
       customerCategory
     });
     // v1 is the submission itself, so the first technician edit has something to
@@ -960,6 +962,29 @@ export class JobResolver {
   @ResolveField(() => String, { name: 'primaryClientEmail', description: 'The primary client: clientEmail when staff submitted on their behalf, otherwise the submitter email. Cannot be removed.' })
   primaryClientEmail(@Parent() job: Job): string {
     return jobPrimaryEmail(job) ?? '';
+  }
+
+  /**
+   * Staff submit for a client by email alone, so a job can exist before its
+   * client has an account and therefore before anyone knows their name. The
+   * stored display name wins; without one the account is looked up by the
+   * primary email on each read, so the name appears as soon as the account does.
+   *
+   * The username comes last, after the lookup: the client's first visit stores
+   * it (claimSubIfPrimary), and it must not replace "Nia Wells" with "nwells".
+   */
+  @ResolveField(() => String, {
+    name: 'clientName',
+    nullable: true,
+    description: 'The client’s name: the one stored on the job, else the name on the account with their email. Null while a client staff submitted for has no account yet.'
+  })
+  async clientName(@Parent() job: Job): Promise<string | null> {
+    const displayName = job.clientDisplayName?.trim();
+    if (displayName) return displayName;
+    const username = job.username?.trim() || null;
+    if (!job.submittedBy) return username;
+    const email = jobPrimaryEmail(job);
+    return (email ? await this.keycloakService.resolveAccountNameByEmail(email) : null) ?? username;
   }
 
   @ResolveField(() => [JobAttachment], {

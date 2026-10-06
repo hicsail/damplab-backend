@@ -58,3 +58,30 @@ describe('replaceSampleSheet — edit access (B18)', () => {
     await expect(resolver.replaceSampleSheet(input('x'), user('x', 'x@x.org'))).rejects.toBeInstanceOf(ForbiddenException);
   });
 });
+
+describe('parameterSetSampleSheetTemplateUrl', () => {
+  const template = { key: 'sample-sheet-templates/abc.xlsx', filename: 'blank.xlsx', contentType: 'application/xlsx' };
+  function setHarness(parameters: any[] | null): { resolver: SampleSheetResolver; createPresignedDownload: jest.Mock } {
+    const createPresignedDownload = jest.fn(async (key: string) => `https://s3/${key}`);
+    const services: any = { findParameterSet: jest.fn(async () => (parameters ? { _id: 'set-1', name: 'Samples', parameters } : null)) };
+    return { resolver: new SampleSheetResolver({ createPresignedDownload } as any, services, {} as any, {} as any), createPresignedDownload };
+  }
+
+  it('presigns the key stored on the set’s parameter', async () => {
+    const { resolver, createPresignedDownload } = setHarness([{ id: 'sheet', type: 'sampleSheet', templateFile: template }]);
+    await expect(resolver.parameterSetSampleSheetTemplateUrl('set-1', 'sheet')).resolves.toBe('https://s3/sample-sheet-templates/abc.xlsx');
+    expect(createPresignedDownload).toHaveBeenCalledWith(template.key, template.contentType);
+  });
+
+  it('is null when the set, the parameter or the template is missing', async () => {
+    await expect(setHarness(null).resolver.parameterSetSampleSheetTemplateUrl('gone', 'sheet')).resolves.toBeNull();
+    await expect(setHarness([{ id: 'other', type: 'string' }]).resolver.parameterSetSampleSheetTemplateUrl('set-1', 'sheet')).resolves.toBeNull();
+    await expect(setHarness([{ id: 'sheet', type: 'sampleSheet' }]).resolver.parameterSetSampleSheetTemplateUrl('set-1', 'sheet')).resolves.toBeNull();
+  });
+
+  it('never presigns a key outside the template prefix', async () => {
+    const { resolver, createPresignedDownload } = setHarness([{ id: 'sheet', type: 'sampleSheet', templateFile: { key: 'workflow-parameters/someone/private.xlsx' } }]);
+    await expect(resolver.parameterSetSampleSheetTemplateUrl('set-1', 'sheet')).resolves.toBeNull();
+    expect(createPresignedDownload).not.toHaveBeenCalled();
+  });
+});

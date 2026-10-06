@@ -125,6 +125,14 @@ describe('createForJob', () => {
     expect(created[0].clientName).toBe('jrivera');
   });
 
+  it('names a client with no account yet by their email, never by the job’s name', async () => {
+    const { service, created } = harness({ job: { _id: 'job1', name: 'Project X', email: 'new@bu.edu', clientEmail: 'new@bu.edu', institute: 'BU' } });
+
+    await service.createForJob('job1', [serviceInput()], 'tech@bu.edu');
+
+    expect(created[0].clientName).toBe('new@bu.edu');
+  });
+
   it('does not set a title, so the document keeps one source for the default', async () => {
     const { service, created } = harness();
 

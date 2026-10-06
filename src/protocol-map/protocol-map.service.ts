@@ -24,6 +24,11 @@ export class ProtocolMapService {
     return this.model.find({ protocolId }).exec();
   }
 
+  /** Every mapping, for the catalog download. */
+  async findAll(): Promise<ProtocolStepMapping[]> {
+    return this.model.find().sort({ protocolId: 1, stepNumber: 1 }).exec();
+  }
+
   async remove(protocolId: string, stepId: string): Promise<boolean> {
     const res = await this.model.deleteOne({ protocolId, stepId }).exec();
     return res.deletedCount > 0;

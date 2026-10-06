@@ -589,7 +589,9 @@ export class SOWService {
       // sowTitle is deliberately absent: the field calculator supplies the default
       // title, and a second copy of that string here is exactly the divergence the
       // document rewrite exists to prevent.
-      clientName: (job as any).clientDisplayName || job.username || job.name || 'Client',
+      // A client staff submitted for by email alone may have neither name yet;
+      // their address identifies them, the job's own name never did.
+      clientName: (job as any).clientDisplayName || job.username || (job as any).clientEmail || job.email || 'Client',
       // clientEmail before email, for the same reason clientDisplayName comes
       // before username above: on a staff-submitted job both `email` and
       // `username` describe the technician, not the customer the SOW is for.

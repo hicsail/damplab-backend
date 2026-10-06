@@ -13,7 +13,9 @@ export class CatalogExportResolver {
   // the `catalogExport` query method below (TS2300) and shadow it.
   constructor(private readonly exportService: CatalogExportService) {}
 
-  @Query(() => JSON, { description: 'The whole catalog as seed-shaped JSON (services, categories, bundles, parameterSets, inventory, sowSections, exportedAt). Download only.' })
+  @Query(() => JSON, {
+    description: 'The whole catalog as seed-shaped JSON (services, categories, bundles, parameterSets, inventory, sowSections, stations, protocolMaps, exportedAt). Download only.'
+  })
   @RequirePermission(Permission.CatalogEditorWrite)
   catalogExport(): Promise<unknown> {
     return this.exportService.export();

@@ -191,7 +191,19 @@ export class BookingService {
    * rate; and the notes default names the job. What it shares — the availability
    * pool and the cost arithmetic — it shares by calling the same collaborators.
    */
-  async createForJob(params: { job: any; nodeId: string; nodeLabel: string; service: any; item: any; startTime: Date; endTime: Date; notes?: string; actor: ActorIdentity }): Promise<Booking> {
+  async createForJob(params: {
+    job: any;
+    nodeId: string;
+    nodeLabel: string;
+    service: any;
+    item: any;
+    startTime: Date;
+    endTime: Date;
+    notes?: string;
+    actor: ActorIdentity;
+    /** A client's booking holds the slot as TENTATIVE until the lab approves it. */
+    requiresApproval?: boolean;
+  }): Promise<Booking> {
     const { job, item, service, actor } = params;
     const { start, end } = this.assertValidWindow(params.startTime, params.endTime);
     if (item.isDeleted) throw new BadRequestException('That inventory item is no longer available.');
@@ -210,7 +222,8 @@ export class BookingService {
       // The job's client. A staff-submitted job whose client has no account yet has no sub (B28); bill the booker's account rather than fail the required field.
       ownerSub: job.sub || actor.sub,
       ownerEmail: job.email,
-      ownerName: job.clientDisplayName || job.username,
+      // A client staff submitted for by email alone may have neither name yet.
+      ownerName: job.clientDisplayName || job.username || job.clientEmail || job.email,
       ownerInstitution: job.institute,
       customerCategory: job.customerCategory,
       createdBySub: actor.sub,
@@ -219,7 +232,7 @@ export class BookingService {
       nodeId: params.nodeId,
       serviceId: String(service._id ?? service.id),
       kind: BookingKind.TIMED,
-      status: BookingStatus.RESERVED,
+      status: params.requiresApproval ? BookingStatus.TENTATIVE : BookingStatus.RESERVED,
       billingStatus: BookingBillingStatus.UNBILLED,
       startTime: start,
       endTime: end,
@@ -242,7 +255,13 @@ export class BookingService {
    * reachable here — they keep their cancel-and-rebook flow until someone decides
    * otherwise.
    */
-  async updateForJob(id: string, changes: { startTime: Date; endTime: Date; notes?: string; reason?: string }, actor: ActorIdentity = {}): Promise<Booking> {
+  async updateForJob(
+    id: string,
+    changes: { startTime: Date; endTime: Date; notes?: string; reason?: string },
+    actor: ActorIdentity = {},
+    /** A client's change needs the lab's approval again: an approved booking goes back to TENTATIVE. */
+    requiresApproval = false
+  ): Promise<Booking> {
     const reason = changes.reason?.trim();
     if (!reason) throw new BadRequestException('A reason is required to change a booking.');
     const existing = await this.model.findById(id).exec();
@@ -250,6 +269,11 @@ export class BookingService {
     if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
     if (existing.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot change a cancelled booking.');
     if (existing.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException('Cannot change a booking that has already been billed.');
+    // Sending a confirmed booking back for approval would leave recorded usage on a
+    // booking that may be declined; the lab corrects recorded usage itself.
+    if (requiresApproval && existing.usageConfirmed) {
+      throw new BadRequestException('The lab has already recorded usage on this booking, so it can no longer be moved. Ask the lab to change it.');
+    }
 
     const { start, end } = this.assertValidWindow(changes.startTime, changes.endTime);
     await this.assertAvailable(String(existing.inventoryItem), start, end, id);
@@ -262,6 +286,7 @@ export class BookingService {
     };
     const notes = changes.notes?.trim();
     if (notes) set.notes = notes;
+    if (requiresApproval) set.status = BookingStatus.TENTATIVE;
 
     // The trail keeps what the slot WAS; the document keeps what it is now.
     const entry = {
@@ -277,11 +302,39 @@ export class BookingService {
     return (await this.model.findByIdAndUpdate(id, { $set: set, $push: { history: entry } }, { new: true }).exec())!;
   }
 
+  /**
+   * The lab's answer to a tentative booking. Conditional on the status in Mongo,
+   * not just checked first: the client may cancel or move it between the page
+   * loading and the click, and an approval must not resurrect either.
+   */
+  async approve(id: string, actor: ActorIdentity = {}): Promise<Booking> {
+    const entry = { at: new Date(), action: 'APPROVED', bySub: actor.sub, byName: actor.name };
+    const updated = await this.model.findOneAndUpdate({ _id: id, status: BookingStatus.TENTATIVE }, { $set: { status: BookingStatus.RESERVED }, $push: { history: entry } }, { new: true }).exec();
+    if (!updated) throw await this.notAwaitingApproval(id);
+    return updated;
+  }
+
+  /** Declining frees the slot: the booking is cancelled, and its history says why. */
+  async decline(id: string, reason: string | undefined, actor: ActorIdentity = {}): Promise<Booking> {
+    const why = reason?.trim();
+    if (!why) throw new BadRequestException('A reason is required to decline a booking; the client sees it.');
+    const entry = { at: new Date(), action: 'DECLINED', bySub: actor.sub, byName: actor.name, reason: why };
+    const updated = await this.model.findOneAndUpdate({ _id: id, status: BookingStatus.TENTATIVE }, { $set: { status: BookingStatus.CANCELLED }, $push: { history: entry } }, { new: true }).exec();
+    if (!updated) throw await this.notAwaitingApproval(id);
+    return updated;
+  }
+
+  private async notAwaitingApproval(id: string): Promise<Error> {
+    const current = await this.model.findById(id).exec();
+    return current ? new BadRequestException('That booking is no longer awaiting approval.') : new NotFoundException('Booking not found.');
+  }
+
   /** Confirm actual usage (seeded from the booking) and recompute cost. Required before billing. */
-  async confirmUsage(id: string, actualHours: number | null, actualQuantity: number | null, by?: string): Promise<Booking> {
+  async confirmUsage(id: string, actualHours: number | null, actualQuantity: number | null, by?: string, bySub?: string): Promise<Booking> {
     const b = await this.model.findById(id).exec();
     if (!b) throw new NotFoundException('Booking not found.');
     if (b.status === BookingStatus.CANCELLED) throw new BadRequestException('Cannot confirm usage on a cancelled booking.');
+    if (b.status === BookingStatus.TENTATIVE) throw new BadRequestException('Approve this booking before recording its usage.');
 
     let rate = b.rateSnapshot;
     const update: Record<string, unknown> = {
@@ -316,13 +369,29 @@ export class BookingService {
       update.cost = rate != null ? round2(qty * rate) : b.cost;
     }
 
-    return (await this.model.findByIdAndUpdate(id, { $set: update }, { new: true }).exec())!;
+    // The trail records each confirmation (and each correction) with what was recorded.
+    const entry = {
+      at: new Date(),
+      action: 'USAGE_CONFIRMED',
+      bySub,
+      byName: by,
+      ...(b.kind === BookingKind.TIMED ? { actualHours: update.actualHours as number } : { actualQuantity: update.actualQuantity as number })
+    };
+    return (await this.model.findByIdAndUpdate(id, { $set: update, $push: { history: entry } }, { new: true }).exec())!;
   }
 
-  async cancel(id: string, actor: ActorIdentity = {}): Promise<Booking> {
+  /**
+   * Cancel a booking. Not once it has ended — for anyone, staff included: time
+   * that has been and gone is not cancelled, it is confirmed at what was actually
+   * used (zero hours if it did not happen), which is what billing reads.
+   */
+  async cancel(id: string, actor: ActorIdentity = {}, now: Date = new Date()): Promise<Booking> {
     const b = await this.model.findById(id).exec();
     if (!b) throw new NotFoundException('Booking not found.');
     if (b.billingStatus === BookingBillingStatus.BILLED) throw new BadRequestException('Cannot cancel a booking that has already been billed.');
+    if (b.kind === BookingKind.TIMED && b.endTime && new Date(b.endTime).getTime() <= now.getTime()) {
+      throw new BadRequestException('This booking has already ended, so it can no longer be cancelled. The lab records the hours actually used — zero if it did not happen.');
+    }
     const entry = { at: new Date(), action: 'CANCELLED', bySub: actor.sub, byName: actor.name };
     return (await this.model.findByIdAndUpdate(id, { $set: { status: BookingStatus.CANCELLED }, $push: { history: entry } }, { new: true }).exec())!;
   }

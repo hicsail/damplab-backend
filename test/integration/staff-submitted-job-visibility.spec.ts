@@ -296,17 +296,25 @@ describe('jobs staff submitted for a client', () => {
     // behalf" from this field, so it has to be selectable on the customer's read
     // and the staff one alike.
     const jobId = await staffSubmitsFor('Client@BU.Test');
+    const staffRead = `query ($id: ID!) { jobById(id: $id) { clientEmail clientDisplayName username email institute } }`;
+
+    // With no Keycloak in the harness the client has no account yet, so the job
+    // carries no username — and never the submitter's (B28).
+    const beforeVisit = await gql(ctx, 'staff', staffRead, { id: jobId });
+    expect(beforeVisit.jobById.username).toBeNull();
 
     const asClient = await gql(ctx, 'customer', `query ($id: ID!) { ownJobById(id: $id) { clientEmail clientDisplayName username email institute } }`, { id: jobId });
-    const asStaff = await gql(ctx, 'staff', `query ($id: ID!) { jobById(id: $id) { clientEmail clientDisplayName username email institute } }`, { id: jobId });
+    const asStaff = await gql(ctx, 'staff', staffRead, { id: jobId });
 
     expect(asClient.ownJobById.clientEmail).toBe('client@bu.test');
     expect(asStaff.jobById.clientEmail).toBe('client@bu.test');
     // The header names the client from these and credits the submitter from
-    // submittedBy. A staff-submitted job is the client's: its email is the client's
-    // and, with no Keycloak in the harness, its username is unset (B28).
+    // submittedBy. A staff-submitted job is the client's: its email is the client's,
+    // and the client's first visit records their own username alongside their sub
+    // (claimSubIfPrimary) — staff name a client by email alone, so this is the
+    // first time the job learns who they are.
     expect(asStaff.jobById.clientDisplayName).toBe('Cara Client');
-    expect(asStaff.jobById.username).toBeNull();
+    expect(asStaff.jobById.username).toBe('Cara Client');
     expect(asStaff.jobById.email).toBe('client@bu.test');
   });
 });

@@ -1,6 +1,12 @@
 export enum RecipientRole {
   JOB_OWNER = 'JOB_OWNER',
-  ALL_STAFF = 'ALL_STAFF'
+  ALL_STAFF = 'ALL_STAFF',
+  /**
+   * The staff the caller names in `DispatchInput.staffSubs` — for a booking, the
+   * job's Project Manager and Project Lead from its SOW. Falls back to ALL_STAFF
+   * when the caller names nobody, so a request is never unseen.
+   */
+  NAMED_STAFF = 'NAMED_STAFF'
 }
 
 export interface EventRecipientConfig {
@@ -69,6 +75,22 @@ export const EVENT_RECIPIENT_MAP: Record<string, EventRecipientConfig> = {
     excludeActor: true,
     emailWorthy: false
   },
+  // Equipment booking. A client's booking (or change to one) waits on the lab;
+  // the job's Project Manager and Project Lead hear about it, and the client hears
+  // the answer.
+  EQUIPMENT_BOOKING_REQUESTED: {
+    recipients: [RecipientRole.NAMED_STAFF],
+    excludeActor: true,
+    emailWorthy: true
+  },
+  EQUIPMENT_BOOKING_APPROVED: {
+    recipients: [RecipientRole.JOB_OWNER],
+    emailWorthy: true
+  },
+  EQUIPMENT_BOOKING_DECLINED: {
+    recipients: [RecipientRole.JOB_OWNER],
+    emailWorthy: true
+  },
   // Bug tracking. Recipient is resolved from the BugReport, not via roles.
   BUG_DEPLOYED_TO_STAGING: {
     recipients: [],
@@ -76,10 +98,19 @@ export const EVENT_RECIPIENT_MAP: Record<string, EventRecipientConfig> = {
   }
 };
 
-/** Event types that should generate a link to the job detail page. */
+/**
+ * The job page a notification opens.
+ *
+ * An event only staff receive links to the staff job page. The in-app bell
+ * rewrites a client link for staff, but an email has no bell: a Project Manager
+ * opening `/client_view/:id` for a job they are not on finds nothing, which is
+ * the one page an approval request must not dead-end on. An event that reaches a
+ * client links to the client page, which the bell rewrites for any staff
+ * recipient.
+ */
 export function notificationLink(eventType: string, jobId?: string): string | undefined {
   if (!jobId) return undefined;
-  // Staff-facing events link to the technician view; client-facing link to client view.
-  // The frontend router handles redirects based on the user's role.
-  return `/client_view/${jobId}`;
+  const recipients = EVENT_RECIPIENT_MAP[eventType]?.recipients ?? [];
+  const staffOnly = recipients.length > 0 && recipients.every((r) => r === RecipientRole.ALL_STAFF || r === RecipientRole.NAMED_STAFF);
+  return staffOnly ? `/technician_view/${jobId}` : `/client_view/${jobId}`;
 }

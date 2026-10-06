@@ -26,7 +26,7 @@ describe('AvailabilityService.findItemConflicts — which bookings hold a slot',
     const bookings = fakeModel();
     const service = new AvailabilityService(fakeModel() as any, bookings as any);
     await service.findItemConflicts({ itemIds: [itemId], start, end });
-    expect(bookings.calls[0].status.$in).toEqual(expect.arrayContaining(['RESERVED', 'IN_USE', 'COMPLETED']));
+    expect(bookings.calls[0].status.$in).toEqual(expect.arrayContaining(['TENTATIVE', 'RESERVED', 'IN_USE', 'COMPLETED']));
   });
 
   it('never counts a cancelled booking', async () => {

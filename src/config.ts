@@ -111,6 +111,8 @@ export default (): any => ({
     mailgunDomain: process.env.MAILGUN_DOMAIN || 'mail.sail.codes',
     mailgunFromAddress: process.env.MAILGUN_FROM_ADDRESS || 'DampLab <noreply@mail.sail.codes>',
     emailEnabled: process.env.NOTIFICATION_EMAIL_ENABLED || 'false',
+    /** Local testing: log every notification and send no email. See src/notification/notification-log.ts. */
+    logOnly: process.env.NOTIFICATION_LOG_ONLY || 'false',
     appBaseUrl: process.env.APP_BASE_URL || 'https://damplab-canvas.sail.codes'
   },
   /** Agents: backend proxies chat to n8n webhooks. One entry per agent. */

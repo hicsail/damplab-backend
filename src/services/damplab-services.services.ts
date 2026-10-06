@@ -192,6 +192,11 @@ export class DampLabServices {
     return ids.map((id) => byId.get(id)).filter((set): set is ParameterSetLike => Boolean(set)) as unknown as ParameterSet[];
   }
 
+  /** One set by id, for readers outside the parameter-sets module; null when it does not resolve. */
+  async findParameterSet(id: string): Promise<ParameterSet | null> {
+    return ((await this.loadSetsById([id])).get(String(id)) as unknown as ParameterSet | undefined) ?? null;
+  }
+
   /** Non-deleted operations referencing the set. */
   async findUsingParameterSet(setId: string): Promise<DampLabService[]> {
     if (!mongoose.isValidObjectId(setId)) return [];

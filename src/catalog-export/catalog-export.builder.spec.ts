@@ -36,12 +36,14 @@ const exported = buildCatalogExport({
   parameterSets: [{ _id: oid('p1'), name: 'Buffers', description: undefined, parameters: [{ id: 'buffer' }] }],
   inventory: [{ _id: oid('i1'), name: 'Thermocycler', isDeleted: false }],
   sowPresets: [{ _id: oid('t1'), sectionKey: 'scope', name: 'Default', text: 'Words', order: 10 }],
+  stations: [{ _id: oid('st1'), name: 'Bench 4', zone: 'A', __v: 0 }],
+  protocolMaps: [{ _id: oid('m1'), protocolId: 'n92ld46yxl5b', stepId: 'step-1', equipmentIds: [oid('i1')], requiresNoEquipment: false, paramTags: [{ parameterId: 'cycles' }] }],
   now: new Date('2026-09-29T12:00:00Z')
 });
 
 describe('buildCatalogExport (pin 34)', () => {
   it('has exactly the documented top-level keys', () => {
-    expect(Object.keys(exported).sort()).toEqual(['bundles', 'categories', 'exportedAt', 'inventory', 'parameterSets', 'services', 'sowSections']);
+    expect(Object.keys(exported).sort()).toEqual(['bundles', 'categories', 'exportedAt', 'inventory', 'parameterSets', 'protocolMaps', 'services', 'sowSections', 'stations']);
     expect(exported.exportedAt).toBe('2026-09-29T12:00:00.000Z');
   });
 
@@ -82,6 +84,35 @@ describe('buildCatalogExport (pin 34)', () => {
     });
     expect(out.services[0]).toMatchObject({ id: a.toHexString(), allowedConnections: [b.toHexString()] });
     expect(out.bundles[0].services).toEqual([a.toHexString(), b.toHexString()]);
+  });
+
+  it('exports what the rest points at: stations, and each protocol’s step-to-equipment map', () => {
+    expect(exported.stations).toEqual([{ id: 'st1', name: 'Bench 4', zone: 'A' }]);
+    expect(exported.protocolMaps).toEqual([{ id: 'm1', protocolId: 'n92ld46yxl5b', stepId: 'step-1', equipmentIds: ['i1'], requiresNoEquipment: false, paramTags: [{ parameterId: 'cycles' }] }]);
+  });
+
+  it('keeps a parameter whole — options, prices and a samples-spreadsheet template reference', () => {
+    const parameter = {
+      id: 'sheet',
+      name: 'Samples',
+      type: 'sampleSheet',
+      price: 4,
+      templateFile: { key: 'sample-sheet-templates/a.xlsx', filename: 'blank.xlsx' },
+      options: [{ id: 'o1', name: 'One', price: 2 }]
+    };
+    const out = buildCatalogExport({
+      services: [{ _id: oid('s9'), name: 'Prep', ownParameters: [parameter], protocolId: 'legacy-1' }],
+      categories: [],
+      bundles: [],
+      parameterSets: [],
+      inventory: [],
+      sowPresets: [],
+      now: new Date()
+    });
+    expect(out.services[0].parameters).toEqual([parameter]);
+    expect(out.services[0].protocolId).toBe('legacy-1');
+    expect(out.stations).toEqual([]);
+    expect(out.protocolMaps).toEqual([]);
   });
 
   it('exports sets, inventory and SOW text blocks', () => {

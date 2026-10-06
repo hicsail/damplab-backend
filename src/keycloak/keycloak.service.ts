@@ -34,7 +34,18 @@ export interface KeycloakUserCustomerManagementRow {
 export interface ClientAccount {
   sub?: string;
   username?: string;
+  /** What to call them: first and last name where the account has them, else the username. */
+  name?: string;
   customerCategory?: CustomerCategory;
+}
+
+/** "First Last" where the account carries a name, otherwise its username; undefined when it has neither. */
+export function accountDisplayName(user: { username?: string; firstName?: string; lastName?: string } | null | undefined): string | undefined {
+  const full = [user?.firstName, user?.lastName]
+    .map((part) => part?.trim())
+    .filter(Boolean)
+    .join(' ');
+  return full || user?.username?.trim() || undefined;
 }
 
 interface KeycloakGroup {
@@ -234,10 +245,25 @@ export class KeycloakService {
       }
       const customerCategory = deriveCategoryFromGroups(await this.getUserGroups(user.id));
       if (!customerCategory) this.logger.warn(`No pricing group resolved for client ${email}; pricing will fall back to the catalogue's fallback price.`);
-      return { sub: user.id, username: user.username, customerCategory };
+      return { sub: user.id, username: user.username, name: accountDisplayName(user), customerCategory };
     } catch (error) {
       this.logger.warn(`Could not resolve the Keycloak account for client ${email}`, error instanceof Error ? error.stack : error);
       return {};
+    }
+  }
+
+  /**
+   * The name on the account with this email, or null when there is no such
+   * account yet. Read each time a job page shows a client staff named only by
+   * email, so it stays quiet: no account is the expected answer, not a warning.
+   */
+  async resolveAccountNameByEmail(email: string): Promise<string | null> {
+    if (!this.isConfigured()) return null;
+    try {
+      return accountDisplayName(await this.findUserByExactEmail(email)) ?? null;
+    } catch (error) {
+      this.logger.warn(`Could not look up the Keycloak account name for ${email}`, error instanceof Error ? error.stack : error);
+      return null;
     }
   }
 

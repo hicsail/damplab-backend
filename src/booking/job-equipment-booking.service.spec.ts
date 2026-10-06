@@ -411,10 +411,188 @@ describe('BookingService.updateForJob history', () => {
     expect(updates[0].$set.cost).toBe(40);
   });
 
+  it('sends an approved booking back to tentative when a client moves it', async () => {
+    const { svc, updates } = buildService();
+    await svc.updateForJob('bk-1', { ...move, reason: 'Sample late' }, { sub: 'booker-sub' }, true);
+    expect(updates[0].$set.status).toBe('TENTATIVE');
+    await svc.updateForJob('bk-1', { ...move, reason: 'Moved by the lab' }, { sub: 'staff-sub' }, false);
+    expect(updates[1].$set.status).toBeUndefined();
+  });
+
+  it('refuses a client move once the lab has recorded usage', async () => {
+    const svc = new BookingService(
+      { findById: (): { exec: () => Promise<any> } => ({ exec: async () => ({ ...existing, usageConfirmed: true }) }) } as any,
+      {} as any,
+      { findItemConflicts: async () => [] } as any,
+      {} as any,
+      {} as any
+    );
+    await expect(svc.updateForJob('bk-1', { ...move, reason: 'x' }, {}, true)).rejects.toThrow(/already recorded usage/);
+  });
+
   it('records a cancellation', async () => {
     const { svc, updates } = buildService();
     await svc.cancel('bk-1', { sub: 'booker-sub', name: 'Booker' });
     expect(updates[0].$set.status).toBe('CANCELLED');
     expect(updates[0].$push.history).toMatchObject({ action: 'CANCELLED', bySub: 'booker-sub', byName: 'Booker' });
+  });
+});
+
+describe('client bookings wait on the lab (tentative)', () => {
+  // Where a versioned SOW really keeps them: on its versions. The document's
+  // `resources` is the creation-time placeholder (an early version of this
+  // feature read the document and so always fell back to every administrator).
+  const sow = { _id: 'sow-1', status: 'FINAL', resources: { projectManager: '', projectLead: '' } };
+  const versionInputs = { projectManagerId: 'pm-sub', projectLeadId: 'lead-sub' };
+  const buildWith = (
+    overrides: { sow?: any; bookings?: any; dispatch?: jest.Mock; current?: any; active?: any } = {}
+  ): { svc: JobEquipmentBookingService; createForJob: jest.Mock; updateForJob: jest.Mock; dispatch: jest.Mock } => {
+    const createForJob = jest.fn(async (p: any) => ({
+      _id: 'bk-new',
+      jobId: 'job-1',
+      inventoryName: 'Bioanalyzer',
+      startTime: p.startTime,
+      endTime: p.endTime,
+      status: p.requiresApproval ? 'TENTATIVE' : 'RESERVED'
+    }));
+    const updateForJob = jest.fn(async (_id: string, c: any, _a: any, requiresApproval: boolean) => ({
+      _id: 'bk-1',
+      jobId: 'job-1',
+      inventoryName: 'Bioanalyzer',
+      ...c,
+      status: requiresApproval ? 'TENTATIVE' : 'RESERVED'
+    }));
+    const dispatch = overrides.dispatch ?? jest.fn();
+    const bookings = overrides.bookings ?? { createForJob, updateForJob, findById: async () => ({ _id: 'bk-1', jobId: 'job-1', nodeId: 'node-a' }), findByJob: async () => [] };
+    const svc = new JobEquipmentBookingService(
+      { findById: async () => job } as any,
+      { findByJobId: async () => overrides.sow ?? sow } as any,
+      { findById: async () => ({ nodes: ['node-a', 'node-b'] }) } as any,
+      { getByIDs: async () => [nodeEquip, nodePlain] } as any,
+      { findOne: async (id: string) => (id === 'svc-1' ? equipmentService : plainService) } as any,
+      { findByIds: async () => items, find: async (id: string) => items.find((i) => i.id === id) } as any,
+      bookings as any,
+      { dispatch } as any,
+      {
+        getCurrentVersion: async (): Promise<any> => ('current' in overrides ? overrides.current : { inputs: versionInputs }),
+        getActiveVersion: async (): Promise<any> => overrides.active ?? null
+      } as any
+    );
+    return { svc, createForJob, updateForJob, dispatch };
+  };
+  const slot = { startTime: new Date('2026-01-06T15:00:00Z'), endTime: new Date('2026-01-06T17:00:00Z') };
+  const input = { jobId: 'job-1', nodeId: 'node-a', inventoryItemId: 'item-timed', ...slot } as any;
+
+  it('makes a client’s booking tentative and tells the job’s Project Manager and Project Lead', async () => {
+    const { svc, createForJob, dispatch } = buildWith();
+    await svc.create(input, bookerUser());
+    expect(createForJob.mock.calls[0][0].requiresApproval).toBe(true);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({ eventType: 'EQUIPMENT_BOOKING_REQUESTED', jobId: 'job-1', staffSubs: ['pm-sub', 'lead-sub'] }));
+    expect(dispatch.mock.calls[0][0].message).toContain('Bioanalyzer · Jan 6, 10:00 AM – Jan 6, 12:00 PM');
+  });
+
+  it('names nobody when the SOW names neither, so every administrator hears instead', async () => {
+    const { svc, dispatch } = buildWith({ current: { inputs: { projectManager: 'Name only, no account' } } });
+    await svc.create(input, bookerUser());
+    expect(dispatch.mock.calls[0][0].staffSubs).toEqual([]);
+  });
+
+  it('reads the PM and Lead from the newest version, then the one in force, then a pre-versioning document', async () => {
+    const { svc } = buildWith();
+    expect(await svc.projectStaffSubs(sow)).toEqual(['pm-sub', 'lead-sub']);
+    expect(await buildWith({ current: null, active: { inputs: { projectLeadId: 'lead-2' } } }).svc.projectStaffSubs(sow)).toEqual(['lead-2']);
+    expect(await buildWith({ current: null }).svc.projectStaffSubs({ _id: 'old', resources: { projectManagerId: 'pm-old', projectLeadId: 'pm-old' } })).toEqual(['pm-old']);
+    expect(await svc.projectStaffSubs(null)).toEqual([]);
+  });
+
+  it('sends a client’s change back for approval, and says it was a change', async () => {
+    const { svc, updateForJob, dispatch } = buildWith();
+    await svc.update('bk-1', { ...slot, reason: 'Sample late' } as any, bookerUser());
+    expect(updateForJob.mock.calls[0][3]).toBe(true);
+    expect(dispatch.mock.calls[0][0]).toMatchObject({ eventType: 'EQUIPMENT_BOOKING_REQUESTED' });
+    expect(dispatch.mock.calls[0][0].title).toMatch(/change/i);
+  });
+
+  it('lets lab staff book without approval', () => {
+    expect(JobEquipmentBookingService.requiresApproval(user({ realm_access: { roles: ['technician'] } }))).toBe(false);
+    expect(JobEquipmentBookingService.requiresApproval(user({ realm_access: { roles: ['damplab-staff'] } }))).toBe(false);
+    expect(JobEquipmentBookingService.requiresApproval(bookerUser())).toBe(true);
+  });
+
+  it('tells the client the answer either way, with the reason on a decline', async () => {
+    const approve = jest.fn(async () => ({ _id: 'bk-1', jobId: 'job-1', inventoryName: 'Bioanalyzer', status: 'RESERVED' }));
+    const decline = jest.fn(async () => ({ _id: 'bk-1', jobId: 'job-1', inventoryName: 'Bioanalyzer', status: 'CANCELLED' }));
+    const { svc, dispatch } = buildWith({ bookings: { approve, decline } });
+    const admin = user({ sub: 'admin-sub', realm_access: { roles: ['damplab-staff'] } });
+    await svc.approve('bk-1', admin);
+    await svc.decline('bk-1', 'Instrument down for service', admin);
+    expect(dispatch.mock.calls.map((c) => c[0].eventType)).toEqual(['EQUIPMENT_BOOKING_APPROVED', 'EQUIPMENT_BOOKING_DECLINED']);
+    expect(dispatch.mock.calls[1][0].message).toContain('Instrument down for service');
+  });
+});
+
+describe('BookingService approval', () => {
+  const build = (current: any, matches: boolean): { svc: BookingService; calls: any[] } => {
+    const calls: any[] = [];
+    const model: any = {
+      findOneAndUpdate: (filter: any, update: any): { exec: () => Promise<any> } => ({ exec: async () => (calls.push({ filter, update }), matches ? { ...current, ...update.$set } : null) }),
+      findById: () => ({ exec: async () => current })
+    };
+    return { svc: new BookingService(model, {} as any, {} as any, {} as any, {} as any), calls };
+  };
+  const tentative = { _id: 'bk-1', status: 'TENTATIVE' };
+
+  it('approves only a booking still awaiting approval, and records who', async () => {
+    const { svc, calls } = build(tentative, true);
+    expect((await svc.approve('bk-1', { sub: 'admin', name: 'Admin' })).status).toBe('RESERVED');
+    expect(calls[0].filter).toEqual({ _id: 'bk-1', status: 'TENTATIVE' });
+    expect(calls[0].update.$push.history).toMatchObject({ action: 'APPROVED', bySub: 'admin' });
+  });
+
+  it('declines into a cancellation that frees the slot, and needs a reason', async () => {
+    const { svc, calls } = build(tentative, true);
+    await expect(svc.decline('bk-1', '  ')).rejects.toThrow(/reason is required/);
+    expect((await svc.decline('bk-1', 'Instrument down', { sub: 'admin' })).status).toBe('CANCELLED');
+    expect(calls[0].update.$push.history).toMatchObject({ action: 'DECLINED', reason: 'Instrument down' });
+  });
+
+  it('refuses when the client cancelled or it was already answered in the meantime', async () => {
+    await expect(build({ _id: 'bk-1', status: 'CANCELLED' }, false).svc.approve('bk-1')).rejects.toThrow('no longer awaiting approval');
+    await expect(build(null, false).svc.decline('bk-1', 'x')).rejects.toThrow('Booking not found.');
+  });
+
+  it('will not record usage on a tentative booking', async () => {
+    await expect(build(tentative, true).svc.confirmUsage('bk-1', 2, null)).rejects.toThrow(/Approve this booking/);
+  });
+});
+
+describe('ended bookings and the usage trail', () => {
+  const ended = { _id: 'bk-9', kind: 'TIMED', status: 'RESERVED', billingStatus: 'UNBILLED', startTime: new Date('2026-01-06T10:00:00Z'), endTime: new Date('2026-01-06T12:00:00Z'), rateSnapshot: 40 };
+  const build = (doc: any): { svc: BookingService; updates: any[] } => {
+    const updates: any[] = [];
+    const model: any = {
+      findById: (): { exec: () => Promise<any> } => ({ exec: async () => doc }),
+      findByIdAndUpdate: (_id: string, update: any): { exec: () => Promise<any> } => ({ exec: async () => (updates.push(update), { ...doc, ...update.$set }) })
+    };
+    return { svc: new BookingService(model, {} as any, {} as any, {} as any, {} as any), updates };
+  };
+
+  it('refuses to cancel a booking that has ended, for anyone', async () => {
+    const { svc, updates } = build(ended);
+    await expect(svc.cancel('bk-9', { sub: 'admin' }, new Date('2026-01-06T12:00:00Z'))).rejects.toThrow(/already ended/);
+    expect(updates).toEqual([]);
+  });
+
+  it('still cancels one that has not ended — including one already running', async () => {
+    const { svc, updates } = build(ended);
+    await svc.cancel('bk-9', { sub: 'admin' }, new Date('2026-01-06T11:00:00Z'));
+    expect(updates[0].$set.status).toBe('CANCELLED');
+  });
+
+  it('records each usage confirmation in the history, with who and the hours', async () => {
+    const { svc, updates } = build(ended);
+    await svc.confirmUsage('bk-9', 1.5, null, 'Test Admin', 'admin-sub');
+    expect(updates[0].$push.history).toMatchObject({ action: 'USAGE_CONFIRMED', bySub: 'admin-sub', byName: 'Test Admin', actualHours: 1.5 });
+    expect(updates[0].$set.cost).toBe(60);
   });
 });
