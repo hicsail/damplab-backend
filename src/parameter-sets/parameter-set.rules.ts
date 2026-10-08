@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { parameterDefinitionError } from '../services/parameter-validation';
 import { PROVENANCE_KEYS } from '../services/effective-parameters';
 
 export function normalizeSetName(raw: unknown): string {
@@ -23,6 +24,8 @@ export function normalizeSetParameters(raw: unknown): any[] {
     seen.add(id);
     const copy: Record<string, unknown> = { ...(p as Record<string, unknown>), id };
     for (const key of DROPPED_KEYS) delete copy[key];
+    const error = parameterDefinitionError(copy);
+    if (error) throw new BadRequestException(error);
     return copy;
   });
 }

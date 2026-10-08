@@ -9,6 +9,7 @@ import { Pricing } from '../pricing/pricing.model';
 import { InventoryService } from '../inventory/inventory.service';
 import { equipmentUsePricingModeViolation, equipmentUseRuleViolation } from './equipment-use.validation';
 import { ParameterSet, ParameterSetDocument } from '../parameter-sets/parameter-set.model';
+import { parameterDefinitionError } from './parameter-validation';
 import { clashMessage, effectiveParameters, findParameterSetClashes, ParameterSetLike, setsByIdMap, stripSetDerivedParameters } from './effective-parameters';
 
 @Injectable()
@@ -230,12 +231,24 @@ export class DampLabServices {
     if (violation) throw new BadRequestException(violation);
   }
 
+  /** A parameter's validation must parse and its display must fit its type — refused here so no save path can store one that does not. */
+  private assertParameterDefinitionsValid(parameters: unknown): void {
+    if (!Array.isArray(parameters)) return;
+    for (const parameter of parameters) {
+      const error = parameterDefinitionError(parameter);
+      if (error) throw new BadRequestException(error);
+    }
+  }
+
   async update(service: DampLabService, changes: ServiceChange): Promise<DampLabService> {
     if (service.isDeleted === true) {
       throw new BadRequestException(`Cannot update soft-deleted service ${service._id}`);
     }
     const write: Record<string, unknown> = { ...(changes as any) };
-    if (Object.prototype.hasOwnProperty.call(write, 'parameters')) write.parameters = stripSetDerivedParameters(write.parameters);
+    if (Object.prototype.hasOwnProperty.call(write, 'parameters')) {
+      write.parameters = stripSetDerivedParameters(write.parameters);
+      this.assertParameterDefinitionsValid(write.parameters);
+    }
     if (Array.isArray(write.parameterSetIds)) await this.assertParameterSetsCompatible(write.parameterSetIds);
     const mergedEquipmentUse = (changes as any).equipmentUse ?? (service as any).equipmentUse;
     const mergedRequirements = (changes as any).inventoryRequirements ?? (service as any).inventoryRequirements;
@@ -265,6 +278,7 @@ export class DampLabServices {
     if (Array.isArray((service as any).parameterSetIds) && (service as any).parameterSetIds.length > 0) {
       await this.assertParameterSetsCompatible((service as any).parameterSetIds);
     }
+    this.assertParameterDefinitionsValid(stripSetDerivedParameters((service as any).parameters ?? []));
     // Ensure deliverables defaults to empty array if not provided
     const serviceData = {
       ...service,

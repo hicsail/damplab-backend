@@ -25,4 +25,15 @@ describe('normalizeSetParameters', () => {
   it('rejects a non-list', () => expect(() => normalizeSetParameters({})).toThrow('parameters must be a list.'));
   it('rejects a parameter without an id', () => expect(() => normalizeSetParameters([{ name: 'A' }])).toThrow('Parameter 1 has no id.'));
   it('rejects a duplicated id', () => expect(() => normalizeSetParameters([{ id: 'a' }, { id: 'a' }])).toThrow('Parameter id "a" appears twice in this set.'));
+  it('rejects an unparseable validation', () =>
+    expect(() => normalizeSetParameters([{ id: 'n', name: 'Cycles', type: 'number', validation: '>0 || <5' }])).toThrow('Parameter “Cycles”: “||” is not supported — join rules with &&.'));
+  it('rejects checkboxes on a dropdown that does not allow multiple values', () =>
+    expect(() => normalizeSetParameters([{ id: 'd', name: 'Type', type: 'dropdown', display: 'checkboxes' }])).toThrow('Parameter “Type”: “checkboxes” needs a dropdown that allows multiple values.'));
+  it('keeps a good validation and display', () => {
+    const parameters = [
+      { id: 'n', name: 'Cycles', type: 'number', validation: '>0' },
+      { id: 'd', name: 'Type', type: 'dropdown', allowMultipleValues: true, display: 'checkboxes' }
+    ];
+    expect(normalizeSetParameters(parameters)).toEqual(parameters);
+  });
 });
