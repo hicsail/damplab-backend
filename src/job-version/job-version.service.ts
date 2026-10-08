@@ -5,6 +5,7 @@ import { JobVersion, JobVersionAuthorRole, JobVersionDocument, JobVersionEdge, J
 import { jobVersionAuthorOrg } from './author-org';
 import { SaveJobWorkflowsInput, SaveWorkflowInput } from './job-version.dto';
 import { Job, JobDocument, JobState } from '../job/job.model';
+import { assertChangedAnswersValid } from '../job/parameter-answer-gate';
 import { Workflow, WorkflowDocument, WorkflowState } from '../workflow/models/workflow.model';
 import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../workflow/models/node.model';
 import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.model';
@@ -15,6 +16,7 @@ import { buildParameterSnapshot } from '../workflow/utils/parameter-snapshot.uti
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
 import { isSampleSheetParam, keyBelongsToUploader, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
 import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
+import { withoutHiddenAnswers, withStoredHiddenAnswers } from '../services/parameter-conditions';
 
 /** Fields on a live WorkflowNode that a save is allowed to write. Everything else — state, assigneeId, startedAt, completedSteps, usedInventory, inventory reservations — belongs to the lab and is never touched here. */
 type NodeContentPatch = {
@@ -40,6 +42,8 @@ interface PreparedNode {
   snapshot: JobVersionNode;
   /** Ids of this node's uploaded-file parameters (`file` and `sampleSheet`), whose stored keys are presigned on read. */
   fileParamIds: string[];
+  /** The catalogue's name and effective parameters for this node's operation. Read by the answer check; never written. */
+  catalogService: { name: unknown; parameters: unknown };
 }
 
 /**
@@ -80,6 +84,11 @@ function parametersDiffer(before: unknown, after: unknown): boolean {
   }
 
   return false;
+}
+
+/** Work already under way: the node has left QUEUED, or is holding inventory. */
+function workInFlight(live: Pick<LiveNode, 'state' | 'usedInventory'>): boolean {
+  return live.state !== WorkflowNodeState.QUEUED || (live.usedInventory ?? []).length > 0;
 }
 
 @Injectable()
@@ -539,7 +548,7 @@ export class JobVersionService {
   async saveWorkflows(
     input: SaveJobWorkflowsInput,
     author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string },
-    opts: { visibleToCustomer?: boolean; uploaderSub?: string; priorSnapshotsByClientId?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]> } = {}
+    opts: { visibleToCustomer?: boolean; uploaderSub?: string; checkChangedAnswers?: boolean; priorSnapshotsByClientId?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]> } = {}
   ): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
@@ -554,9 +563,15 @@ export class JobVersionService {
     // Prepared first, deliberately: it resolves each node against the catalogue
     // and normalizes formData, so the guard below compares like with like. It
     // only reads, so nothing is written if the guard then rejects.
-    const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined, this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId));
+    const prepared = await this.prepareWorkflows(
+      input.workflows,
+      job.customerCategory as CustomerCategory | undefined,
+      this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId),
+      this.inFlightAnswers(liveNodes)
+    );
     this.assertWorkInFlightUntouched(liveNodes, prepared);
     if (opts.uploaderSub !== undefined) this.assertSampleSheetKeysAllowed(liveNodes, prepared, opts.uploaderSub);
+    if (opts.checkChangedAnswers) this.assertChangedAnswersValid(liveNodes, prepared);
 
     // Which nodes existed before this save, across every tree. Node deletion is
     // decided once, globally, at the end — never per tree.
@@ -651,6 +666,19 @@ export class JobVersionService {
     return merged;
   }
 
+  /**
+   * The stored answers of every step that is in flight, by client-side id, with
+   * the service they were given for. `prepareWorkflows` carries a hidden
+   * parameter's stored answer forward from here.
+   */
+  private inFlightAnswers(liveNodes: Map<string, LiveNode>): Map<string, { serviceId: string; formData: unknown }> {
+    const held = new Map<string, { serviceId: string; formData: unknown }>();
+    for (const [clientId, live] of liveNodes) {
+      if (workInFlight(live)) held.set(clientId, { serviceId: String((live.service as any)?._id ?? live.service), formData: live.formData });
+    }
+    return held;
+  }
+
   /** Every live node on the job, keyed by client-side id. */
   private async loadLiveNodes(job: Job): Promise<Map<string, LiveNode>> {
     const byClientId = new Map<string, LiveNode>();
@@ -706,6 +734,26 @@ export class JobVersionService {
   }
 
   /**
+   * A customer's resubmission: a number the save changes must obey its
+   * parameter's validation, and a changed "Other" needs its text (design rules
+   * 26 and 29). Answers the save leaves as stored are not looked at, so nothing
+   * already submitted is re-validated.
+   *
+   * Opt-in: only `saveJobWorkflows` asks, and only for a customer author. A
+   * staff save, a version restore and a withdrawal never do.
+   */
+  private assertChangedAnswersValid(liveNodes: Map<string, LiveNode>, prepared: PreparedNode[][]): void {
+    assertChangedAnswersValid(
+      prepared.flat().map((node) => {
+        const live = liveNodes.get(node.clientId);
+        // A node whose operation was swapped has no stored answers of its own.
+        const sameService = !!live && String((live.service as any)?._id ?? live.service) === String(node.patch.service);
+        return { service: node.catalogService, before: sameService ? live.formData : undefined, after: node.patch.formData };
+      })
+    );
+  }
+
+  /**
    * Work already under way is not the editor's to change.
    *
    * A node that has left QUEUED, or is holding inventory, may not be deleted or
@@ -721,9 +769,8 @@ export class JobVersionService {
     }
 
     for (const [clientId, live] of liveNodes) {
+      if (!workInFlight(live)) continue;
       const isInFlight = live.state !== WorkflowNodeState.QUEUED;
-      const holdsInventory = (live.usedInventory ?? []).length > 0;
-      if (!isInFlight && !holdsInventory) continue;
 
       const reason = isInFlight ? `is ${WorkflowNodeState[live.state]}` : 'is holding inventory';
       const submitted = preparedById.get(clientId);
@@ -749,7 +796,8 @@ export class JobVersionService {
   private async prepareWorkflows(
     workflows: SaveWorkflowInput[],
     category: CustomerCategory | undefined,
-    priorByClientId: Map<string, ParameterSnapshotEntry[]> = new Map()
+    priorByClientId: Map<string, ParameterSnapshotEntry[]> = new Map(),
+    inFlightByClientId: ReadonlyMap<string, { serviceId: string; formData: unknown }> = new Map()
   ): Promise<PreparedNode[][]> {
     const serviceIds = [...new Set(workflows.flatMap((w) => w.nodes.map((n) => String(n.serviceId))))];
     const services = new Map<string, any>();
@@ -762,7 +810,17 @@ export class JobVersionService {
     return workflows.map((workflow) =>
       workflow.nodes.map((node) => {
         const service = services.get(String(node.serviceId));
-        const formData = normalizeFormDataToArray(node.formData, getMultiValueParamIds(service.parameters));
+        const multiValueParamIds = getMultiValueParamIds(service.parameters);
+        // An answer to a hidden parameter is dropped, not refused — whoever sent it.
+        let formData = withoutHiddenAnswers(service.parameters, normalizeFormDataToArray(node.formData, multiValueParamIds));
+        // Except on a step that is in flight: there the stored answer is carried
+        // forward unchanged whatever the client sent, so the guard that follows
+        // (assertWorkInFlightUntouched) never refuses a save because of it.
+        // Pricing and the snapshot ignore hidden answers on their own.
+        const held = inFlightByClientId.get(node.id);
+        if (held && held.serviceId === String(service._id)) {
+          formData = withStoredHiddenAnswers(service.parameters, formData, normalizeFormDataToArray(held.formData, multiValueParamIds));
+        }
         const price = calculateServiceCost(service, formData, undefined, category);
         // From the normalized formData that is persisted, so the card cannot disagree with the stored value.
         const parameterSnapshot = buildParameterSnapshot(service, formData, priorByClientId.get(node.id));
@@ -770,6 +828,7 @@ export class JobVersionService {
 
         return {
           clientId: node.id,
+          catalogService: { name: service.name, parameters: service.parameters },
           fileParamIds: (Array.isArray(service.parameters) ? service.parameters : [])
             .filter((p: any) => p && typeof p.id === 'string' && (p.type === 'file' || isSampleSheetParam(p)))
             .map((p: any) => p.id),

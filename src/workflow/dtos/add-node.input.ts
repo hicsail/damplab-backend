@@ -7,6 +7,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-d
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { REQUEST } from '@nestjs/core';
 import { deriveCustomerCategory } from '../../pricing/pricing-groups';
+import { withoutHiddenAnswers } from '../../services/parameter-conditions';
 
 // parameterSnapshot is server-written and an object type: exposing it on an input would both let clients forge it and fail schema generation.
 @InputType()
@@ -27,7 +28,9 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
       throw new BadRequestException(`DampLabService with ID ${value.serviceId} does not exist or is deleted`);
     }
     const multiValueParamIds = getMultiValueParamIds(service.parameters);
-    const formData = normalizeFormDataToArray(value.formData, multiValueParamIds);
+    // An answer to a hidden parameter is dropped here, before pricing and storing:
+    // the client is not trusted to have left it out.
+    const formData = withoutHiddenAnswers(service.parameters, normalizeFormDataToArray(value.formData, multiValueParamIds));
     // Prices from the **requesting user's** Keycloak identity, which is right at
     // checkout (the customer is the requester) and wrong whenever staff act on a
     // customer's job — a technician adding a node would stamp it at the staff tier.

@@ -63,7 +63,9 @@ export class UploadLogResolver {
     return this.uploadLogService.findById(id);
   }
 
-  @Mutation(() => UploadLog, { description: 'Record an upload log entry. Needs inventory:write for an inventory log, catalog-editor:write for an operations log.' })
+  @Mutation(() => UploadLog, {
+    description: 'Record an upload log entry. Needs inventory:write for an INVENTORY log, catalog-editor:write for an OPERATION, PARAMETER_SET, BUNDLE or SOW_SECTION log.'
+  })
   async createUploadLog(@Args('input', { type: () => CreateUploadLogInput }) input: CreateUploadLogInput, @CurrentUser() user: User): Promise<UploadLog> {
     const entityType = input.entityType ?? UploadEntityType.INVENTORY;
     assertPermission(user, uploadLogWritePermission(entityType));

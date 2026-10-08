@@ -179,7 +179,7 @@ interface Harness {
 }
 
 /** Minimal mongoose-shaped fakes over plain arrays. */
-function buildHarness(options: { nodes?: any[]; customerCategory?: string } = {}): Harness {
+function buildHarness(options: { nodes?: any[]; customerCategory?: string; services?: any[] } = {}): Harness {
   const nodes: any[] = options.nodes ?? [];
   const edges: any[] = [];
   const versions: any[] = [];
@@ -287,7 +287,7 @@ function buildHarness(options: { nodes?: any[]; customerCategory?: string } = {}
   };
 
   const dampLabServices: any = {
-    findOneActive: async (id: string) => (String(id) === SVC_A ? SERVICE_A : String(id) === SVC_B ? SERVICE_B : null)
+    findOneActive: async (id: string) => options.services?.find((s) => String(s._id) === String(id)) ?? (String(id) === SVC_A ? SERVICE_A : String(id) === SVC_B ? SERVICE_B : null)
   };
 
   const service = new JobVersionService(versionModel, jobModel, workflowModel, nodeModel, edgeModel, dampLabServices);
@@ -1259,5 +1259,183 @@ describe('saveWorkflows — samples-spreadsheet keys (B20)', () => {
 
   it('does not check keys when no uploader is named (restore and withdraw)', async () => {
     await expect(save(setup(), 'workflow-parameters/other/older.xlsx', {})).resolves.toBeDefined();
+  });
+});
+
+describe('saveWorkflows — a customer save checks the answers it changes (rule 26)', () => {
+  const CUSTOMER_AUTHOR = { role: JobVersionAuthorRole.CUSTOMER, sub: 'user-1', name: 'client@lab.org' };
+  const RULED = {
+    _id: SVC_A,
+    name: 'Gibson Assembly',
+    price: 100,
+    parameters: [
+      { id: 'vol', name: 'Volume', type: 'number', validation: '>0 && <=50' },
+      { id: 'cycles', name: 'Cycles', type: 'number', validation: 'integer' },
+      {
+        id: 'kind',
+        name: 'Kind',
+        type: 'dropdown',
+        options: [
+          { id: 'std', name: 'Standard' },
+          { id: 'oth', name: 'Other' }
+        ]
+      }
+    ]
+  };
+  const save = (harness: Harness, nodes: any[], opts?: any): Promise<any> =>
+    harness.service.saveWorkflows({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes, edges: [] }] } as any, CUSTOMER_AUTHOR, opts);
+  // Stored before the rules existed: 99 breaks `<=50`.
+  const stored = [
+    { id: 'vol', value: 99 },
+    { id: 'cycles', value: 3 }
+  ];
+
+  it('refuses a changed number that breaks its rule, and writes nothing', async () => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: stored })], services: [RULED] });
+    const changed = [
+      { id: 'vol', value: 99 },
+      { id: 'cycles', value: 2.5 }
+    ];
+    await expect(save(harness, [inputNode({ formData: changed })], { checkChangedAnswers: true })).rejects.toThrow('“Cycles” on “Gibson Assembly”: Must be a whole number');
+    expect(harness.nodes[0].formData).toEqual(stored);
+    expect(harness.versions).toHaveLength(0);
+  });
+
+  it('accepts a save that leaves a rule-breaking stored answer as it was', async () => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: stored })], services: [RULED] });
+    const changed = [
+      { id: 'vol', value: 99 },
+      { id: 'cycles', value: 4 }
+    ];
+    await save(harness, [inputNode({ formData: changed })], { checkChangedAnswers: true });
+    expect(harness.nodes[0].formData).toEqual(changed);
+    expect(harness.versions).toHaveLength(1);
+  });
+
+  it('refuses "Other" whose text the save blanked', async () => {
+    const before = [
+      { id: 'kind', value: 'oth' },
+      { id: 'kind__otherText', value: 'Custom' }
+    ];
+    const harness = buildHarness({ nodes: [liveNode({ formData: before })], services: [RULED] });
+    const after = [
+      { id: 'kind', value: 'oth' },
+      { id: 'kind__otherText', value: '' }
+    ];
+    await expect(save(harness, [inputNode({ formData: after })], { checkChangedAnswers: true })).rejects.toThrow('“Kind” on “Gibson Assembly”: Please specify “Other”.');
+  });
+
+  it('checks every answer on a node the save adds', async () => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: stored })], services: [RULED] });
+    const added = inputNode({ id: 'new', formData: [{ id: 'vol', value: 99 }] });
+    await expect(save(harness, [inputNode({ formData: stored }), added], { checkChangedAnswers: true })).rejects.toThrow('“Volume” on “Gibson Assembly”: Must be at most 50');
+  });
+
+  it('checks nothing unless asked — a staff save, a restore and a withdrawal pass no flag', async () => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: stored })], services: [RULED] });
+    await save(harness, [inputNode({ formData: [{ id: 'vol', value: 0 }] })]);
+    await save(harness, [inputNode({ formData: [{ id: 'vol', value: -1 }] })], { checkChangedAnswers: false });
+    expect(harness.nodes[0].formData).toEqual([{ id: 'vol', value: -1 }]);
+  });
+
+  it('restoring a version does not check its answers, even for a customer', async () => {
+    const harness = buildHarness({ nodes: [liveNode({ formData: [{ id: 'vol', value: 99 }] })], services: [RULED] });
+    await save(harness, [inputNode({ formData: [{ id: 'vol', value: 99 }] })]);
+    await save(harness, [inputNode({ formData: [{ id: 'vol', value: 10 }] })], { checkChangedAnswers: true });
+    await harness.service.restoreVersion(JOB_ID, harness.versions[0].versionNumber, CUSTOMER_AUTHOR, 'back');
+    expect(harness.nodes[0].formData).toEqual([{ id: 'vol', value: 99 }]);
+  });
+});
+
+// ------------------------------------------------- show-only-if (rules 17, 22, 23)
+
+describe('saveWorkflows — answers to hidden parameters', () => {
+  const SVC_C = '0000000000000000000000cc';
+  const CONDITIONAL = {
+    _id: SVC_C,
+    name: 'Extraction',
+    pricingMode: 'PARAMETER',
+    parameters: [
+      {
+        id: 'sample',
+        name: 'Sample Type',
+        type: 'dropdown',
+        options: [
+          { id: 'bact', name: 'Bacteria', price: 10 },
+          { id: 'yeast', name: 'Yeast', price: 20 }
+        ]
+      },
+      {
+        id: 'lysis',
+        name: 'Lysis',
+        type: 'dropdown',
+        showIf: { parameterId: 'sample', op: 'eq', optionIds: ['bact'] },
+        options: [
+          { id: 'enz', name: 'Enzymatic', price: 7 },
+          { id: 'oth', name: 'Other', price: 9 }
+        ]
+      }
+    ]
+  };
+  const stored = [
+    { id: 'sample', value: 'yeast' },
+    { id: 'lysis', value: 'oth' },
+    { id: 'lysis__otherText', value: 'Bead beating' }
+  ];
+  const live = (over: Partial<any> = {}): any => liveNode({ label: 'Extraction', service: SVC_C, formData: stored, ...over });
+  const sent = (formData: any[]): any => ({ jobId: JOB_ID, note: 'edited', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ label: 'Extraction', serviceId: SVC_C, formData })], edges: [] }] });
+
+  it('drops a hidden answer and its "Other" text before pricing, storing and snapshotting (rule 17)', async () => {
+    const { service, nodes, versions } = buildHarness({ nodes: [live()], services: [CONDITIONAL] });
+    await service.saveWorkflows(sent(stored), author);
+    expect(nodes[0].formData).toEqual([{ id: 'sample', value: 'yeast' }]);
+    expect(nodes[0].price).toBe(20);
+    expect(nodes[0].parameterSnapshot.map((e: any) => e.id)).toEqual(['sample']);
+    expect(versions[versions.length - 1].workflows[0].nodes[0].formData).toEqual([{ id: 'sample', value: 'yeast' }]);
+  });
+
+  it('keeps the answer while the parameter is shown', async () => {
+    const shown = [{ id: 'sample', value: 'bact' }, ...stored.slice(1)];
+    const { service, nodes } = buildHarness({ nodes: [live({ formData: shown })], services: [CONDITIONAL] });
+    await service.saveWorkflows(sent(shown), author);
+    expect(nodes[0].formData).toEqual(shown);
+    expect(nodes[0].price).toBe(10 + 9);
+  });
+
+  it('in flight: carries the stored hidden answer forward when the client leaves it out, and the save is not refused', async () => {
+    const { service, nodes } = buildHarness({ nodes: [live({ state: WorkflowNodeState.IN_PROGRESS })], services: [CONDITIONAL] });
+    await expect(service.saveWorkflows(sent([{ id: 'sample', value: 'yeast' }]), author)).resolves.toBeDefined();
+    expect(nodes[0].formData).toEqual(stored);
+    // Stored, but neither priced nor listed.
+    expect(nodes[0].price).toBe(20);
+    expect(nodes[0].parameterSnapshot.map((e: any) => e.id)).toEqual(['sample']);
+  });
+
+  it('in flight: carries the stored hidden answer forward whatever the client sent for it', async () => {
+    const { service, nodes } = buildHarness({ nodes: [live({ usedInventory: ['inv-1'] })], services: [CONDITIONAL] });
+    const tampered = [
+      { id: 'sample', value: 'yeast' },
+      { id: 'lysis', value: 'enz' }
+    ];
+    await expect(service.saveWorkflows(sent(tampered), author)).resolves.toBeDefined();
+    expect(nodes[0].formData).toEqual(stored);
+  });
+
+  it('in flight: a change to a shown answer is still refused', async () => {
+    const { service } = buildHarness({ nodes: [live({ state: WorkflowNodeState.IN_PROGRESS })], services: [CONDITIONAL] });
+    await expect(service.saveWorkflows(sent([{ id: 'sample', value: 'bact' }, ...stored.slice(1)]), author)).rejects.toThrow(/parameters changed/);
+  });
+
+  it('a version restore replays through the same path: the hidden answer is not restored (rule 23)', async () => {
+    const { service, nodes, versions } = buildHarness({ nodes: [live({ formData: [{ id: 'sample', value: 'yeast' }] })], services: [CONDITIONAL] });
+    versions.push({
+      jobId: JOB_ID,
+      versionNumber: 1000,
+      authorRole: JobVersionAuthorRole.CUSTOMER,
+      workflows: [{ workflowId: WF_ID, name: 'Workflow-1', nodes: [{ id: 'a', label: 'Extraction', serviceId: SVC_C, formData: stored, additionalInstructions: '' }], edges: [] }]
+    });
+    await service.restoreVersion(JOB_ID, 1000, author, 'Restored version 1.0');
+    expect(nodes[0].formData).toEqual([{ id: 'sample', value: 'yeast' }]);
+    expect(nodes[0].price).toBe(20);
   });
 });

@@ -85,3 +85,82 @@ describe('buildParameterSnapshot', () => {
     expect(buildParameterSnapshot(null, { vol: 5 })).toEqual([{ id: 'vol', name: 'vol', type: undefined, displayValue: '5' }]);
   });
 });
+
+describe('buildParameterSnapshot — "Other" (rule 28)', () => {
+  const withOther = {
+    parameters: [
+      {
+        id: 'sample_type',
+        name: 'Sample Type',
+        type: 'dropdown',
+        allowMultipleValues: true,
+        options: [
+          { id: 'bact', name: 'Bacteria' },
+          { id: 'oth', name: 'Other' }
+        ]
+      }
+    ]
+  };
+
+  it('reads "Other: <text>" and does not list the companion entry as its own parameter', () => {
+    const snapshot = buildParameterSnapshot(withOther, [
+      { id: 'sample_type', value: ['bact', 'oth'] },
+      { id: 'sample_type__otherText', value: ' Yeast ' }
+    ]);
+    expect(snapshot).toEqual([{ id: 'sample_type', name: 'Sample Type', type: 'dropdown', displayValue: 'Bacteria, Other: Yeast' }]);
+  });
+
+  it('reads plain "Other" when no text was saved', () => {
+    const snapshot = buildParameterSnapshot(withOther, [{ id: 'sample_type', value: ['oth'] }]);
+    expect(snapshot).toEqual([{ id: 'sample_type', name: 'Sample Type', type: 'dropdown', displayValue: 'Other' }]);
+  });
+
+  it('still lists an entry that merely ends in the suffix when no parameter owns it', () => {
+    const snapshot = buildParameterSnapshot({ parameters: [] }, [{ id: 'gone__otherText', value: 'x' }]);
+    expect(snapshot).toEqual([{ id: 'gone__otherText', name: 'gone__otherText', type: undefined, displayValue: 'x' }]);
+  });
+});
+
+describe('buildParameterSnapshot — hidden parameters (show-only-if rule 20)', () => {
+  const conditional = {
+    parameters: [
+      {
+        id: 'sample',
+        name: 'Sample Type',
+        type: 'dropdown',
+        options: [
+          { id: 'bact', name: 'Bacteria' },
+          { id: 'yeast', name: 'Yeast' }
+        ]
+      },
+      {
+        id: 'lysis',
+        name: 'Lysis',
+        type: 'dropdown',
+        showIf: { parameterId: 'sample', op: 'eq', optionIds: ['bact'] },
+        options: [
+          { id: 'enz', name: 'Enzymatic' },
+          { id: 'oth', name: 'Other' }
+        ]
+      }
+    ]
+  };
+  const saved = (sample: string): any[] => [
+    { id: 'sample', value: sample },
+    { id: 'lysis', value: 'oth' },
+    { id: 'lysis__otherText', value: 'Bead beating' }
+  ];
+
+  it('lists a conditional parameter while its condition holds', () => {
+    expect(buildParameterSnapshot(conditional, saved('bact')).map((e) => `${e.name}=${e.displayValue}`)).toEqual(['Sample Type=Bacteria', 'Lysis=Other: Bead beating']);
+  });
+
+  it('omits a hidden parameter and its "Other" text, even when the answer is still stored (a step in flight)', () => {
+    expect(buildParameterSnapshot(conditional, saved('yeast'))).toEqual([{ id: 'sample', name: 'Sample Type', type: 'dropdown', displayValue: 'Yeast' }]);
+  });
+
+  it('does not bring a hidden parameter back from the previous snapshot', () => {
+    const previous = [{ id: 'lysis', name: 'Lysis', type: 'dropdown', displayValue: 'Other: Bead beating' }];
+    expect(buildParameterSnapshot(conditional, saved('yeast'), previous).map((e) => e.id)).toEqual(['sample']);
+  });
+});

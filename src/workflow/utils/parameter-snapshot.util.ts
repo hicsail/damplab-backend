@@ -2,6 +2,8 @@ import { ParameterSnapshotEntry } from '../models/parameter-snapshot.model';
 import { getMultiValueParamIds, normalizeFormDataToArray } from './form-data.util';
 import { isEmptyParamValue } from '../../job-version/param-values.util';
 import { SAMPLE_SHEET_PARAM_TYPE } from './sample-sheet.util';
+import { isOtherTextEntryId, otherLabel, otherTextEntryId, otherTextParentId } from './other-option.util';
+import { hiddenParameterIds } from '../../services/parameter-conditions';
 import {
   EQUIPMENT_BOOKERS_PARAM_ID,
   EQUIPMENT_END_PARAM_ID,
@@ -46,21 +48,21 @@ function fileNameOf(value: unknown): string | undefined {
   return typeof name === 'string' && name.trim() !== '' ? name : undefined;
 }
 
-function displayOne(param: ParamDef | undefined, value: unknown): string {
+function displayOne(param: ParamDef | undefined, value: unknown, otherText?: unknown): string {
   if (value === null || value === undefined || value === '') return '';
   if (param && typeof param.type === 'string' && FILE_TYPES.has(param.type)) return fileNameOf(value) ?? '[File attached]';
   if (param && typeof param.type === 'string' && OPTION_TYPES.has(param.type) && Array.isArray(param.options)) {
     const option = (param.options as Array<{ id?: unknown; name?: unknown }>).find((o) => o && String(o.id) === String(value));
-    return option && typeof option.name === 'string' && option.name.trim() !== '' ? option.name : String(value);
+    return option && typeof option.name === 'string' && option.name.trim() !== '' ? otherLabel(option.name, otherText) : String(value);
   }
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
 }
 
-function displayValueOf(param: ParamDef | undefined, value: unknown): string {
+function displayValueOf(param: ParamDef | undefined, value: unknown, otherText?: unknown): string {
   const values = Array.isArray(value) ? value : [value];
   return values
-    .map((v) => displayOne(param, v))
+    .map((v) => displayOne(param, v, otherText))
     .filter((s) => s !== '')
     .join(', ');
 }
@@ -69,7 +71,9 @@ function displayValueOf(param: ParamDef | undefined, value: unknown): string {
  * The parameter snapshot for a node, taken from its service at write time.
  * One entry per saved value. An id the service no longer has keeps its
  * `previous` entry, so the first save after a catalogue edit does not erase the
- * name the snapshot exists to keep.
+ * name the snapshot exists to keep. A hidden parameter (its "show only if" is
+ * false for these answers) has no entry, even when its answer is still stored —
+ * which it is on a step that is in flight.
  */
 export function buildParameterSnapshot(service: { parameters?: unknown } | null | undefined, formData: unknown, previous?: readonly ParameterSnapshotEntry[] | null): ParameterSnapshotEntry[] {
   const params: ParamDef[] = Array.isArray(service?.parameters) ? (service!.parameters as unknown[]).filter((p): p is ParamDef => !!p && typeof (p as ParamDef).id === 'string') : [];
@@ -89,12 +93,20 @@ export function buildParameterSnapshot(service: { parameters?: unknown } | null 
     for (const [id, value] of Object.entries(formData)) if (Array.isArray(value)) multiIds.add(id);
   }
 
-  for (const entry of normalizeFormDataToArray(formData, multiIds)) {
+  const entries = normalizeFormDataToArray(formData, multiIds);
+  const valueById = new Map(entries.map((e) => [e.id, e.value] as const));
+  const hidden = hiddenParameterIds(params, entries);
+
+  for (const entry of entries) {
     if (isEmptyParamValue(entry.value)) continue;
+    if (hidden.has(entry.id) || (isOtherTextEntryId(entry.id) && hidden.has(otherTextParentId(entry.id)))) continue;
+    // The "Other" text belongs to its parameter's answer; it is not a parameter of its own.
+    if (isOtherTextEntryId(entry.id) && byId.has(otherTextParentId(entry.id))) continue;
     const param = byId.get(entry.id);
     if (param) {
       const name = typeof param.name === 'string' && param.name.trim() !== '' ? param.name : entry.id;
-      out.push({ id: entry.id, name, type: typeof param.type === 'string' ? param.type : undefined, displayValue: displayValueOf(param, entry.value) });
+      const displayValue = displayValueOf(param, entry.value, valueById.get(otherTextEntryId(entry.id)));
+      out.push({ id: entry.id, name, type: typeof param.type === 'string' ? param.type : undefined, displayValue });
       continue;
     }
     const prior = previousById.get(entry.id);

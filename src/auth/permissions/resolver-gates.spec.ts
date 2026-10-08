@@ -318,7 +318,9 @@ describe('Phase 2b widening — the gate on each operation', () => {
 
   /**
    * The write depends on *what* was uploaded — inventory:write for an inventory
-   * log, catalog-editor:write for an operations log — so it is an inline check.
+   * log, catalog-editor:write for an OPERATION, PARAMETER_SET, BUNDLE or
+   * SOW_SECTION log — so it is an inline check (pinned per type in
+   * inventory/upload-log.permissions.spec.ts).
    */
   it('leaves createUploadLog on an inline per-type check, not a decoration', () => {
     expect(permissionOn(UploadLogResolver, 'createUploadLog')).toBeUndefined();
