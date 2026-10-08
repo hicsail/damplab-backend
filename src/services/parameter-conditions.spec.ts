@@ -1,4 +1,4 @@
-import { comparisonFits, hiddenParameterIds, visibleParameterIds, withoutHiddenAnswers, withStoredHiddenAnswers } from './parameter-conditions';
+import { comparisonFits, conditionDefinitionError, hiddenParameterIds, visibleParameterIds, withoutHiddenAnswers, withStoredHiddenAnswers } from './parameter-conditions';
 
 /**
  * SHARED VECTORS — the same table, character for character, is in
@@ -261,5 +261,70 @@ describe('comparisonFits', () => {
     expect(comparisonFits({ parameterId: 'cycles', op: 'gt' }, CYCLES)).toBe(false);
     expect(comparisonFits({ parameterId: 'note', op: 'eq', value: 'x' }, NOTE)).toBe(true);
     expect(comparisonFits({ parameterId: 'cycles', op: 'eq', value: 'abc' }, CYCLES)).toBe(true);
+  });
+});
+
+describe('conditionDefinitionError (rule 34)', () => {
+  const p = (showIf: unknown, id = 't'): any => ({ id, name: 'Target', type: 'string', showIf });
+  const ok = { parameterId: 'sample', op: 'eq', optionIds: ['bact'] };
+
+  it('accepts no condition and well-formed trees', () => {
+    expect(conditionDefinitionError({ id: 't', name: 'Target' }, [])).toBeNull();
+    expect(conditionDefinitionError(p(ok), [SAMPLE])).toBeNull();
+    expect(
+      conditionDefinitionError(
+        p({
+          all: [
+            ok,
+            {
+              any: [
+                { parameterId: 'c', op: 'gt', value: 3 },
+                { parameterId: 'n', op: 'includes', value: 'x' }
+              ]
+            }
+          ]
+        }),
+        []
+      )
+    ).toBeNull();
+    expect(conditionDefinitionError(p({ parameterId: 'n', parameterSetId: 'set1', op: 'in', values: ['a'] }), [])).toBeNull();
+    expect(conditionDefinitionError(p({ parameterId: 'hot', op: 'ne', value: false }), [])).toBeNull();
+  });
+
+  it.each([
+    ['text', 'not a tree'],
+    ['unknown operator', { parameterId: 'a', op: 'matches', value: 'x' }],
+    ['empty group', { all: [] }],
+    ['group with extra fields', { any: [ok], op: 'eq' }],
+    ['missing parameterId', { op: 'eq', value: 'x' }],
+    ['blank parameterSetId', { ...ok, parameterSetId: '' }],
+    ['eq with neither value nor optionIds', { parameterId: 'a', op: 'eq' }],
+    ['eq with both', { parameterId: 'a', op: 'eq', value: 'x', optionIds: ['o'] }],
+    ['eq with empty optionIds', { parameterId: 'a', op: 'eq', optionIds: [] }],
+    ['in with a single value', { parameterId: 'a', op: 'in', value: 'x' }],
+    ['in with an empty list', { parameterId: 'a', op: 'in', values: [] }],
+    ['gt with text', { parameterId: 'a', op: 'gt', value: '5' }],
+    ['includes with a number', { parameterId: 'a', op: 'includes', value: 5 }],
+    ['a bad comparison inside a group', { all: [ok, { parameterId: 'a', op: 'lt', optionIds: ['o'] }] }]
+  ])('refuses a malformed tree: %s', (_name, showIf) => {
+    expect(conditionDefinitionError(p(showIf), [SAMPLE])).toMatch(/^Parameter “Target”: “Show only if” is not a valid condition \(.+\)\.$/);
+  });
+
+  it('refuses a parameter that refers to itself', () => {
+    expect(conditionDefinitionError(p({ parameterId: 't', op: 'eq', value: 'x' }), [])).toBe('Parameter “Target”: “Show only if” cannot refer to the parameter itself.');
+  });
+
+  it('refuses a cycle within the list being saved, and only there', () => {
+    const a = p({ parameterId: 'b', op: 'eq', value: 'x' }, 'a');
+    const b = p({ parameterId: 'c', op: 'eq', value: 'x' }, 'b');
+    const c = p({ parameterId: 'a', op: 'eq', value: 'x' }, 'c');
+    expect(conditionDefinitionError(a, [a, b, c])).toBe('Parameter “Target”: “Show only if” forms a loop with another parameter’s condition.');
+    // A qualified reference points into another list: not this check's business.
+    expect(conditionDefinitionError(p({ parameterId: 't', parameterSetId: 'set9', op: 'eq', value: 'x' }), [])).toBeNull();
+    expect(conditionDefinitionError(a, [a, b])).toBeNull();
+  });
+
+  it('falls back to the id when the parameter has no name', () => {
+    expect(conditionDefinitionError({ id: 'x1', showIf: 'nope' }, [])).toMatch(/^Parameter “x1”:/);
   });
 });

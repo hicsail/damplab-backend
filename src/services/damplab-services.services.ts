@@ -10,6 +10,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { equipmentUsePricingModeViolation, equipmentUseRuleViolation } from './equipment-use.validation';
 import { ParameterSet, ParameterSetDocument } from '../parameter-sets/parameter-set.model';
 import { parameterDefinitionError } from './parameter-validation';
+import { conditionDefinitionError } from './parameter-conditions';
 import { clashMessage, effectiveParameters, findParameterSetClashes, ParameterSetLike, setsByIdMap, stripSetDerivedParameters } from './effective-parameters';
 
 @Injectable()
@@ -231,11 +232,11 @@ export class DampLabServices {
     if (violation) throw new BadRequestException(violation);
   }
 
-  /** A parameter's validation must parse and its display must fit its type — refused here so no save path can store one that does not. */
+  /** A parameter's validation must parse, its display must fit its type and its “show only if” must be a well-formed, loop-free tree — refused here so no save path can store one that is not. */
   private assertParameterDefinitionsValid(parameters: unknown): void {
     if (!Array.isArray(parameters)) return;
     for (const parameter of parameters) {
-      const error = parameterDefinitionError(parameter);
+      const error = parameterDefinitionError(parameter) ?? conditionDefinitionError(parameter, parameters);
       if (error) throw new BadRequestException(error);
     }
   }

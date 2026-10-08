@@ -36,4 +36,22 @@ describe('normalizeSetParameters', () => {
     ];
     expect(normalizeSetParameters(parameters)).toEqual(parameters);
   });
+  it('keeps a well-formed “show only if” (show-only-if rule 34)', () => {
+    const parameters = [
+      { id: 'sample', name: 'Sample Type', type: 'dropdown', options: [{ id: 'bact', name: 'Bacteria' }] },
+      { id: 'kit', name: 'Kit', type: 'string', showIf: { all: [{ parameterId: 'sample', op: 'eq', optionIds: ['bact'] }] } }
+    ];
+    expect(normalizeSetParameters(parameters)).toEqual(parameters);
+  });
+  it('rejects a malformed “show only if”', () =>
+    expect(() => normalizeSetParameters([{ id: 'kit', name: 'Kit', showIf: { all: [] } }])).toThrow('Parameter “Kit”: “Show only if” is not a valid condition (“all” needs at least one condition).'));
+  it('rejects a parameter whose condition refers to itself', () =>
+    expect(() => normalizeSetParameters([{ id: 'kit', name: 'Kit', showIf: { parameterId: 'kit', op: 'eq', value: 'x' } }])).toThrow(
+      'Parameter “Kit”: “Show only if” cannot refer to the parameter itself.'
+    ));
+  it('rejects a loop within the set, whichever member comes first', () => {
+    const a = { id: 'a', name: 'A', showIf: { parameterId: 'b', op: 'eq', value: 'x' } };
+    const b = { id: 'b', name: 'B', showIf: { parameterId: 'a', op: 'eq', value: 'x' } };
+    expect(() => normalizeSetParameters([a, b])).toThrow('Parameter “A”: “Show only if” forms a loop with another parameter’s condition.');
+  });
 });

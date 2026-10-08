@@ -286,3 +286,89 @@ export function withStoredHiddenAnswers<E extends { id: string }>(effectiveParam
   const present = new Set(formData.map((entry) => entry.id));
   return [...formData, ...stored.filter((entry) => isHiddenEntryId(entry.id, hidden) && !present.has(entry.id))];
 }
+
+// ---------------------------------------------------------------- definition check (rule 34)
+
+const nonEmptyStrings = (v: unknown): v is string[] => Array.isArray(v) && v.length > 0 && v.every((s) => typeof s === 'string' && s !== '');
+
+/** What is wrong with the shape of a stored condition, or null. */
+function shapeError(condition: unknown): string | null {
+  if (!isRecord(condition)) return 'a condition must be an object';
+  for (const key of ['all', 'any'] as const) {
+    if (!(key in condition)) continue;
+    const children = condition[key];
+    if (!Array.isArray(children) || children.length === 0) return `“${key}” needs at least one condition`;
+    if (Object.keys(condition).length !== 1) return `“${key}” cannot be mixed with other fields`;
+    for (const child of children) {
+      const error = shapeError(child);
+      if (error) return error;
+    }
+    return null;
+  }
+  if (typeof condition.parameterId !== 'string' || condition.parameterId === '') return 'a comparison needs a parameterId';
+  if (condition.parameterSetId !== undefined && (typeof condition.parameterSetId !== 'string' || condition.parameterSetId === '')) return 'parameterSetId must be a non-empty string';
+  const op = condition.op as ConditionOp;
+  if (!CONDITION_OPS.includes(op)) return `unknown operator “${String(condition.op)}”`;
+  const has = (key: string): boolean => condition[key] !== undefined;
+  const scalar = typeof condition.value === 'string' || typeof condition.value === 'number' || typeof condition.value === 'boolean';
+  switch (op) {
+    case 'eq':
+    case 'ne':
+      if (has('values')) return `“${op}” takes optionIds or a value`;
+      if (has('optionIds') === has('value')) return `“${op}” takes exactly one of optionIds or value`;
+      if (has('optionIds') ? !nonEmptyStrings(condition.optionIds) : !scalar) return `“${op}” has a value of the wrong shape`;
+      return null;
+    case 'in':
+      if (has('value')) return '“in” takes optionIds or values';
+      if (has('optionIds') === has('values')) return '“in” takes exactly one of optionIds or values';
+      if (!nonEmptyStrings(has('optionIds') ? condition.optionIds : condition.values)) return '“in” needs a non-empty list';
+      return null;
+    case 'gt':
+    case 'ge':
+    case 'lt':
+    case 'le':
+      if (has('optionIds') || has('values')) return `“${op}” takes a number`;
+      if (typeof condition.value !== 'number' || !Number.isFinite(condition.value)) return `“${op}” takes a number`;
+      return null;
+    case 'includes':
+      if (has('optionIds') || has('values')) return '“includes” takes text';
+      if (typeof condition.value !== 'string' || condition.value === '') return '“includes” takes text';
+      return null;
+  }
+}
+
+/**
+ * Why a parameter's `showIf` may not be saved, or null (rule 34): it is not a
+ * well-formed tree, it refers to itself, or it forms a cycle within `list` —
+ * the list being saved (an operation's own parameters, or one set's). References
+ * into other lists are not checked: the evaluator shows a parameter whose
+ * reference does not resolve.
+ */
+export function conditionDefinitionError(parameter: unknown, list: unknown): string | null {
+  if (!isRecord(parameter) || parameter.showIf === undefined || parameter.showIf === null) return null;
+  const label = typeof parameter.name === 'string' && parameter.name.trim() !== '' ? parameter.name.trim() : String(parameter.id ?? '');
+  const shape = shapeError(parameter.showIf);
+  if (shape) return `Parameter “${label}”: “Show only if” is not a valid condition (${shape}).`;
+
+  const siblings: Param[] = Array.isArray(list) ? list.filter(isParam) : [];
+  /** Same-list references only: a qualified reference points into another list. */
+  const sameListIds = (p: Param): string[] =>
+    comparisonsOf(p.showIf)
+      .filter((c) => c.parameterSetId === undefined)
+      .map((c) => c.parameterId);
+  const own = sameListIds(parameter as Param);
+  if (own.includes(String(parameter.id))) return `Parameter “${label}”: “Show only if” cannot refer to the parameter itself.`;
+
+  const byId = new Map(siblings.map((p) => [p.id, p] as const));
+  const seen = new Set<string>();
+  const queue = [...own];
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    if (id === parameter.id) return `Parameter “${label}”: “Show only if” forms a loop with another parameter’s condition.`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const next = byId.get(id);
+    if (next) queue.push(...sameListIds(next));
+  }
+  return null;
+}
