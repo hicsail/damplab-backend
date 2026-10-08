@@ -54,6 +54,18 @@ describe('checkValue', () => {
     expect(checkValue(rules('>=1 && <=3'), 3.01)).toBe('Must be at most 3');
   });
 
+  it('F11: a whitespace-only answer is an empty answer, not the number 0', () => {
+    for (const blank of [' ', '   ', '\t', '\n', ' \r\n ']) {
+      expect(checkValue(rules('<5'), blank)).toBeNull();
+      expect(checkValue(rules('>0'), blank)).toBeNull();
+      expect(checkValue(rules('>=1 && <=3'), blank)).toBeNull();
+    }
+    // An answer with text in it is still checked, padded or not.
+    expect(checkValue(rules('>0'), ' 0 ')).toBe('Must be greater than 0');
+    expect(checkValue(rules('<5'), ' 7 ')).toBe('Must be less than 5');
+    expect(checkValue(rules('>0'), ' x ')).toBe('Must be a number');
+  });
+
   it('never complains about an empty value — "required" is a different rule', () => {
     for (const empty of [null, undefined, '']) expect(checkValue(rules('>0'), empty)).toBeNull();
   });
