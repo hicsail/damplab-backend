@@ -1,5 +1,6 @@
 import { DampLabService, ServicePricingMode } from '../services/models/damplab-service.model';
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
+import { otherLabel, otherTextEntryId } from '../workflow/utils/other-option.util';
 import { CustomerCategory } from './customer-category';
 import { SAMPLE_SHEET_PARAM_TYPE, sampleCountFromValue } from '../workflow/utils/sample-sheet.util';
 
@@ -518,7 +519,7 @@ function calculateParameterCostWithCategory(parameters: unknown, rawFormData: un
         if (!opt) continue;
         const price = resolveCategoryPrice(opt, customerCategory);
         if (price === undefined) continue;
-        const optLabel = typeof opt.name === 'string' && opt.name.trim() !== '' ? opt.name : optId;
+        const optLabel = typeof opt.name === 'string' && opt.name.trim() !== '' ? otherLabel(opt.name, formDataMap.get(otherTextEntryId(id))) : optId;
         record(`${paramLabel}: ${optLabel}`, 1, price);
       }
 
