@@ -3,6 +3,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/uti
 import { otherLabel, otherTextEntryId } from '../workflow/utils/other-option.util';
 import { CustomerCategory } from './customer-category';
 import { SAMPLE_SHEET_PARAM_TYPE, sampleCountFromValue } from '../workflow/utils/sample-sheet.util';
+import { withoutHiddenAnswers } from '../services/parameter-conditions';
 
 interface ServiceParameterOption {
   id?: unknown;
@@ -378,9 +379,14 @@ export function calculateServiceCostBreakdown(
   let baseCost = 0;
   let details: ServicePricingDetail[] | undefined;
 
+  // A hidden parameter is not priced: no parameter or option price, no detail
+  // row, and a hidden multiplier multiplies nothing. Filtered once, here, so the
+  // SOW's transformServices and the sample-sheet reprice need no filter of their own.
+  const shownFormData = withoutHiddenAnswers(service.parameters, rawFormData);
+
   // Computed before the base, because a line-total fallback has to be divided by
   // it to recover a unit price. Nothing about the multiplier depends on the base.
-  const raw = getMultiplier(service.parameters, rawFormData, {
+  const raw = getMultiplier(service.parameters, shownFormData, {
     // Only in PARAMETER mode do parameters carry prices of their own, so only
     // there can one have been billed into the base already. In SERVICE mode the
     // base is the service's own price and every multiplier parameter scales it.
@@ -426,9 +432,13 @@ export function calculateServiceCostBreakdown(
     // pricing check is an internal baseCost/adjustments/totalCost consistency
     // check, not a client-vs-server one), so the two cannot disagree into a
     // failed save.
+    //
+    // Asked of the answers as sent, hidden ones included: a step whose only
+    // answers are hidden was answered, and prices to zero — it must not fall
+    // back to a stored figure that still has the hidden charge in it.
     const hasParameterValues = normalizeFormDataToArray(rawFormData, getMultiValueParamIds(service.parameters)).length > 0;
     if (hasParameterValues) {
-      const priced = calculateParameterCostWithCategory(service.parameters, rawFormData, customerCategory);
+      const priced = calculateParameterCostWithCategory(service.parameters, shownFormData, customerCategory);
       baseCost = priced.total;
       // Left undefined rather than empty when nothing was priced: an empty list
       // would read as "itemised, and it came to nothing".
