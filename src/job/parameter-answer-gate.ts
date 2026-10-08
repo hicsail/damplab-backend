@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { checkValue, effectiveValidation, parseValidation } from '../services/parameter-validation';
 import { isEmptyParamValue, paramValuesSemanticallyEqual } from '../job-version/param-values.util';
 import { otherTextEntryId, selectsOther } from '../workflow/utils/other-option.util';
+import { hiddenParameterIds } from '../services/parameter-conditions';
 
 /**
  * The server-side twin of the client form's inline errors: a submitted number
@@ -12,6 +13,9 @@ import { otherTextEntryId, selectsOther } from '../workflow/utils/other-option.u
  * to every caller. Staff edits of a submitted job (`addWorkflowToJob`, a staff
  * save, a version restore) are not checked: jobs already submitted are never
  * re-validated.
+ *
+ * A hidden parameter (its "show only if" is false for the node's answers) is
+ * not checked.
  *
  * `services` is only for a caller whose nodes carry a service id instead of the
  * populated service.
@@ -46,8 +50,10 @@ export function parameterAnswerProblems(workflows: ReadonlyArray<WorkflowLike> |
       if (!service || !Array.isArray(service.parameters)) continue;
       const operation = typeof service.name === 'string' && service.name.trim() !== '' ? service.name : 'This operation';
       const values = valuesById(node.formData);
+      const hidden = hiddenParameterIds(service.parameters, node.formData);
       for (const param of service.parameters as Array<Record<string, unknown>>) {
         if (!param || typeof param !== 'object' || typeof param.id !== 'string') continue;
+        if (hidden.has(param.id)) continue;
         const label = typeof param.name === 'string' && param.name.trim() !== '' ? param.name : param.id;
         const value = values.get(param.id);
 
@@ -119,9 +125,13 @@ export function changedAnswerProblems(nodes: ReadonlyArray<ChangedAnswersNode>):
     if (changed.size === 0) continue;
     // A parameter counts as changed when its own value moved or its "Other"
     // text did: blanking the text while "Other" stays selected is a change.
-    const parameters = (node.service.parameters as Array<Record<string, unknown>>).filter(
-      (param) => param && typeof param === 'object' && typeof param.id === 'string' && (changed.has(param.id) || changed.has(otherTextEntryId(param.id)))
-    );
+    // Visibility is decided against the whole list. The subset handed on carries
+    // no conditions: checked on its own, a condition whose controller is not in
+    // the subset would not resolve.
+    const hidden = hiddenParameterIds(node.service.parameters, node.after);
+    const parameters = (node.service.parameters as Array<Record<string, unknown>>)
+      .filter((param) => param && typeof param === 'object' && typeof param.id === 'string' && !hidden.has(param.id) && (changed.has(param.id) || changed.has(otherTextEntryId(param.id))))
+      .map((param) => ({ ...param, showIf: undefined }));
     // The whole of `after` goes in, so "Other" still finds its text entry.
     problems.push(...parameterAnswerProblems([{ nodes: [{ service: { name: node.service.name, parameters }, formData: node.after }] }]));
   }

@@ -61,3 +61,39 @@ describe('DampLabServices refuses a bad parameter definition', () => {
     expect(model.create).not.toHaveBeenCalled();
   });
 });
+
+describe('DampLabServices refuses a bad “show only if” (show-only-if rule 34)', () => {
+  const controller = { id: 'sample', name: 'Sample Type', type: 'dropdown', options: [{ id: 'bact', name: 'Bacteria' }] };
+
+  it('update: a malformed tree is refused before anything is written', async () => {
+    const { svc, model } = build();
+    const changes: any = { parameters: [controller, { id: 'k', name: 'Kit', type: 'string', showIf: { parameterId: 'sample', op: 'matches', value: 'x' } }] };
+    await expect(svc.update(op(), changes)).rejects.toThrow('Parameter “Kit”: “Show only if” is not a valid condition (unknown operator “matches”).');
+    expect(model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('update: a loop between two of the operation’s own parameters is refused', async () => {
+    const { svc } = build();
+    const a = { id: 'a', name: 'A', type: 'string', showIf: { parameterId: 'b', op: 'eq', value: 'x' } };
+    const b = { id: 'b', name: 'B', type: 'string', showIf: { parameterId: 'a', op: 'eq', value: 'x' } };
+    await expect(svc.update(op(), { parameters: [a, b] } as any)).rejects.toThrow('Parameter “A”: “Show only if” forms a loop with another parameter’s condition.');
+  });
+
+  it('update: a well-formed condition is stored as sent, and a reference into a set is not checked', async () => {
+    const { svc, model } = build();
+    const parameters = [
+      controller,
+      { id: 'k', name: 'Kit', type: 'string', showIf: { parameterId: 'sample', op: 'eq', optionIds: ['bact'] } },
+      { id: 'v', name: 'Volume', type: 'number', showIf: { parameterId: 'anything', parameterSetId: 'set-that-may-not-exist', op: 'gt', value: 3 } }
+    ];
+    await svc.update(op(), { parameters } as any);
+    expect(model.updateOne).toHaveBeenCalledWith({ _id: 'op1' }, { parameters });
+  });
+
+  it('create: a parameter that refers to itself is refused', async () => {
+    const { svc, model } = build();
+    const input: any = { name: 'New', parameters: [{ id: 'k', name: 'Kit', type: 'string', showIf: { parameterId: 'k', op: 'eq', value: 'x' } }] };
+    await expect(svc.create(input)).rejects.toThrow('Parameter “Kit”: “Show only if” cannot refer to the parameter itself.');
+    expect(model.create).not.toHaveBeenCalled();
+  });
+});

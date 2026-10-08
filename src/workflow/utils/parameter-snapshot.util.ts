@@ -3,6 +3,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from './form-data.uti
 import { isEmptyParamValue } from '../../job-version/param-values.util';
 import { SAMPLE_SHEET_PARAM_TYPE } from './sample-sheet.util';
 import { isOtherTextEntryId, otherLabel, otherTextEntryId, otherTextParentId } from './other-option.util';
+import { hiddenParameterIds } from '../../services/parameter-conditions';
 import {
   EQUIPMENT_BOOKERS_PARAM_ID,
   EQUIPMENT_END_PARAM_ID,
@@ -70,7 +71,9 @@ function displayValueOf(param: ParamDef | undefined, value: unknown, otherText?:
  * The parameter snapshot for a node, taken from its service at write time.
  * One entry per saved value. An id the service no longer has keeps its
  * `previous` entry, so the first save after a catalogue edit does not erase the
- * name the snapshot exists to keep.
+ * name the snapshot exists to keep. A hidden parameter (its "show only if" is
+ * false for these answers) has no entry, even when its answer is still stored —
+ * which it is on a step that is in flight.
  */
 export function buildParameterSnapshot(service: { parameters?: unknown } | null | undefined, formData: unknown, previous?: readonly ParameterSnapshotEntry[] | null): ParameterSnapshotEntry[] {
   const params: ParamDef[] = Array.isArray(service?.parameters) ? (service!.parameters as unknown[]).filter((p): p is ParamDef => !!p && typeof (p as ParamDef).id === 'string') : [];
@@ -92,9 +95,11 @@ export function buildParameterSnapshot(service: { parameters?: unknown } | null 
 
   const entries = normalizeFormDataToArray(formData, multiIds);
   const valueById = new Map(entries.map((e) => [e.id, e.value] as const));
+  const hidden = hiddenParameterIds(params, entries);
 
   for (const entry of entries) {
     if (isEmptyParamValue(entry.value)) continue;
+    if (hidden.has(entry.id) || (isOtherTextEntryId(entry.id) && hidden.has(otherTextParentId(entry.id)))) continue;
     // The "Other" text belongs to its parameter's answer; it is not a parameter of its own.
     if (isOtherTextEntryId(entry.id) && byId.has(otherTextParentId(entry.id))) continue;
     const param = byId.get(entry.id);

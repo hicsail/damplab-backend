@@ -16,6 +16,7 @@ import { buildParameterSnapshot } from '../workflow/utils/parameter-snapshot.uti
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
 import { isSampleSheetParam, keyBelongsToUploader, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
 import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
+import { withoutHiddenAnswers, withStoredHiddenAnswers } from '../services/parameter-conditions';
 
 /** Fields on a live WorkflowNode that a save is allowed to write. Everything else — state, assigneeId, startedAt, completedSteps, usedInventory, inventory reservations — belongs to the lab and is never touched here. */
 type NodeContentPatch = {
@@ -83,6 +84,11 @@ function parametersDiffer(before: unknown, after: unknown): boolean {
   }
 
   return false;
+}
+
+/** Work already under way: the node has left QUEUED, or is holding inventory. */
+function workInFlight(live: Pick<LiveNode, 'state' | 'usedInventory'>): boolean {
+  return live.state !== WorkflowNodeState.QUEUED || (live.usedInventory ?? []).length > 0;
 }
 
 @Injectable()
@@ -557,7 +563,12 @@ export class JobVersionService {
     // Prepared first, deliberately: it resolves each node against the catalogue
     // and normalizes formData, so the guard below compares like with like. It
     // only reads, so nothing is written if the guard then rejects.
-    const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined, this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId));
+    const prepared = await this.prepareWorkflows(
+      input.workflows,
+      job.customerCategory as CustomerCategory | undefined,
+      this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId),
+      this.inFlightAnswers(liveNodes)
+    );
     this.assertWorkInFlightUntouched(liveNodes, prepared);
     if (opts.uploaderSub !== undefined) this.assertSampleSheetKeysAllowed(liveNodes, prepared, opts.uploaderSub);
     if (opts.checkChangedAnswers) this.assertChangedAnswersValid(liveNodes, prepared);
@@ -655,6 +666,19 @@ export class JobVersionService {
     return merged;
   }
 
+  /**
+   * The stored answers of every step that is in flight, by client-side id, with
+   * the service they were given for. `prepareWorkflows` carries a hidden
+   * parameter's stored answer forward from here.
+   */
+  private inFlightAnswers(liveNodes: Map<string, LiveNode>): Map<string, { serviceId: string; formData: unknown }> {
+    const held = new Map<string, { serviceId: string; formData: unknown }>();
+    for (const [clientId, live] of liveNodes) {
+      if (workInFlight(live)) held.set(clientId, { serviceId: String((live.service as any)?._id ?? live.service), formData: live.formData });
+    }
+    return held;
+  }
+
   /** Every live node on the job, keyed by client-side id. */
   private async loadLiveNodes(job: Job): Promise<Map<string, LiveNode>> {
     const byClientId = new Map<string, LiveNode>();
@@ -745,9 +769,8 @@ export class JobVersionService {
     }
 
     for (const [clientId, live] of liveNodes) {
+      if (!workInFlight(live)) continue;
       const isInFlight = live.state !== WorkflowNodeState.QUEUED;
-      const holdsInventory = (live.usedInventory ?? []).length > 0;
-      if (!isInFlight && !holdsInventory) continue;
 
       const reason = isInFlight ? `is ${WorkflowNodeState[live.state]}` : 'is holding inventory';
       const submitted = preparedById.get(clientId);
@@ -773,7 +796,8 @@ export class JobVersionService {
   private async prepareWorkflows(
     workflows: SaveWorkflowInput[],
     category: CustomerCategory | undefined,
-    priorByClientId: Map<string, ParameterSnapshotEntry[]> = new Map()
+    priorByClientId: Map<string, ParameterSnapshotEntry[]> = new Map(),
+    inFlightByClientId: ReadonlyMap<string, { serviceId: string; formData: unknown }> = new Map()
   ): Promise<PreparedNode[][]> {
     const serviceIds = [...new Set(workflows.flatMap((w) => w.nodes.map((n) => String(n.serviceId))))];
     const services = new Map<string, any>();
@@ -786,7 +810,17 @@ export class JobVersionService {
     return workflows.map((workflow) =>
       workflow.nodes.map((node) => {
         const service = services.get(String(node.serviceId));
-        const formData = normalizeFormDataToArray(node.formData, getMultiValueParamIds(service.parameters));
+        const multiValueParamIds = getMultiValueParamIds(service.parameters);
+        // An answer to a hidden parameter is dropped, not refused — whoever sent it.
+        let formData = withoutHiddenAnswers(service.parameters, normalizeFormDataToArray(node.formData, multiValueParamIds));
+        // Except on a step that is in flight: there the stored answer is carried
+        // forward unchanged whatever the client sent, so the guard that follows
+        // (assertWorkInFlightUntouched) never refuses a save because of it.
+        // Pricing and the snapshot ignore hidden answers on their own.
+        const held = inFlightByClientId.get(node.id);
+        if (held && held.serviceId === String(service._id)) {
+          formData = withStoredHiddenAnswers(service.parameters, formData, normalizeFormDataToArray(held.formData, multiValueParamIds));
+        }
         const price = calculateServiceCost(service, formData, undefined, category);
         // From the normalized formData that is persisted, so the card cannot disagree with the stored value.
         const parameterSnapshot = buildParameterSnapshot(service, formData, priorByClientId.get(node.id));
