@@ -174,7 +174,7 @@ the homepage button, `AppBreadcrumbs`' `STATIC` map, and the page's own heading.
 |---|---|
 | `parameterSets`, `parameterSet`, `deletedServiceIds`, `uploadLogs`, `uploadLog` | `catalog-editor:read` |
 | `createParameterSet`, `updateParameterSet`, `deleteParameterSet`, `catalogExport` | `catalog-editor:write` |
-| `createUploadLog` | inline: `inventory:write` for an INVENTORY log, `catalog-editor:write` for an OPERATION log |
+| `createUploadLog` | inline: `inventory:write` for an INVENTORY log, `catalog-editor:write` for an OPERATION, PARAMETER_SET, BUNDLE or SOW_SECTION log |
 | `catalogServices` | `catalog:view`; operations hidden from clients are returned only to `catalog-editor:read` |
 | `createJob` | refuses a node whose operation is hidden from clients unless the caller holds `catalog-editor:read` |
 | `createJob` | refuses, for every caller, a number that breaks its parameter's validation and an "Other" answer with blank text (op-catalog-enhances) |

@@ -5,14 +5,17 @@ import JSON from 'graphql-type-json';
 
 export enum UploadEntityType {
   INVENTORY = 'INVENTORY',
-  OPERATION = 'OPERATION'
+  OPERATION = 'OPERATION',
+  PARAMETER_SET = 'PARAMETER_SET',
+  BUNDLE = 'BUNDLE',
+  SOW_SECTION = 'SOW_SECTION'
 }
 registerEnumType(UploadEntityType, { name: 'UploadEntityType' });
 
 /** A before/after snapshot for one item affected by an upload. */
-@ObjectType({ description: 'Before/after snapshot of the inventory item or operation affected by an upload.' })
+@ObjectType({ description: 'Before/after snapshot of the catalog record affected by an upload.' })
 export class FieldSnapshot {
-  @Field(() => ID, { description: 'Id of the inventory item or operation.' })
+  @Field(() => ID, { description: 'Id of the record: an inventory item, operation, parameter set, category, bundle or SOW text block.' })
   itemId: string;
 
   @Field({ description: 'What happened: CREATE, UPDATE, REACTIVATE, or SKIP.' })
@@ -52,7 +55,7 @@ const FieldSnapshotSchema = new mongoose.Schema(
 
 /** An audit log entry for a bulk inventory or operations upload. */
 @Schema({ timestamps: true })
-@ObjectType({ description: 'Audit log for a bulk inventory or operations upload.' })
+@ObjectType({ description: 'Audit log for a bulk upload: inventory, or one sheet of the catalog workbook.' })
 export class UploadLog {
   @Field(() => ID, { name: 'id', description: 'Database generated id.' })
   id: string;
@@ -94,7 +97,7 @@ export class UploadLog {
   failedCount: number;
 
   @Prop({ type: [String], default: [] })
-  @Field(() => [ID], { description: 'IDs of inventory items affected by this upload.' })
+  @Field(() => [ID], { description: 'IDs of the records affected by this upload.' })
   affectedItemIds: string[];
 
   @Prop({ type: [FieldSnapshotSchema], default: [] })
