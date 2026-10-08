@@ -237,3 +237,69 @@ describe('answers a save changes (rule 26 on a customer resubmission)', () => {
     expect(() => assertChangedAnswersValid([])).not.toThrow();
   });
 });
+
+describe('hidden parameters are not checked (show-only-if rule 18)', () => {
+  const kind = {
+    id: 'kind',
+    name: 'Kind',
+    type: 'dropdown',
+    options: [
+      { id: 'rna', name: 'RNA' },
+      { id: 'dna', name: 'DNA' }
+    ]
+  };
+  const isRna = { parameterId: 'kind', op: 'eq', optionIds: ['rna'] };
+  const extraction = {
+    name: 'Extraction',
+    parameters: [
+      kind,
+      { id: 'cycles', name: 'Cycles', type: 'number', validation: '>0', showIf: isRna },
+      {
+        id: 'method',
+        name: 'Method',
+        type: 'dropdown',
+        showIf: isRna,
+        options: [
+          { id: 'col', name: 'Column' },
+          { id: 'oth', name: 'Other' }
+        ]
+      }
+    ]
+  };
+  const answers = (kindValue: string): any[] => [
+    { id: 'kind', value: kindValue },
+    { id: 'cycles', value: 0 },
+    { id: 'method', value: 'oth' }
+  ];
+  const submitted = (kindValue: string): any[] => [{ nodes: [{ service: extraction, formData: answers(kindValue) }] }];
+
+  it('createJob: checks a conditional parameter while it is shown', () => {
+    expect(parameterAnswerProblems(submitted('rna'))).toEqual(['“Cycles” on “Extraction”: Must be greater than 0', '“Method” on “Extraction”: Please specify “Other”.']);
+  });
+
+  it('createJob: raises nothing for a hidden parameter, whatever was sent for it', () => {
+    expect(parameterAnswerProblems(submitted('dna'))).toEqual([]);
+    expect(() => assertParameterAnswersValid(submitted('dna'))).not.toThrow();
+  });
+
+  it('a customer save: an answer the save changes is not checked while its parameter is hidden', () => {
+    const before = [
+      { id: 'kind', value: 'dna' },
+      { id: 'cycles', value: 5 }
+    ];
+    expect(changedAnswerProblems([{ service: extraction, before, after: answers('dna') }])).toEqual([]);
+  });
+
+  it('a customer save: visibility is decided against the whole list, not only the changed parameters', () => {
+    // Only `cycles` changes; its controller `kind` does not. Checked against the changed subset alone,
+    // the condition would not resolve and the hidden parameter would be checked.
+    const before = [
+      { id: 'kind', value: 'dna' },
+      { id: 'cycles', value: 5 },
+      { id: 'method', value: 'oth' }
+    ];
+    expect(changedAnswerProblems([{ service: extraction, before, after: answers('dna') }])).toEqual([]);
+    const shownBefore = [{ id: 'kind', value: 'rna' }, ...before.slice(1)];
+    expect(changedAnswerProblems([{ service: extraction, before: shownBefore, after: answers('rna') }])).toEqual(['“Cycles” on “Extraction”: Must be greater than 0']);
+  });
+});
