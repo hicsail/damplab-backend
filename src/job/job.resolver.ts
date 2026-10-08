@@ -38,6 +38,7 @@ import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 import { assertJobContractWritable } from './job-editing';
 import { assertMaySubmitEquipmentUse } from './equipment-use-gate';
 import { assertMaySubmitHiddenServices } from './hidden-service-gate';
+import { assertParameterAnswersValid } from './parameter-answer-gate';
 import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
@@ -285,6 +286,10 @@ export class JobResolver {
     assertMaySubmitEquipmentUse(user, createJobInput.workflows);
     // Retired operations stay valid on existing jobs; only a new job is refused.
     assertMaySubmitHiddenServices(user, createJobInput.workflows);
+    // A number must obey its parameter's validation and "Other" needs its text —
+    // for every caller, staff included. This is the new-submission half of the
+    // rule; nothing already submitted is re-validated.
+    assertParameterAnswersValid(createJobInput.workflows);
     // Not derived from the token alone. Pricing lives on Keycloak groups, and a
     // group reaches a token only when the realm's client carries a Group
     // Membership mapper — so a customer correctly placed in

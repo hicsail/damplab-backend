@@ -247,6 +247,16 @@ describe('JobResolver.createJob — homology screening dispatch', () => {
     expect(screenJobInBackground).toHaveBeenCalledWith('job-1', 'customer-9');
     expect(screenJob).not.toHaveBeenCalled();
   });
+
+  it('refuses a number that breaks its parameter validation, for any caller (rule 26)', async () => {
+    const { resolver, screenJobInBackground } = screeningHarness();
+    const service = { name: 'PCR', parameters: [{ id: 'cycles', name: 'Cycles', type: 'number', validation: '>0' }] };
+    const input: any = { name: 'Submitted job', workflows: [{ nodes: [{ service, formData: [{ id: 'cycles', value: 0 }] }] }] };
+
+    await expect(resolver.createJob(input, user)).rejects.toThrow('“Cycles” on “PCR”: Must be greater than 0');
+    await expect(resolver.createJob(input, { ...user, realm_access: { roles: [Role.DamplabStaff] } })).rejects.toThrow('“Cycles” on “PCR”: Must be greater than 0');
+    expect(screenJobInBackground).not.toHaveBeenCalled();
+  });
 });
 
 describe('JobResolver.rerunJobHomologyScreening', () => {
