@@ -118,8 +118,11 @@ export function comparisonFits(comparison: Comparison, controller: Param): boole
   if (typeof comparison.value === 'boolean') return false;
   if (isChoice(controller)) return op === 'includes' ? typeof comparison.value === 'string' : !ordering && Array.isArray(comparison.optionIds);
   if (comparison.optionIds !== undefined) return false;
-  if (controller.type === 'number') return op !== 'includes';
-  return !ordering;
+  // The operand the operator needs must be there: a missing one is malformed, so unresolved, not false.
+  if (op === 'in') return Array.isArray(comparison.values);
+  const hasValue = typeof comparison.value === 'string' || typeof comparison.value === 'number';
+  if (controller.type === 'number') return op !== 'includes' && hasValue;
+  return !ordering && hasValue;
 }
 
 const text = (v: unknown): string => String(v).trim().toLowerCase();

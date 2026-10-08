@@ -1,4 +1,4 @@
-import { hiddenParameterIds, visibleParameterIds, withoutHiddenAnswers, withStoredHiddenAnswers } from './parameter-conditions';
+import { comparisonFits, hiddenParameterIds, visibleParameterIds, withoutHiddenAnswers, withStoredHiddenAnswers } from './parameter-conditions';
 
 /**
  * SHARED VECTORS — the same table, character for character, is in
@@ -192,6 +192,11 @@ const VECTORS: Array<{ name: string; parameters: any[]; formData: unknown; visib
     visible: ['note', 't']
   },
   { name: 'a malformed condition shows the parameter', parameters: [SAMPLE, target({ parameterId: 'sample', op: 'matches', value: 'x' })], formData: [], visible: ['sample', 't'] },
+  { name: 'unresolved: eq on text with no value', parameters: [NOTE, target({ parameterId: 'note', op: 'eq' })], formData: [{ id: 'note', value: 'x' }], visible: ['note', 't'] },
+  { name: 'unresolved: gt on a number with no value', parameters: [CYCLES, target({ parameterId: 'cycles', op: 'gt' })], formData: [{ id: 'cycles', value: '1' }], visible: ['cycles', 't'] },
+  { name: 'unresolved: eq on a yes/no with no value', parameters: [HOT, target({ parameterId: 'hot', op: 'eq' })], formData: [{ id: 'hot', value: true }], visible: ['hot', 't'] },
+  { name: 'unresolved: includes on text with no value', parameters: [NOTE, target({ parameterId: 'note', op: 'includes' })], formData: [{ id: 'note', value: 'x' }], visible: ['note', 't'] },
+  { name: 'unresolved: in on text with no values', parameters: [NOTE, target({ parameterId: 'note', op: 'in' })], formData: [{ id: 'note', value: 'x' }], visible: ['note', 't'] },
   {
     name: 'reserved entries are never hidden',
     parameters: [SAMPLE, { id: '__runCount', name: 'Number of runs', type: 'number', showIf: sampleIs('bact') }],
@@ -246,5 +251,15 @@ describe('hidden answers', () => {
       { id: 'kind', value: 'oth' },
       { id: 'kind__otherText', value: 'Phage' }
     ]);
+  });
+});
+
+describe('comparisonFits', () => {
+  it('a comparison missing the operand its operator needs does not fit', () => {
+    expect(comparisonFits({ parameterId: 'note', op: 'eq' }, NOTE)).toBe(false);
+    expect(comparisonFits({ parameterId: 'note', op: 'in' }, NOTE)).toBe(false);
+    expect(comparisonFits({ parameterId: 'cycles', op: 'gt' }, CYCLES)).toBe(false);
+    expect(comparisonFits({ parameterId: 'note', op: 'eq', value: 'x' }, NOTE)).toBe(true);
+    expect(comparisonFits({ parameterId: 'cycles', op: 'eq', value: 'abc' }, CYCLES)).toBe(true);
   });
 });
