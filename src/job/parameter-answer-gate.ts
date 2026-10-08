@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { checkValue, effectiveValidation, parseValidation } from '../services/parameter-validation';
+import { isEmptyParamValue, paramValuesSemanticallyEqual } from '../job-version/param-values.util';
 import { otherTextEntryId, selectsOther } from '../workflow/utils/other-option.util';
 
 /**
@@ -75,5 +76,59 @@ export function parameterAnswerProblems(workflows: ReadonlyArray<WorkflowLike> |
 
 export function assertParameterAnswersValid(workflows: ReadonlyArray<WorkflowLike> | undefined, services?: ReadonlyArray<ServiceLike>): void {
   const problems = parameterAnswerProblems(workflows, services);
+  if (problems.length > 0) throw new BadRequestException(problems[0]);
+}
+
+/**
+ * Rule 26 on a customer's resubmission, which never reaches `createJob`: it
+ * saves through `saveJobWorkflows` and hands the job back with
+ * `respondToJobReview`.
+ *
+ * Only the answers that save changes are checked. An answer stored before the
+ * save and left as it was is never re-validated, so a job submitted before a
+ * rule existed stays saveable. A node with nothing stored (`before` undefined:
+ * a node the save adds, or one whose operation it swapped) has every answer
+ * checked, exactly as `createJob` would.
+ */
+export type ChangedAnswersNode = { service: ServiceLike; before: unknown; after: unknown };
+
+/**
+ * Ids whose value differs between what is stored and what is being saved.
+ * Semantic, like `parametersDiffer` in the version service: `5` and `"5"` are
+ * the same answer, and an id that is empty on the side where it is missing is
+ * not a change (the editor resubmits the whole current parameter list).
+ */
+export function changedAnswerIds(before: unknown, after: unknown): Set<string> {
+  const was = valuesById(before);
+  const now = valuesById(after);
+  const changed = new Set<string>();
+  for (const [id, value] of now) {
+    if (!paramValuesSemanticallyEqual(was.get(id), value)) changed.add(id);
+  }
+  for (const [id, value] of was) {
+    if (!now.has(id) && !isEmptyParamValue(value)) changed.add(id);
+  }
+  return changed;
+}
+
+export function changedAnswerProblems(nodes: ReadonlyArray<ChangedAnswersNode>): string[] {
+  const problems: string[] = [];
+  for (const node of nodes) {
+    if (!Array.isArray(node.service?.parameters)) continue;
+    const changed = changedAnswerIds(node.before, node.after);
+    if (changed.size === 0) continue;
+    // A parameter counts as changed when its own value moved or its "Other"
+    // text did: blanking the text while "Other" stays selected is a change.
+    const parameters = (node.service.parameters as Array<Record<string, unknown>>).filter(
+      (param) => param && typeof param === 'object' && typeof param.id === 'string' && (changed.has(param.id) || changed.has(otherTextEntryId(param.id)))
+    );
+    // The whole of `after` goes in, so "Other" still finds its text entry.
+    problems.push(...parameterAnswerProblems([{ nodes: [{ service: { name: node.service.name, parameters }, formData: node.after }] }]));
+  }
+  return problems;
+}
+
+export function assertChangedAnswersValid(nodes: ReadonlyArray<ChangedAnswersNode>): void {
+  const problems = changedAnswerProblems(nodes);
   if (problems.length > 0) throw new BadRequestException(problems[0]);
 }

@@ -937,7 +937,13 @@ export class JobResolver {
     this.assertContractWritable(job, user);
     await this.jobService.claimSubIfPrimary(job, user);
 
-    const updated = await this.jobVersionService.saveWorkflows(input, this.versionAuthor(user, job), { uploaderSub: user.sub ?? '' });
+    const author = this.versionAuthor(user, job);
+    // A customer's resubmission never reaches createJob, so the answers this
+    // save changes are checked here (design rule 26). Staff saves are not.
+    const updated = await this.jobVersionService.saveWorkflows(input, author, {
+      uploaderSub: user.sub ?? '',
+      checkChangedAnswers: author.role === JobVersionAuthorRole.CUSTOMER
+    });
 
     // The billing core has moved. This is a no-op on a job with no SOW, which is
     // most jobs being edited; where there is one it flags the document stale so

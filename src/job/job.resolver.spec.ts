@@ -47,13 +47,25 @@ describe('JobResolver.saveJobWorkflows customer edit gate', () => {
   it('names the caller as the uploader, so the version service checks spreadsheet keys', async () => {
     const { resolver, saveWorkflows } = harness(JobState.CHANGES_REQUESTED);
     await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, user);
-    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: 'customer-1' });
+    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ uploaderSub: 'customer-1' }));
+  });
+
+  it("asks the version service to check a customer's changed answers (rule 26)", async () => {
+    const { resolver, saveWorkflows } = harness(JobState.CHANGES_REQUESTED);
+    await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, user);
+    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: 'customer-1', checkChangedAnswers: true });
   });
 
   it('names an empty uploader for a caller without a sub, so no new key is accepted', async () => {
     const { resolver, saveWorkflows } = harness(JobState.SUBMITTED);
     await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, { ...user, sub: undefined, realm_access: { roles: [Role.DamplabStaff] } });
-    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: '' });
+    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ uploaderSub: '' }));
+  });
+
+  it('does not ask for that check on a staff save', async () => {
+    const { resolver, saveWorkflows } = harness(JobState.SUBMITTED);
+    await resolver.saveJobWorkflows({ jobId: 'job-1', workflows: [], note: 'edit' } as any, { ...user, sub: 'staff-1', realm_access: { roles: [Role.DamplabStaff] } });
+    expect(saveWorkflows).toHaveBeenCalledWith(expect.anything(), expect.anything(), { uploaderSub: 'staff-1', checkChangedAnswers: false });
   });
 });
 

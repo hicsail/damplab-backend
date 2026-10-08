@@ -5,6 +5,7 @@ import { JobVersion, JobVersionAuthorRole, JobVersionDocument, JobVersionEdge, J
 import { jobVersionAuthorOrg } from './author-org';
 import { SaveJobWorkflowsInput, SaveWorkflowInput } from './job-version.dto';
 import { Job, JobDocument, JobState } from '../job/job.model';
+import { assertChangedAnswersValid } from '../job/parameter-answer-gate';
 import { Workflow, WorkflowDocument, WorkflowState } from '../workflow/models/workflow.model';
 import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../workflow/models/node.model';
 import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.model';
@@ -40,6 +41,8 @@ interface PreparedNode {
   snapshot: JobVersionNode;
   /** Ids of this node's uploaded-file parameters (`file` and `sampleSheet`), whose stored keys are presigned on read. */
   fileParamIds: string[];
+  /** The catalogue's name and effective parameters for this node's operation. Read by the answer check; never written. */
+  catalogService: { name: unknown; parameters: unknown };
 }
 
 /**
@@ -539,7 +542,7 @@ export class JobVersionService {
   async saveWorkflows(
     input: SaveJobWorkflowsInput,
     author: { role: JobVersionAuthorRole; sub: string; name: string; org?: string },
-    opts: { visibleToCustomer?: boolean; uploaderSub?: string; priorSnapshotsByClientId?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]> } = {}
+    opts: { visibleToCustomer?: boolean; uploaderSub?: string; checkChangedAnswers?: boolean; priorSnapshotsByClientId?: ReadonlyMap<string, readonly ParameterSnapshotEntry[]> } = {}
   ): Promise<Job> {
     const job = await this.jobModel.findById(input.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${input.jobId} not found`);
@@ -557,6 +560,7 @@ export class JobVersionService {
     const prepared = await this.prepareWorkflows(input.workflows, job.customerCategory as CustomerCategory | undefined, this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId));
     this.assertWorkInFlightUntouched(liveNodes, prepared);
     if (opts.uploaderSub !== undefined) this.assertSampleSheetKeysAllowed(liveNodes, prepared, opts.uploaderSub);
+    if (opts.checkChangedAnswers) this.assertChangedAnswersValid(liveNodes, prepared);
 
     // Which nodes existed before this save, across every tree. Node deletion is
     // decided once, globally, at the end — never per tree.
@@ -706,6 +710,26 @@ export class JobVersionService {
   }
 
   /**
+   * A customer's resubmission: a number the save changes must obey its
+   * parameter's validation, and a changed "Other" needs its text (design rules
+   * 26 and 29). Answers the save leaves as stored are not looked at, so nothing
+   * already submitted is re-validated.
+   *
+   * Opt-in: only `saveJobWorkflows` asks, and only for a customer author. A
+   * staff save, a version restore and a withdrawal never do.
+   */
+  private assertChangedAnswersValid(liveNodes: Map<string, LiveNode>, prepared: PreparedNode[][]): void {
+    assertChangedAnswersValid(
+      prepared.flat().map((node) => {
+        const live = liveNodes.get(node.clientId);
+        // A node whose operation was swapped has no stored answers of its own.
+        const sameService = !!live && String((live.service as any)?._id ?? live.service) === String(node.patch.service);
+        return { service: node.catalogService, before: sameService ? live.formData : undefined, after: node.patch.formData };
+      })
+    );
+  }
+
+  /**
    * Work already under way is not the editor's to change.
    *
    * A node that has left QUEUED, or is holding inventory, may not be deleted or
@@ -770,6 +794,7 @@ export class JobVersionService {
 
         return {
           clientId: node.id,
+          catalogService: { name: service.name, parameters: service.parameters },
           fileParamIds: (Array.isArray(service.parameters) ? service.parameters : [])
             .filter((p: any) => p && typeof p.id === 'string' && (p.type === 'file' || isSampleSheetParam(p)))
             .map((p: any) => p.id),
