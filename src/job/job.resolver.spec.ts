@@ -219,7 +219,10 @@ function screeningHarness(overrides: { created?: { _id: string; name: string }; 
     appendVersion: jest.fn(async () => undefined)
   };
   const activityService: any = { createEvent: jest.fn(async () => undefined) };
-  const keycloakService: any = { resolveCustomerCategoryForUser: jest.fn(async () => undefined) };
+  const keycloakService: any = {
+    resolveCustomerCategoryForUser: jest.fn(async () => undefined),
+    userShowsBiosecurity: jest.fn(async () => true)
+  };
   const notificationDispatch: any = { dispatch: jest.fn() };
   const screenJobInBackground = jest.fn();
   const screenJob = jest.fn();
@@ -326,7 +329,8 @@ function kycHarness(job: any): {
   const screenJob = jest.fn();
   const screenJobInBackground = jest.fn();
   const jobScreeningService: any = { screenJob, screenJobInBackground };
-  const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, jobScreeningService, aclidService);
+  const keycloakService: any = { userShowsBiosecurity: jest.fn(async () => true) };
+  const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, keycloakService, {} as any, jobScreeningService, aclidService);
   return { resolver, createVerificationUrl, getScreen, setAclidScreening, setHomologyScreening, screenJob, screenJobInBackground };
 }
 
@@ -398,6 +402,14 @@ describe('JobResolver.startJobCustomerVerification', () => {
     await expect(staff.resolver.startJobCustomerVerification('job-1', technician)).resolves.toEqual({ url: expect.any(String) });
   });
 
+  it('refuses an account that cannot see biosecurity, without touching Aclid', async () => {
+    const { resolver, createVerificationUrl } = kycHarness(screenedJob());
+    (resolver as any).keycloakService.userShowsBiosecurity.mockResolvedValue(false);
+
+    await expect(resolver.startJobCustomerVerification('job-1', owner)).rejects.toThrow('Biosecurity is not enabled for this account');
+    expect(createVerificationUrl).not.toHaveBeenCalled();
+  });
+
   it('refuses a stranger without touching Aclid', async () => {
     const { resolver, createVerificationUrl } = kycHarness(screenedJob());
 
@@ -463,7 +475,10 @@ describe('JobResolver.refreshJobAclidScreening', () => {
         startedAt: new Date('2026-09-01T00:00:00Z')
       })
     );
-    expect(updated.aclidScreening?.decisionStatus).toBe('approved');
+    // The owner is not staff, so the response names submission and not the decision.
+    expect(updated.aclidScreening?.verificationStatus).toBe('submitted');
+    expect(updated.aclidScreening?.decisionStatus).toBeUndefined();
+    expect(updated.homologyScreening).toBeUndefined();
     // A refresh is a read of Aclid's state, never a new screen.
     expect(screenJob).not.toHaveBeenCalled();
     expect(screenJobInBackground).not.toHaveBeenCalled();
@@ -507,7 +522,7 @@ describe('JobResolver.refreshJobAclidScreening', () => {
         sequenceCount: 2
       })
     );
-    expect(updated.homologyScreening?.status).toBe(HomologyScreeningStatus.FAILED);
+    expect(updated.homologyScreening).toBeUndefined();
     expect(screenJob).not.toHaveBeenCalled();
     expect(screenJobInBackground).not.toHaveBeenCalled();
   });

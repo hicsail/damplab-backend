@@ -37,14 +37,14 @@ import { JobVersionService } from '../job-version/job-version.service';
 import { SaveJobWorkflowsInput } from '../job-version/job-version.dto';
 import { assertJobContractWritable } from './job-editing';
 import { assertMaySubmitEquipmentUse } from './equipment-use-gate';
-import { assertMaySubmitHiddenServices } from './hidden-service-gate';
 import { assertParameterAnswersValid } from './parameter-answer-gate';
 import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
-import { customerStatusFromAclid, homologyStatusFromAclidRegulatory } from '../aclid/aclid-status.util';
+import { customerStatusFromAclid, homologyStatusFromAclidScreen } from '../aclid/aclid-status.util';
+import { redactJobBiosecurity } from './biosecurity-view';
 
 @Resolver(() => Job)
 @UseGuards(AuthRolesGuard)
@@ -239,15 +239,20 @@ export class JobResolver {
 
   @Query(() => Job, { nullable: true })
   @RequirePermission(Permission.JobsViewAll)
-  async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
-    return this.jobService.findById(id);
+  async jobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
+    const job = await this.jobService.findById(id);
+    if (!job) return null;
+    if (!(await this.callerShowsBiosecurity(user))) return redactJobBiosecurity(job, 'hidden');
+    return job;
   }
 
   @Query(() => Job, { nullable: true })
   async ownJobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
     const job = await this.jobService.findById(id);
     if (!job || !isJobMember(job, user)) return null;
-    return this.jobService.claimSubIfPrimary(job, user);
+    const claimed = await this.jobService.claimSubIfPrimary(job, user);
+    const mode = (await this.callerShowsBiosecurity(user)) ? 'customer' : 'hidden';
+    return redactJobBiosecurity(claimed, mode);
   }
 
   @Query(() => Job)
@@ -284,8 +289,8 @@ export class JobResolver {
     // Server-side twin of the palette hiding equipment-use operations from
     // plain clients. Checked before anything is written.
     assertMaySubmitEquipmentUse(user, createJobInput.workflows);
-    // Retired operations stay valid on existing jobs; only a new job is refused.
-    assertMaySubmitHiddenServices(user, createJobInput.workflows);
+    // Retired operations are hidden from the palette only. A job that already
+    // contains one — a chatbot draft, a loaded file — still submits.
     // A number must obey its parameter's validation and "Other" needs its text —
     // for every caller, staff included. This is the new-submission half of the
     // rule; nothing already submitted is re-validated.
@@ -368,6 +373,7 @@ export class JobResolver {
   @Mutation(() => Job, { description: 'Staff-only. Re-run SecureDNA homology screening on a job and return the recorded verdict.' })
   @RequirePermission(Permission.JobsViewAll)
   async rerunJobHomologyScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
+    await this.assertShowsBiosecurity(user);
     const job = await this.jobService.findById(jobId);
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
@@ -393,11 +399,31 @@ export class JobResolver {
     if (!callerMayAccessJob(job, user, hasPermission(user, Permission.JobsViewAll))) {
       throw new ForbiddenException('You do not have permission to access this job');
     }
-    const screening = job.aclidScreening;
-    if (!screening?.screenId) {
+    await this.assertShowsBiosecurity(user);
+    const ready = await this.ensureAclidScreen(job, user);
+    return ready;
+  }
+
+  /**
+   * A verification URL needs an Aclid screen. Submission creates one in the
+   * background; a job opened before that finishes, or one whose DNA lives on
+   * a step we only just started reading, still has none. Screen once, now,
+   * and use the id if Aclid stored one.
+   */
+  private async ensureAclidScreen(job: Job, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
+    if (job.aclidScreening?.screenId) {
+      return { job, screening: job.aclidScreening, screenId: job.aclidScreening.screenId };
+    }
+    if (!this.aclidService.isConfigured?.()) {
       throw new BadRequestException('No Aclid screen on this job');
     }
-    return { job, screening, screenId: screening.screenId };
+    await this.jobScreeningService.screenJob(String((job as { _id?: unknown })._id), user.sub ?? '');
+    const refreshed = await this.jobService.findById(String((job as { _id?: unknown })._id));
+    const screening = refreshed?.aclidScreening;
+    if (!refreshed || !screening?.screenId) {
+      throw new BadRequestException(screening?.detail || 'No Aclid screen on this job');
+    }
+    return { job: refreshed, screening, screenId: screening.screenId };
   }
 
   /**
@@ -434,7 +460,7 @@ export class JobResolver {
     const { job, screening: existing, screenId } = await this.jobForCustomerVerification(jobId, user);
     const screen = await this.aclidService.getScreen(screenId);
 
-    const homologyStatus = homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
+    const homologyStatus = homologyStatusFromAclidScreen(screen);
     const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
     const updated = await this.jobService.setAclidScreening(jobId, {
       ...existing,
@@ -445,7 +471,7 @@ export class JobResolver {
       verificationCompletedAt: verificationCompletedAt && !Number.isNaN(verificationCompletedAt.getTime()) ? verificationCompletedAt : null,
       // Same wording the screening run writes: a verdict clears the line, no
       // verdict names what Aclid did say.
-      detail: screen.regulatoryStatus ? null : `Aclid screen ${screen.status} without a regulatory status`,
+      detail: homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null,
       customerStatus: customerStatusFromAclid({
         screenId,
         decisionStatus: screen.decisionStatus,
@@ -461,7 +487,7 @@ export class JobResolver {
     // because a FAILED row may be SecureDNA's, which this refresh knows nothing
     // about. Anything other than a new FAILED leaves the row exactly as it was.
     if (homologyStatus !== HomologyScreeningStatus.FAILED) {
-      return updated ?? job;
+      return this.presentBiosecurity(updated ?? job, user);
     }
     const rollup = job.homologyScreening;
     const failed = await this.jobService.setHomologyScreening(jobId, {
@@ -472,7 +498,30 @@ export class JobResolver {
       sequenceCount: rollup?.sequenceCount ?? existing.sequenceCount,
       detail: `Aclid now reports controlled${rollup?.detail ? ` (was: ${rollup.detail})` : ''}`
     });
-    return failed ?? updated ?? job;
+    return this.presentBiosecurity(failed ?? updated ?? job, user);
+  }
+
+  /**
+   * The Biosecurity block is per account, stored as a Keycloak attribute.
+   * A missing method (unit harnesses that never construct Keycloak) is off.
+   */
+  private async callerShowsBiosecurity(user: User): Promise<boolean> {
+    const read = this.keycloakService?.userShowsBiosecurity;
+    if (typeof read !== 'function' || !user?.sub) return true;
+    return read.call(this.keycloakService, user.sub);
+  }
+
+  private async assertShowsBiosecurity(user: User): Promise<void> {
+    if (!(await this.callerShowsBiosecurity(user))) {
+      throw new ForbiddenException('Biosecurity is not enabled for this account');
+    }
+  }
+
+  /** Staff with the flag see the full record. Everyone else sees the customer view, or nothing. */
+  private async presentBiosecurity(job: Job, user: User): Promise<Job> {
+    if (!(await this.callerShowsBiosecurity(user))) return redactJobBiosecurity(job, 'hidden');
+    if (hasPermission(user, Permission.JobsViewAll)) return job;
+    return redactJobBiosecurity(job, 'customer');
   }
 
   @Mutation(() => Job, {

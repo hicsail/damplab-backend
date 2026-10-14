@@ -171,4 +171,31 @@ export class CustomerManagementResolver {
     // succeed while granting nothing, if the realm has no group -> role mapping.
     return { ...row, accessRoleMapped: await this.keycloakService.isAccessRoleMapped(userId, tier) } as KeycloakUserCustomerManagement;
   }
+
+  /**
+   * Show or hide the Biosecurity block for one account. Independent of pricing
+   * and of access tier. Takes effect on their next page load: the UI reads it
+   * from this API, not from the token.
+   */
+  @Mutation(() => KeycloakUserCustomerManagement, {
+    description: 'Administrator: set whether a user sees the Biosecurity block. Shown unless explicitly hidden. Nothing is backfilled.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @RequirePermission(Permission.CustomersManage)
+  async setUserShowBiosecurity(@Args('userId', { type: () => ID }) userId: string, @Args('enabled', { type: () => Boolean }) enabled: boolean): Promise<KeycloakUserCustomerManagement> {
+    if (!this.keycloakService.isConfigured()) {
+      throw new BadRequestException('Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).');
+    }
+    try {
+      await this.keycloakService.setUserShowBiosecurity(userId, enabled);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new BadRequestException(msg);
+    }
+    const row = await this.keycloakService.getUserCustomerManagementRow(userId);
+    if (!row) {
+      throw new NotFoundException(`Keycloak user ${userId} not found`);
+    }
+    return row;
+  }
 }

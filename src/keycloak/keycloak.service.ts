@@ -18,6 +18,18 @@ export interface LabStaffMember {
   email?: string;
 }
 
+/**
+ * Keycloak user attribute. Absent means the block is shown. An admin hides it
+ * by storing "false". Existing accounts need no backfill.
+ */
+export const SHOW_BIOSECURITY_ATTRIBUTE = 'showBiosecurity';
+
+export function showBiosecurityFromAttributes(attributes?: Record<string, string[]> | null): boolean {
+  const values = attributes?.[SHOW_BIOSECURITY_ATTRIBUTE];
+  if (!Array.isArray(values) || values.length === 0) return true;
+  return !values.some((value) => value === 'false');
+}
+
 export interface KeycloakUserCustomerManagementRow {
   id: string;
   username?: string;
@@ -28,6 +40,8 @@ export interface KeycloakUserCustomerManagementRow {
   isDefaultExternalCustomer?: boolean;
   /** The access column this user resolves to. Independent of `customerCategory`. */
   accessTier?: AccessTier;
+  /** Whether this account sees the Biosecurity block. True when the attribute is absent. */
+  showBiosecurity: boolean;
 }
 
 /** The account a staff-entered client email names: who owns the job (B28) and how it is priced (B13). */
@@ -61,6 +75,7 @@ interface KeycloakUser {
   firstName?: string;
   lastName?: string;
   email?: string;
+  attributes?: Record<string, string[]>;
 }
 
 @Injectable()
@@ -289,7 +304,8 @@ export class KeycloakService {
       lastName: user.lastName,
       customerCategory: this.deriveCustomerCategoryFromGroups(groups),
       isDefaultExternalCustomer: this.isDefaultExternalCustomer(groups),
-      accessTier: deriveAccessTierFromGroups(groups)
+      accessTier: deriveAccessTierFromGroups(groups),
+      showBiosecurity: showBiosecurityFromAttributes(user.attributes)
     };
   }
 
@@ -390,6 +406,51 @@ export class KeycloakService {
    * person a Client" is literally "remove their access groups", and the early return
    * below is the whole implementation of it.
    */
+  /**
+   * Show or hide the Biosecurity block for one account.
+   *
+   * Stored as a user attribute, not a group. The block is on unless the
+   * attribute is "false", so turning it on deletes the attribute. The same
+   * write guard as group membership applies — this realm is shared with
+   * production, and the auth bypass must not be able to flip a real person.
+   */
+  async setUserShowBiosecurity(userId: string, enabled: boolean): Promise<void> {
+    this.assertGroupWritesAllowed();
+    const user = await this.getUserById(userId);
+    if (!user) {
+      throw new Error(`Keycloak user ${userId} not found`);
+    }
+    const attributes = { ...(user.attributes ?? {}) };
+    if (enabled) delete attributes[SHOW_BIOSECURITY_ATTRIBUTE];
+    else attributes[SHOW_BIOSECURITY_ATTRIBUTE] = ['false'];
+    const res = await this.adminFetch(`/admin/realms/${this.realm}/users/${encodeURIComponent(userId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...user, attributes })
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Keycloak update user failed: ${res.status} ${text}`);
+    }
+  }
+
+  /**
+   * Whether this account sees the Biosecurity block. Shown unless the account
+   * is explicitly hidden. A lookup we cannot make — Keycloak not configured,
+   * an unknown id, a failed request — stays shown.
+   */
+  async userShowsBiosecurity(userId: string | undefined): Promise<boolean> {
+    if (!userId || !this.isConfigured()) return true;
+    try {
+      const user = await this.getUserById(userId);
+      if (!user) return true;
+      return showBiosecurityFromAttributes(user.attributes);
+    } catch (error) {
+      this.logger.warn(`Could not read biosecurity visibility for ${userId}`, error instanceof Error ? error.stack : error);
+      return true;
+    }
+  }
+
   async setUserAccessTier(userId: string, tier: AccessTier): Promise<void> {
     this.assertGroupWritesAllowed();
     await this.removeUserFromAllAccessGroups(userId);

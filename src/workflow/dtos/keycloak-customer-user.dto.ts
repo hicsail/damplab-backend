@@ -47,4 +47,9 @@ export class KeycloakUserCustomerManagement {
       'False when the access group was written but the realm role it is meant to map to is absent from the user. The guard reads realm roles, not groups, so an unmapped group grants nothing — this reports that rather than letting the change look successful. Only populated on the row returned by setUserKeycloakAccessTier; null elsewhere, because checking it per row would double the Admin API calls a list page makes.'
   })
   accessRoleMapped?: boolean;
+
+  @Field(() => Boolean, {
+    description: 'Whether this account sees the Biosecurity block. True when the Keycloak attribute is absent. False only when an admin has hidden it.'
+  })
+  showBiosecurity: boolean;
 }

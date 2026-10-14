@@ -9,7 +9,7 @@ import { SecureDnaService } from '../securedna/securedna.service';
 import { Region } from '../securedna/region';
 import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
 import { AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
-import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidRegulatory, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
+import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidScreen, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { SCREENED_FIELDS_BY_SERVICE } from './job-screening.constants';
 import { getFormStringFromEntries, looksLikeNucleotideSequence, normalizeFormDataToArray, ScreeningTarget } from './job-screening.util';
@@ -121,7 +121,7 @@ export class JobScreeningService {
         startedAt: new Date(),
         completedAt: new Date(),
         sequenceCount: 0,
-        detail: 'No Gibson Assembly or Modular Cloning sequences on this job'
+        detail: 'No screenable DNA sequences on this job'
       });
     }
     if (targets.length > MAX_SECUREDNA_SEQUENCE_BATCH) {
@@ -145,10 +145,11 @@ export class JobScreeningService {
         )
       : null;
 
-    // In `aclid` mode SecureDNA backs Aclid up whenever Aclid produced no
-    // verdict: it errored, it finished without a regulatory status, or it had
-    // nothing long enough to screen. A real `controlled` / `not_controlled`
-    // verdict is an answer, not a reason to ask a second provider.
+    // In `aclid` mode SecureDNA backs Aclid up only when Aclid produced no
+    // verdict: the call errored, the screen failed or was removed without a
+    // regulatory status, or nothing was long enough to screen. A succeeded
+    // screen is a pass even when `regulatory_status` is empty — that is a
+    // clear result, not a reason to ask SecureDNA.
     const secureDna = mode === 'aclid' && aclid?.outcome === 'verdict' ? null : await this.runSecureDna(jobId, userSub, targets, startedAt);
 
     // `securedna` mode keeps the Homology row SecureDNA's alone even though an
@@ -239,16 +240,14 @@ export class JobScreeningService {
       };
     }
 
-    const homologyStatus = homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
+    const homologyStatus = homologyStatusFromAclidScreen(screen);
 
-    // Only a regulatory status we can map is a verdict. A terminal screen can
-    // come back with no `regulatory_status` at all — `failed`, `deleted` and
-    // `archived` all resolve rather than throw — and it can come back with one
-    // we do not recognise, say a future Aclid enum. Neither is an answer, and
-    // both want the backup just as much as an error does.
+    // `failed`, `deleted`, and `archived` can resolve with no regulatory
+    // status, and a status we do not recognise is not an answer either. Those
+    // still want the SecureDNA backup. A succeeded screen does not.
     const answered = homologyStatus !== HomologyScreeningStatus.UNAVAILABLE;
     const reason = screen.regulatoryStatus ? `screen ${screen.status} reported ${screen.regulatoryStatus}` : `screen ${screen.status} without a regulatory status`;
-    const verdictLine = answered ? `Aclid ${screen.regulatoryStatus}` : `Aclid ${reason}`;
+    const verdictLine = answered ? (screen.regulatoryStatus ? `Aclid ${screen.regulatoryStatus}` : 'Aclid passed') : `Aclid ${reason}`;
 
     await this.recordAclid(jobId, {
       screenId: screen.id,
