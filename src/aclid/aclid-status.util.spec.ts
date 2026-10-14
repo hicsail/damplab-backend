@@ -1,5 +1,13 @@
 import { HomologyScreeningStatus } from '../job/job.model';
-import { parseHomologyMode, homologyStatusFromAclidRegulatory, customerStatusFromAclid, rollupHomologyStatuses, isAclidLengthEligible } from './aclid-status.util';
+import {
+  parseHomologyMode,
+  homologyStatusFromAclidRegulatory,
+  homologyStatusFromAclidScreen,
+  customerStatusFromAclid,
+  customerVerificationState,
+  rollupHomologyStatuses,
+  isAclidLengthEligible
+} from './aclid-status.util';
 
 describe('parseHomologyMode', () => {
   it('defaults to aclid when Aclid is configured and the env is unset or unknown', () => {
@@ -28,6 +36,41 @@ describe('homologyStatusFromAclidRegulatory', () => {
   it('is Unavailable when Aclid has not given a regulatory status', () => {
     expect(homologyStatusFromAclidRegulatory(null)).toBe(HomologyScreeningStatus.UNAVAILABLE);
     expect(homologyStatusFromAclidRegulatory(undefined)).toBe(HomologyScreeningStatus.UNAVAILABLE);
+  });
+});
+
+describe('homologyStatusFromAclidScreen', () => {
+  it('passes a succeeded screen that has no regulatory status', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null })).toBe(HomologyScreeningStatus.PASSED);
+  });
+
+  it('still fails a succeeded screen that is controlled', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: 'controlled' })).toBe(HomologyScreeningStatus.FAILED);
+  });
+
+  it('does not treat a failed screen with no regulatory status as a pass', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'failed', regulatoryStatus: null })).toBe(HomologyScreeningStatus.UNAVAILABLE);
+  });
+});
+
+describe('customerVerificationState', () => {
+  it('is unavailable without a screen', () => {
+    expect(customerVerificationState(null)).toBe('unavailable');
+    expect(customerVerificationState({ verificationStatus: 'submitted' })).toBe('unavailable');
+  });
+
+  it('treats a finished verification as submitted without naming the decision', () => {
+    expect(customerVerificationState({ screenId: 's', verificationStatus: 'submitted' })).toBe('submitted');
+    expect(customerVerificationState({ screenId: 's', verificationCompletedAt: '2026-09-02T00:00:00Z' })).toBe('submitted');
+    expect(customerVerificationState({ screenId: 's', decisionStatus: 'approved' })).toBe('submitted');
+    expect(customerVerificationState({ screenId: 's', decisionStatus: 'rejected' })).toBe('submitted');
+  });
+
+  it('keeps a partial or missing verification as not submitted, and not_required on its own', () => {
+    expect(customerVerificationState({ screenId: 's', verificationStatus: 'missing_verification' })).toBe('not_submitted');
+    expect(customerVerificationState({ screenId: 's', verificationStatus: 'partially_submitted' })).toBe('not_submitted');
+    expect(customerVerificationState({ screenId: 's' })).toBe('not_submitted');
+    expect(customerVerificationState({ screenId: 's', verificationStatus: 'not_required' })).toBe('not_required');
   });
 });
 

@@ -53,6 +53,11 @@ export class MyPermissions {
     description: "The caller's pricing category as the server resolves it, from their Keycloak groups. Null when they belong to no pricing group."
   })
   customerCategory?: CustomerCategory;
+
+  @Field(() => Boolean, {
+    description: 'Whether this caller sees the Biosecurity block. True unless an admin has hidden it.'
+  })
+  showBiosecurity: boolean;
 }
 
 @ObjectType({ description: 'One access tier an administrator may preview the UI as, with the permissions that tier resolves to.' })
@@ -87,7 +92,8 @@ export class PermissionsResolver {
       effective: [...permissionsFor(user)],
       asCustomer: [...customerPermissionsFor(user)],
       roles: user?.realm_access?.roles ?? [],
-      customerCategory: await this.keycloakService.resolveCustomerCategoryForUser(user)
+      customerCategory: await this.keycloakService.resolveCustomerCategoryForUser(user),
+      showBiosecurity: await this.keycloakService.userShowsBiosecurity(user?.sub)
     };
   }
 

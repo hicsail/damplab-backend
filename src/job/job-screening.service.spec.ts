@@ -2,7 +2,7 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { AclidScreenPendingError } from '../aclid/aclid.service';
 import { JobScreeningService } from './job-screening.service';
 import { HomologyScreeningStatus, Job } from './job.model';
-import { GIBSON_ASSEMBLY_SERVICE_NAME, M_CLONING_SERVICE_NAME } from './job-screening.constants';
+import { GIBSON_ASSEMBLY_SERVICE_NAME, M_CLONING_SERVICE_NAME, ORDERING_DNA_FRAGMENTS_SERVICE_NAME } from './job-screening.constants';
 
 const WORKFLOW_ID = '65a1b2c3d4e5f60718293a4b';
 const DNA_A = 'ATGGCGCGTACGTAGCTAGCTAGCATCGATCGATCGTAGCTAGCTAGCTAGCATCGATCGG';
@@ -103,6 +103,23 @@ describe('collectScreeningTargets', () => {
     ]);
     const targets = await service.collectScreeningTargets(job!);
     expect(targets).toEqual([{ name: `${WORKFLOW_ID}_n1_insert`, seq: DNA_A }]);
+  });
+
+  it('takes the ordered fragment when Gibson’s insert is only a description', async () => {
+    const { service, job } = harness([
+      {
+        id: 'n1',
+        serviceName: ORDERING_DNA_FRAGMENTS_SERVICE_NAME,
+        formData: [{ id: 'fragment-sequence', value: DNA_A }]
+      },
+      {
+        id: 'n2',
+        serviceName: GIBSON_ASSEMBLY_SERVICE_NAME,
+        formData: [{ id: 'insert', value: 'sfGFP (717 bp) with 25 bp homology arms' }]
+      }
+    ]);
+    const targets = await service.collectScreeningTargets(job!);
+    expect(targets).toEqual([{ name: `${WORKFLOW_ID}_n1_fragment-sequence`, seq: DNA_A }]);
   });
 
   it('takes vector then insert from Modular Cloning', async () => {
@@ -306,6 +323,21 @@ describe('screenJob homology mode', () => {
     expect(aclid.screenId).toBeNull();
     expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
     expect(aclid.customerStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
+  });
+
+  it('in aclid mode records Passed from a succeeded screen with no regulatory status and does not call SecureDNA', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn(async () => aclidScreen({ status: 'succeeded', regulatoryStatus: null }));
+    const screenSequences = jest.fn();
+    const { service, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences });
+
+    const result = await service.screenJob('job-1', 'user-1');
+
+    expect(screenSequences).not.toHaveBeenCalled();
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(result.batchId).toBeNull();
+    expect(result.detail).toContain('Aclid passed');
+    expect(lastCall(setAclidScreening).homologyStatus).toBe(HomologyScreeningStatus.PASSED);
   });
 
   /**
