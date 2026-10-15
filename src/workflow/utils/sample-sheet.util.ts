@@ -234,6 +234,29 @@ export function unuploadedFileName(parameters: unknown, formData: ReadonlyArray<
 }
 
 /**
+ * Every non-blank answer to a plain File Upload parameter (not a Table, whose file the server reads anyway), with the
+ * file name to show and its storage key when it has one.
+ */
+export function plainFileAnswers(parameters: unknown, formData: ReadonlyArray<{ id: string; value?: unknown }>): Array<{ filename: string; key?: string }> {
+  const plain = new Set(
+    (Array.isArray(parameters) ? parameters : [])
+      .filter((p): p is { id: string; type: string } => !!p && typeof p === 'object' && (p as any).type === 'file' && typeof (p as any).id === 'string')
+      .map((p) => p.id)
+  );
+  const out: Array<{ filename: string; key?: string }> = [];
+  for (const entry of formData ?? []) {
+    if (!entry || !plain.has(entry.id)) continue;
+    for (const value of flattenValues(entry.value)) {
+      if (value === null || value === undefined || value === '') continue;
+      const record = fileRecord(value);
+      const filename = typeof record?.filename === 'string' && record.filename !== '' ? record.filename : typeof value === 'string' ? value : 'file';
+      out.push({ filename, key: sampleSheetKeyOf(value) });
+    }
+  }
+  return out;
+}
+
+/**
  * Why a sheet cannot be replaced right now, or null when it can.
  *
  * Deliberately wider than `assertJobContractWritable`: a sample list is the

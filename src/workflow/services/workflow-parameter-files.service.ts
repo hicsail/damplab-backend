@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -103,6 +103,28 @@ export class WorkflowParameterFilesService {
     } catch (err) {
       console.error('Failed to create S3 presigned download URL for workflow parameter file', err);
       return null;
+    }
+  }
+
+  /** False on a server with no parameter-file bucket (local dev), where files are recorded by name only. */
+  get isConfigured(): boolean {
+    return !!this.s3 && !!this.bucket;
+  }
+
+  /**
+   * Whether an object is stored under `key` (a HEAD request; nothing is read).
+   * Throws when it cannot tell — storage unconfigured or unreachable — so a
+   * caller never accepts a file it could not confirm.
+   */
+  async objectExists(key: string): Promise<boolean> {
+    if (!this.s3 || !this.bucket) throw new Error('Workflow parameter file storage is not configured on the server.');
+    try {
+      await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
+      return true;
+    } catch (error) {
+      const status = (error as { $metadata?: { httpStatusCode?: number } })?.$metadata?.httpStatusCode;
+      if (status === 404 || (error as { name?: string })?.name === 'NotFound') return false;
+      throw error;
     }
   }
 
