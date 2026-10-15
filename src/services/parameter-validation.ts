@@ -90,6 +90,10 @@ export function parameterDefinitionError(param: unknown): string | null {
   if (!param || typeof param !== 'object') return null;
   const p = param as { id?: unknown; name?: unknown; type?: unknown; validation?: unknown; display?: unknown; allowMultipleValues?: unknown };
   const label = typeof p.name === 'string' && p.name.trim() !== '' ? p.name.trim() : String(p.id ?? '');
+  // Answers are stored under the parameter's id, and a file is uploaded only for a parameter that has one.
+  if ((p.type === 'file' || p.type === 'table' || p.type === 'sampleSheet') && (typeof p.id !== 'string' || p.id.trim() === '')) {
+    return `Parameter “${label}”: a File Upload or Table parameter needs an id.`;
+  }
   const validation = typeof p.validation === 'string' ? p.validation.trim() : '';
   if (validation !== '') {
     if (p.type !== 'number') return `Parameter “${label}”: only Number parameters can have a validation.`;

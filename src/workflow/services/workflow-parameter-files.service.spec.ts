@@ -49,3 +49,23 @@ describe('WorkflowParameterFilesService.createPresignedUpload', () => {
     expect(upload.key).toMatch(/^workflow-parameters\/u\/[0-9a-f-]{36}-Samples\.final\.xlsx$/);
   });
 });
+
+describe('WorkflowParameterFilesService — is a submitted file really stored?', () => {
+  it('says whether file storage is configured', () => {
+    expect(new WorkflowParameterFilesService(config({})).isConfigured).toBe(false);
+    expect(serviceWith(jest.fn()).isConfigured).toBe(true);
+  });
+
+  it('finds a stored object with a HEAD request, and reports a missing one as absent', async () => {
+    const present = jest.fn(async () => ({ ContentLength: 3 }));
+    await expect(serviceWith(present).objectExists('workflow-parameters/u/a.pdf')).resolves.toBe(true);
+    expect((present.mock.calls[0] as any)[0].constructor.name).toBe('HeadObjectCommand');
+    const notFound = Object.assign(new Error('NotFound'), { name: 'NotFound', $metadata: { httpStatusCode: 404 } });
+    await expect(serviceWith(jest.fn(async () => Promise.reject(notFound))).objectExists('k')).resolves.toBe(false);
+  });
+
+  it('throws when it cannot tell — storage unconfigured or unreachable — rather than guess', async () => {
+    await expect(new WorkflowParameterFilesService(config({})).objectExists('k')).rejects.toThrow('not configured');
+    await expect(serviceWith(jest.fn(async () => Promise.reject(new Error('socket hang up')))).objectExists('k')).rejects.toThrow('socket hang up');
+  });
+});

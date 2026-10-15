@@ -25,6 +25,7 @@ import { CurrentUser } from '../auth/user.decorator';
 import { SOW } from '../sow/sow.model';
 import { SOWService } from '../sow/sow.service';
 import { JobAttachmentsService } from './job-attachments.service';
+import { reopenTarget } from './job-reopen';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
@@ -151,6 +152,21 @@ export class JobResolver {
    * lab pipeline (QUEUED → IN_PROGRESS → COMPLETE) is already tracked per node
    * and would just add noise to a list about document revisions.
    */
+  /** A state as staff read it, for messages. */
+  private static readonly STATE_LABELS: Record<JobState, string> = {
+    [JobState.CREATING]: 'Creating',
+    [JobState.SUBMITTED]: 'Submitted',
+    [JobState.CHANGES_REQUESTED]: 'Changes requested',
+    [JobState.ACCEPTED]: 'Accepted',
+    [JobState.WAITING_FOR_SOW]: 'Waiting for SOW',
+    [JobState.QUEUED]: 'Queued',
+    [JobState.IN_PROGRESS]: 'In progress',
+    [JobState.COMPLETE]: 'Complete',
+    [JobState.REJECTED]: 'Rejected',
+    [JobState.CLOSED]: 'Closed',
+    [JobState.CANCELLED]: 'Cancelled'
+  };
+
   private static readonly STATE_EVENT_NOTES: Partial<Record<JobState, string>> = {
     [JobState.CHANGES_REQUESTED]: 'Changes requested',
     [JobState.SUBMITTED]: 'Submitted',
@@ -802,6 +818,15 @@ export class JobResolver {
     if (newState !== JobState.SUBMITTED && newState !== JobState.CLOSED) {
       throw new BadRequestException('Only submission and close-out go through changeJobState. Use reviewJob for review decisions.');
     }
+    // A new job is submitted by createJob; the only submission here is a resubmission. Without this a closed (or any)
+    // job could be put back in the review queue without its SOW or invoice knowing.
+    if (newState === JobState.SUBMITTED && job.state !== JobState.CHANGES_REQUESTED) {
+      throw new BadRequestException('Only a job sent back for changes can be resubmitted.');
+    }
+    // Closing twice would overwrite where the job was closed from, which reopening returns it to.
+    if (newState === JobState.CLOSED && job.state === JobState.CLOSED) {
+      throw new BadRequestException('This job is already closed.');
+    }
 
     const isStaff = (user.realm_access?.roles ?? []).includes(Role.DamplabStaff);
     if (!isStaff) {
@@ -814,7 +839,7 @@ export class JobResolver {
 
     const previousState = job.state;
     const wasResubmission = previousState === JobState.CHANGES_REQUESTED && newState === JobState.SUBMITTED;
-    const updated = (await this.jobService.updateState(job, newState, null))!;
+    const updated = (newState === JobState.CLOSED ? await this.jobService.markClosed(job) : await this.jobService.updateState(job, newState, null))!;
 
     // Recorded after the state actually moved, so a failed transition leaves no
     // entry. A resubmission is called out by name: "Submitted" on the second
@@ -840,6 +865,30 @@ export class JobResolver {
       this.jobScreeningService.screenJobInBackground(String(updated._id), user.sub);
     }
 
+    return updated;
+  }
+
+  @Mutation(() => Job, {
+    description:
+      'Staff-only. Reopen a closed job, returning it to the state it was closed from (a job closed before closes were recorded returns to the last state in its history). Its SOW, invoices and files are left as they are.'
+  })
+  @RequirePermission(Permission.JobsViewAll)
+  async reopenJob(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User, @Args('note', { type: () => String, nullable: true }) note?: string): Promise<Job> {
+    const job = await this.jobService.findById(jobId);
+    if (!job) throw new NotFoundException(`Job with ID ${jobId} not found`);
+    if (job.state !== JobState.CLOSED) throw new BadRequestException('Only a closed job can be reopened.');
+    const target = reopenTarget(job, await this.jobVersionService.listByJob(String(job._id)));
+    if (!target) throw new BadRequestException('This job cannot be reopened: nothing records the state it was closed from.');
+    const updated = await this.jobService.reopen(String(job._id), target.state, target.customerActionRequired);
+    if (!updated) throw new BadRequestException('This job is no longer closed; reload it.');
+    const label = JobResolver.STATE_LABELS[target.state];
+    await this.jobVersionService.appendStateEvent(updated, target.state, this.versionAuthor(user, updated), note?.trim() ? `Reopened: ${note.trim()}` : 'Reopened');
+    await this.activityService.createEvent({
+      type: ActivityEventType.JOB_STATE_CHANGED,
+      message: `Job "${updated.name}" reopened (back to ${label})`,
+      actorDisplayName: user.preferred_username ?? user.email ?? undefined,
+      jobId: String(updated._id)
+    });
     return updated;
   }
 

@@ -378,8 +378,18 @@ export class WorkflowNodeResolver {
       return { ...parsed, url: url ?? undefined };
     };
 
+    // The node's own copy of its parameters, saved with the job, still says which answers were files after the
+    // catalog removes the parameter or changes its type — so a stored file never loses its download link. For those
+    // only a value with a storage key is linked; anything else is handed back exactly as stored.
+    const nodeParameters = (node.reactNode as any)?.data?.parameters;
+    const fromNodeOnly = new Set<string>(fileParameterIds(nodeParameters).filter((id) => !fileParamIds.has(id)));
+    const linkIfStored = async (value: unknown): Promise<unknown> => (holdsStorageKey(value) ? enrichFileMeta(value) : value);
+
     const enriched: FormDataEntry[] = await Promise.all(
       normalized.map(async (entry) => {
+        if (fromNodeOnly.has(entry.id)) {
+          return { ...entry, value: Array.isArray(entry.value) ? await Promise.all(entry.value.map(linkIfStored)) : await linkIfStored(entry.value) } as FormDataEntry;
+        }
         if (!fileParamIds.has(entry.id)) return entry;
         // Whatever is stored on a `table` parameter without a storage key — the
         // old empty string, text, a number — is handed back exactly as stored,

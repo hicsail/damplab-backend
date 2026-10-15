@@ -365,6 +365,17 @@ export class Job {
   })
   archivedFromState?: JobState;
 
+  @Prop({ required: false })
+  @Field(() => JobState, {
+    nullable: true,
+    description: 'The state the job was in when it was closed — where reopening returns it. Cleared on reopen.'
+  })
+  closedFromState?: JobState;
+
+  @Prop({ type: String, required: false, enum: CustomerActionRequired })
+  @Field(() => CustomerActionRequired, { nullable: true, description: 'The customer action the job carried when it was closed, restored on reopen.' })
+  closedFromCustomerAction?: CustomerActionRequired | null;
+
   /**
    * The lab's pause on equipment booking for this job.
    *

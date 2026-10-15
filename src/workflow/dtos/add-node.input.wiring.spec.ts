@@ -59,7 +59,7 @@ describe('AddNodeInputPipe sees the caller on a real GraphQL request (F4)', () =
         SubmitResolver,
         HeaderAuthGuard,
         AddNodeInputPipe,
-        { provide: WorkflowParameterFilesService, useValue: { readObject: jest.fn() } },
+        { provide: WorkflowParameterFilesService, useValue: { readObject: jest.fn(), isConfigured: true, objectExists: jest.fn(async () => true) } },
         { provide: DampLabServices, useValue: { findOneActive: async (): Promise<typeof service> => service } }
       ]
     }).compile();

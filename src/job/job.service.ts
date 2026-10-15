@@ -178,6 +178,25 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: job._id }, { $set: statePatch }, { new: true }).exec();
   }
 
+  /** Closes a job, recording where it was closed from (and the customer action it carried) so it can be reopened there. */
+  async markClosed(job: Job): Promise<Job | null> {
+    return this.jobModel
+      .findOneAndUpdate(
+        { _id: job._id },
+        { $set: { state: JobState.CLOSED, customerActionRequired: null, closedFromState: job.state, closedFromCustomerAction: job.customerActionRequired ?? null } },
+        { new: true }
+      )
+      .exec();
+  }
+
+  /** Puts a closed job back in `state` and forgets where it was closed from. Only a job still CLOSED is changed. */
+  async reopen(jobId: string, state: JobState, customerActionRequired: CustomerActionRequired | null): Promise<Job | null> {
+    const action = state === JobState.CHANGES_REQUESTED ? customerActionRequired ?? CustomerActionRequired.REPLY : null;
+    return this.jobModel
+      .findOneAndUpdate({ _id: jobId, state: JobState.CLOSED }, { $set: { state, customerActionRequired: action }, $unset: { closedFromState: '', closedFromCustomerAction: '' } }, { new: true })
+      .exec();
+  }
+
   /**
    * Records the spec staff just accepted. Re-accepting overwrites, which is how
    * a send re-locked by a later job edit gets released.

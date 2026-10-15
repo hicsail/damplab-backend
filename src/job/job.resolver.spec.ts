@@ -1042,3 +1042,83 @@ describe('Job.clientName — the name staff no longer type', () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 });
+
+describe('JobResolver — closing and reopening a job', () => {
+  const staff: any = { sub: 'staff-1', email: 'tech@bu.edu', preferred_username: 'Tech', realm_access: { roles: [Role.DamplabStaff] } };
+  const customer: any = { sub: 'client-1', email: 'client@bu.edu', preferred_username: 'Client', realm_access: { roles: [] } };
+  const jobOf = (over: any = {}): any => ({ _id: 'job-1', name: 'Run', jobId: '00092', sub: 'client-1', email: 'client@bu.edu', workflows: [], ...over });
+
+  function harness(job: any, versions: any[] = []): Record<string, any> {
+    const markClosed = jest.fn(async (j: any) => ({ ...j, state: JobState.CLOSED, closedFromState: j.state }));
+    const reopen = jest.fn(async (_id: string, state: any, action: any) => ({ ...job, state, customerActionRequired: action, closedFromState: undefined }));
+    const updateState = jest.fn(async (_j: any, state: any) => ({ ...job, state }));
+    const jobService: any = { findById: jest.fn(async () => job), markClosed, reopen, updateState };
+    const appendStateEvent = jest.fn(async () => undefined);
+    const jobVersionService: any = { appendStateEvent, listByJob: jest.fn(async () => versions) };
+    const createEvent = jest.fn(async () => undefined);
+    const resolver = new JobResolver(
+      jobService,
+      {} as any,
+      {} as any,
+      { createEvent } as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      jobVersionService,
+      {} as any,
+      {} as any,
+      {} as any,
+      { screenJobInBackground: jest.fn() } as any,
+      {} as any
+    );
+    return { resolver, markClosed, reopen, updateState, appendStateEvent, createEvent };
+  }
+
+  it('closing records the state the job was closed from', async () => {
+    const job = jobOf({ state: JobState.IN_PROGRESS });
+    const { resolver, markClosed, updateState } = harness(job);
+    await resolver.changeJobState(job, JobState.CLOSED, staff);
+    expect(markClosed).toHaveBeenCalledWith(job);
+    expect(updateState).not.toHaveBeenCalled();
+  });
+
+  it('refuses to close a job that is already closed, so where it was closed from is never overwritten', async () => {
+    const job = jobOf({ state: JobState.CLOSED, closedFromState: JobState.ACCEPTED });
+    await expect(harness(job).resolver.changeJobState(job, JobState.CLOSED, staff)).rejects.toThrow('This job is already closed.');
+  });
+
+  it('only a job the lab sent back can be (re)submitted through a state change — not a closed one', async () => {
+    const closed = jobOf({ state: JobState.CLOSED });
+    await expect(harness(closed).resolver.changeJobState(closed, JobState.SUBMITTED, staff)).rejects.toThrow('Only a job sent back for changes can be resubmitted.');
+    const sentBack = jobOf({ state: JobState.CHANGES_REQUESTED });
+    const { resolver, updateState } = harness(sentBack);
+    await resolver.changeJobState(sentBack, JobState.SUBMITTED, customer);
+    expect(updateState).toHaveBeenCalled();
+  });
+
+  it('reopening returns the job to the state it was closed from, and records it in the history and the activity log', async () => {
+    const job = jobOf({ state: JobState.CLOSED, closedFromState: JobState.ACCEPTED });
+    const { resolver, reopen, appendStateEvent, createEvent } = harness(job);
+    const out = await resolver.reopenJob('job-1', staff, 'Customer sent the sample sheet');
+    expect(reopen).toHaveBeenCalledWith('job-1', JobState.ACCEPTED, null);
+    expect(out.state).toBe(JobState.ACCEPTED);
+    expect(appendStateEvent).toHaveBeenCalledWith(expect.anything(), JobState.ACCEPTED, expect.anything(), 'Reopened: Customer sent the sample sheet');
+    expect(createEvent).toHaveBeenCalledWith(expect.objectContaining({ message: 'Job "Run" reopened (back to Accepted)' }));
+  });
+
+  it('reopens a job closed before closes were recorded, from its history (job 00092)', async () => {
+    const job = jobOf({ state: JobState.CLOSED });
+    const { resolver, reopen } = harness(job, [
+      { versionNumber: 1000, jobState: JobState.SUBMITTED },
+      { versionNumber: 2000, jobState: JobState.CHANGES_REQUESTED },
+      { versionNumber: 2001, jobState: JobState.CLOSED }
+    ]);
+    await resolver.reopenJob('job-1', staff);
+    expect(reopen).toHaveBeenCalledWith('job-1', JobState.CHANGES_REQUESTED, null);
+  });
+
+  it('refuses to reopen a job that is not closed', async () => {
+    const job = jobOf({ state: JobState.ACCEPTED });
+    await expect(harness(job).resolver.reopenJob('job-1', staff)).rejects.toThrow('Only a closed job can be reopened.');
+  });
+});

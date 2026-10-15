@@ -94,7 +94,11 @@ describe('AddNodeInputPipe refuses a storage key the caller did not upload (tabl
   const file = (key: string): string => JSON.stringify({ filename: 'f.pdf', key, contentType: 'application/pdf', size: 3 });
   // On a real request the pipe's REQUEST is the GraphQL context: { req }, with the caller at req.user.
   const pipeFor = (user: any): AddNodeInputPipe =>
-    new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user } }, { readObject: jest.fn(async () => Buffer.from('Well\nA1\n')) } as any);
+    new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user } }, {
+      readObject: jest.fn(async () => Buffer.from('Well\nA1\n')),
+      isConfigured: true,
+      objectExists: jest.fn(async () => true)
+    } as any);
   const node = (formData: any[], label = 'Sequence'): any => ({ id: 'n1', label, serviceId: 'svc', formData, additionalInstructions: '' });
   const customer = { sub: 'customer-1', realm_access: { roles: [] } };
   const staff = { sub: 'staff-1', realm_access: { roles: ['damplab-staff'] } };
@@ -110,9 +114,29 @@ describe('AddNodeInputPipe refuses a storage key the caller did not upload (tabl
     await expect(pipeFor(customer).transform(node([{ id: 'docs', value: [file(own('b.pdf')), JSON.stringify(placeholder)] }]))).rejects.toThrow(NOT_UPLOADED);
   });
 
-  it('still accepts a file recorded by name only (the local-dev fallback)', async () => {
-    const byName = JSON.stringify({ filename: 'a.pdf', notUploaded: true, contentType: 'application/pdf', size: 3, uploadedAt: '2026-10-01T00:00:00.000Z' });
-    await expect(pipeFor(customer).transform(node([{ id: 'doc', value: byName }]))).resolves.toBeDefined();
+  const byName = JSON.stringify({ filename: 'a.pdf', notUploaded: true, contentType: 'application/pdf', size: 3, uploadedAt: '2026-10-01T00:00:00.000Z' });
+
+  it('still accepts a file recorded by name only on a server with no file storage (the local-dev fallback)', async () => {
+    const devPipe = new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user: customer } }, { readObject: jest.fn(), isConfigured: false, objectExists: jest.fn() } as any);
+    await expect(devPipe.transform(node([{ id: 'doc', value: byName }]))).resolves.toBeDefined();
+  });
+
+  it('refuses a File Upload answer with no stored file when the server has file storage', async () => {
+    const NAMED = 'The file “a.pdf” on "Sequence" was not uploaded. Pick it again and resubmit.';
+    await expect(pipeFor(customer).transform(node([{ id: 'doc', value: byName }]))).rejects.toThrow(NAMED);
+    // The canvas agent can write a bare file name.
+    await expect(pipeFor(customer).transform(node([{ id: 'doc', value: 'plasmid.gb' }]))).rejects.toThrow('The file “plasmid.gb” on "Sequence" was not uploaded.');
+    await expect(pipeFor(customer).transform(node([{ id: 'docs', value: [file(own('b.pdf')), byName] }]))).rejects.toThrow(NAMED);
+  });
+
+  it('refuses a File Upload key with nothing stored under it, and one it cannot check', async () => {
+    const pipeWith = (objectExists: jest.Mock): AddNodeInputPipe =>
+      new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user: customer } }, { readObject: jest.fn(), isConfigured: true, objectExists } as any);
+    const missing = jest.fn(async () => false);
+    await expect(pipeWith(missing).transform(node([{ id: 'doc', value: file(own('a.pdf')) }]))).rejects.toThrow('The file “f.pdf” on "Sequence" is not in storage. Upload it again and resubmit.');
+    expect(missing).toHaveBeenCalledWith(own('a.pdf'));
+    const down = jest.fn(async () => Promise.reject(new Error('socket hang up')));
+    await expect(pipeWith(down).transform(node([{ id: 'doc', value: file(own('a.pdf')) }]))).rejects.toThrow('The file “f.pdf” on "Sequence" could not be checked in storage; try again.');
   });
 
   it('accepts files the caller uploaded, on every kind of file parameter', async () => {
@@ -181,8 +205,9 @@ describe('AddNodeInputPipe refuses a storage key the caller did not upload (tabl
     expect(out.formData.map((e: any) => e.id)).toEqual(['kind']);
   });
 
-  it('lets through a file that was never stored: it has no key to presign', async () => {
-    const out: any = await pipeFor(customer).transform(node([{ id: 'doc', value: JSON.stringify({ filename: 'f.pdf', notUploaded: true }) }]));
+  it('the ownership gate lets a keyless file through (nothing to presign); without file storage it is kept', async () => {
+    const devPipe = new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user: customer } }, { readObject: jest.fn(), isConfigured: false, objectExists: jest.fn() } as any);
+    const out: any = await devPipe.transform(node([{ id: 'doc', value: JSON.stringify({ filename: 'f.pdf', notUploaded: true }) }]));
     expect(out.formData).toHaveLength(1);
   });
 

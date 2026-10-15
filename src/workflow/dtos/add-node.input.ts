@@ -7,7 +7,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-d
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { REQUEST } from '@nestjs/core';
 import { deriveCustomerCategory } from '../../pricing/pricing-groups';
-import { foreignFileKey, unuploadedFileName } from '../utils/sample-sheet.util';
+import { foreignFileKey, plainFileAnswers, unuploadedFileName } from '../utils/sample-sheet.util';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { countNewTableAnswers } from '../utils/table-answers';
 import { TABLE_FILE_MAX_BYTES } from '../utils/table-file';
@@ -54,6 +54,21 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     const unuploaded = unuploadedFileName(service.parameters, shown);
     if (unuploaded !== null) {
       throw new BadRequestException(`The file “${unuploaded}” on "${operation}" was not uploaded. Pick it again and resubmit.`);
+    }
+    // A File Upload answer must name a file that is really stored. Without file storage (local dev) a file is recorded
+    // by name only, and that is the one case a keyless answer is accepted. (Table files are read below.)
+    for (const answer of plainFileAnswers(service.parameters, shown)) {
+      if (!answer.key) {
+        if (this.files.isConfigured) throw new BadRequestException(`The file “${answer.filename}” on "${operation}" was not uploaded. Pick it again and resubmit.`);
+        continue;
+      }
+      let stored: boolean;
+      try {
+        stored = await this.files.objectExists(answer.key);
+      } catch {
+        throw new BadRequestException(`The file “${answer.filename}” on "${operation}" could not be checked in storage; try again.`);
+      }
+      if (!stored) throw new BadRequestException(`The file “${answer.filename}” on "${operation}" is not in storage. Upload it again and resubmit.`);
     }
     // A Table's row count multiplies its price, so the server reads the file
     // itself: every Table value here is a new key, fetched, checked against the
