@@ -19,7 +19,7 @@ import { buildParameterSnapshot } from '../utils/parameter-snapshot.util';
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { SOWService } from '../../sow/sow.service';
 import { ReplaceSampleSheetInput, SampleSheetTemplateUpload, SampleSheetTemplateUploadRequest } from '../dtos/sample-sheet.dto';
-import { findSampleSheetParam, keyBelongsToUploader, SAMPLE_SHEET_TEMPLATE_KEY_PREFIX, sampleSheetReplaceBlockedReason, templateKeyOf } from '../utils/sample-sheet.util';
+import { findTableParam, keyBelongsToUploader, SAMPLE_SHEET_TEMPLATE_KEY_PREFIX, sampleSheetReplaceBlockedReason, templateKeyOf } from '../utils/sample-sheet.util';
 
 /**
  * Samples spreadsheets: the blank template on a catalog parameter, and
@@ -69,7 +69,7 @@ export class SampleSheetResolver {
   @RequirePermission(Permission.CatalogView)
   async sampleSheetTemplateUrl(@Args('serviceId', { type: () => ID }) serviceId: string, @Args('parameterId') parameterId: string): Promise<string | null> {
     const service = await this.dampLabServices.findOne(serviceId);
-    const param = findSampleSheetParam(service?.parameters, parameterId);
+    const param = findTableParam(service?.parameters, parameterId);
     const key = templateKeyOf(param);
     if (!key) return null;
     return this.files.createPresignedDownload(key, param?.templateFile?.contentType);
@@ -85,7 +85,7 @@ export class SampleSheetResolver {
   @RequirePermission(Permission.CatalogEditorRead)
   async parameterSetSampleSheetTemplateUrl(@Args('parameterSetId', { type: () => ID }) parameterSetId: string, @Args('parameterId') parameterId: string): Promise<string | null> {
     const set = await this.dampLabServices.findParameterSet(parameterSetId);
-    const param = findSampleSheetParam(set?.parameters, parameterId);
+    const param = findTableParam(set?.parameters, parameterId);
     const key = templateKeyOf(param);
     if (!key) return null;
     return this.files.createPresignedDownload(key, param?.templateFile?.contentType);
@@ -122,7 +122,7 @@ export class SampleSheetResolver {
     if (blocked) throw new ForbiddenException(blocked);
 
     const service = node.service instanceof mongoose.Types.ObjectId ? await this.dampLabServices.findOne(node.service.toString()) : (node.service as DampLabService | null);
-    const param = findSampleSheetParam(service?.parameters, input.parameterId);
+    const param = findTableParam(service?.parameters, input.parameterId);
     if (!param) {
       throw new BadRequestException(`Operation ${input.nodeId} has no samples spreadsheet parameter "${input.parameterId}"`);
     }

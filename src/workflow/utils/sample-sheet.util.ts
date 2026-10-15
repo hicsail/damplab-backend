@@ -17,9 +17,20 @@ import { Job, JobState } from '../../job/job.model';
  * parameters (the download presign in the node resolver, the job pages, the
  * job editor) keeps working unchanged.
  */
+/** The stored string for a Table parameter. */
+export const TABLE_PARAM_TYPE = 'table';
+
+/**
+ * What a Table was stored as before the two types were merged. Read as a Table
+ * everywhere, and never rewritten: a parameter stored with this string keeps
+ * it, because pricing prices its old answers by it (see service-pricing.util.ts).
+ * Only a new Table is written as `table`.
+ */
 export const SAMPLE_SHEET_PARAM_TYPE = 'sampleSheet';
 
-/** Where blank templates live. A template download presigns only keys under here. */
+export const isTableType = (type: unknown): boolean => type === TABLE_PARAM_TYPE || type === SAMPLE_SHEET_PARAM_TYPE;
+
+/** Where blank staff templates live. A template download presigns only keys under here. */
 export const SAMPLE_SHEET_TEMPLATE_KEY_PREFIX = 'sample-sheet-templates/';
 
 export interface SampleSheetTemplateFile {
@@ -29,11 +40,12 @@ export interface SampleSheetTemplateFile {
   size?: number;
 }
 
-export interface SampleSheetParam {
+export interface TableParam {
   id: string;
-  type: typeof SAMPLE_SHEET_PARAM_TYPE;
+  type: string;
   name?: string;
   templateFile?: SampleSheetTemplateFile | null;
+  tableData?: { columns?: unknown; rows?: unknown } | null;
 }
 
 /**
@@ -59,21 +71,80 @@ export function sampleCountFromValue(value: unknown): number | undefined {
   return typeof count === 'number' && Number.isFinite(count) && count >= 0 ? count : undefined;
 }
 
-export const isSampleSheetParam = (param: unknown): param is SampleSheetParam =>
-  !!param && typeof param === 'object' && (param as { type?: unknown }).type === SAMPLE_SHEET_PARAM_TYPE && typeof (param as { id?: unknown }).id === 'string';
+export const isTableParam = (param: unknown): param is TableParam =>
+  !!param && typeof param === 'object' && isTableType((param as { type?: unknown }).type) && typeof (param as { id?: unknown }).id === 'string';
 
-export function findSampleSheetParam(parameters: unknown, parameterId: string): SampleSheetParam | null {
+export function findTableParam(parameters: unknown, parameterId: string): TableParam | null {
   if (!Array.isArray(parameters)) return null;
-  const match = parameters.find((param) => isSampleSheetParam(param) && param.id === parameterId);
-  return match ? (match as SampleSheetParam) : null;
+  const match = parameters.find((param) => isTableParam(param) && param.id === parameterId);
+  return match ? (match as TableParam) : null;
 }
 
-/** The template key on a parameter, or null when there is none or it is not a template key. */
-export function templateKeyOf(param: SampleSheetParam | null): string | null {
-  const key = param?.templateFile?.key;
+/** The staff template key on a parameter, or null when there is none or it is not a template key. */
+export function templateKeyOf(param: unknown): string | null {
+  const key = (param as { templateFile?: { key?: unknown } | null } | null | undefined)?.templateFile?.key;
   if (typeof key !== 'string' || !key.startsWith(SAMPLE_SHEET_TEMPLATE_KEY_PREFIX)) return null;
   return key;
 }
+
+/**
+ * The columns an uploaded file must carry: the `header` of each entry of
+ * `tableData.columns`, trimmed, in order, blanks left out. `tableData.rows` is
+ * never read.
+ */
+export function expectedColumns(param: unknown): string[] {
+  const columns = (param as { tableData?: { columns?: unknown } | null } | null | undefined)?.tableData?.columns;
+  if (!Array.isArray(columns)) return [];
+  return columns
+    .map((column) => (column && typeof column === 'object' && typeof (column as { header?: unknown }).header === 'string' ? (column as { header: string }).header.trim() : ''))
+    .filter((header) => header !== '');
+}
+
+/** A Table can be answered only when it has a column or a staff template. */
+export const tableIsSetUp = (param: unknown): boolean => expectedColumns(param).length > 0 || templateKeyOf(param) !== null;
+
+/** Ids of the parameters whose stored value is a storage key: `file` and Table. */
+export function fileParameterIds(parameters: unknown): string[] {
+  if (!Array.isArray(parameters)) return [];
+  return parameters.filter((p) => p && typeof p === 'object' && typeof p.id === 'string' && (p.type === 'file' || isTableType(p.type))).map((p) => p.id as string);
+}
+
+/** The mark the server puts on a Table value whose rows it counted itself (`countedBy`). */
+export const SERVER_COUNTED = 'server';
+
+export function fileRecord(value: unknown): Record<string, unknown> | undefined {
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return undefined;
+    }
+  }
+  return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
+}
+
+/**
+ * The rows the server itself counted in a Table answer: the `sampleCount` of a
+ * value carrying `countedBy: 'server'`, summed over an array. Undefined when no
+ * value carries the mark — which is every answer stored before the server
+ * started counting. Pricing bills per row from this alone; an answer without
+ * the mark is priced by the code that priced it before, so its bill cannot
+ * have moved.
+ */
+export function serverCountedRows(value: unknown): number | undefined {
+  let rows: number | undefined;
+  for (const element of Array.isArray(value) ? value : [value]) {
+    const record = fileRecord(element);
+    const count = record?.sampleCount;
+    if (record?.countedBy !== SERVER_COUNTED || typeof count !== 'number' || !Number.isFinite(count) || count < 0) continue;
+    rows = (rows ?? 0) + count;
+  }
+  return rows;
+}
+
+/** Whether a stored answer, or any element of it, is a file record with a storage key. */
+export const holdsStorageKey = (value: unknown): boolean => (Array.isArray(value) ? value.some(holdsStorageKey) : sampleSheetKeyOf(value) !== undefined);
 
 /**
  * The prefix `createWorkflowParameterUploadUrls` mints keys under for this

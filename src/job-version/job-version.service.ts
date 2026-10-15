@@ -14,7 +14,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/uti
 import { ParameterSnapshotEntry } from '../workflow/models/parameter-snapshot.model';
 import { buildParameterSnapshot } from '../workflow/utils/parameter-snapshot.util';
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
-import { isSampleSheetParam, keyBelongsToUploader, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
+import { fileParameterIds, keyBelongsToUploader, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
 import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
 import { withoutHiddenAnswers, withStoredHiddenAnswers } from '../services/parameter-conditions';
 
@@ -829,9 +829,7 @@ export class JobVersionService {
         return {
           clientId: node.id,
           catalogService: { name: service.name, parameters: service.parameters },
-          fileParamIds: (Array.isArray(service.parameters) ? service.parameters : [])
-            .filter((p: any) => p && typeof p.id === 'string' && (p.type === 'file' || isSampleSheetParam(p)))
-            .map((p: any) => p.id),
+          fileParamIds: fileParameterIds(service.parameters),
           patch: {
             label: node.label ?? service.name,
             service: new mongoose.Types.ObjectId(String(service._id)),

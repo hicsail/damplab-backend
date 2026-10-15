@@ -164,3 +164,15 @@ describe('buildParameterSnapshot — hidden parameters (show-only-if rule 20)', 
     expect(buildParameterSnapshot(conditional, saved('yeast'), previous).map((e) => e.id)).toEqual(['sample']);
   });
 });
+
+describe('a Table answer stored under the string "table"', () => {
+  it('shows the filename, like a sampleSheet, and keeps the stored type string', () => {
+    const service = { parameters: [{ id: 't', name: 'Plate map', type: 'table' }] };
+    const formData = [{ id: 't', value: JSON.stringify({ filename: 'plate.xlsx', key: 'workflow-parameters/u/1', sampleCount: 3 }) }];
+    expect(buildParameterSnapshot(service, formData)).toEqual([{ id: 't', name: 'Plate map', type: 'table', displayValue: 'plate.xlsx' }]);
+  });
+
+  it('has no entry for the old empty answer', () => {
+    expect(buildParameterSnapshot({ parameters: [{ id: 't', name: 'Plate map', type: 'table' }] }, [{ id: 't', value: '' }])).toEqual([]);
+  });
+});

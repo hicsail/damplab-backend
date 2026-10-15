@@ -2,7 +2,7 @@ import { DampLabService, ServicePricingMode } from '../services/models/damplab-s
 import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
 import { otherLabel, otherTextEntryId } from '../workflow/utils/other-option.util';
 import { CustomerCategory } from './customer-category';
-import { SAMPLE_SHEET_PARAM_TYPE, sampleCountFromValue } from '../workflow/utils/sample-sheet.util';
+import { isTableType, SAMPLE_SHEET_PARAM_TYPE, sampleCountFromValue, serverCountedRows } from '../workflow/utils/sample-sheet.util';
 import { withoutHiddenAnswers } from '../services/parameter-conditions';
 
 interface ServiceParameterOption {
@@ -484,6 +484,8 @@ export function calculateServiceCost(service: DampLabService, rawFormData: unkno
  *    values rather than reading the number;
  *  - **samples spreadsheets** — billed `price x sample count`, the count being the
  *    rows below the header stored with the uploaded file;
+ *  - **Table files the server counted** — billed `price x rows`, the rows being
+ *    the count the server wrote with the file (`countedBy: 'server'`);
  *  - **everything else priced** — `price x (number of values selected)`.
  */
 function calculateParameterCostWithCategory(parameters: unknown, rawFormData: unknown, customerCategory?: CustomerCategory): { total: number; details: ServicePricingDetail[] } {
@@ -538,6 +540,19 @@ function calculateParameterCostWithCategory(parameters: unknown, rawFormData: un
 
     const unitPrice = resolveCategoryPrice(param, customerCategory);
     if (unitPrice === undefined) return;
+
+    // New with table-upload: a Table file the server counted itself bills per
+    // row, under either stored type string. Only a value carrying the server's
+    // mark gets here, and no answer stored before table-upload carries it — so
+    // everything below this block still prices every older answer exactly as
+    // it always did. Do not fold the branches below into this one.
+    if (isTableType(param.type)) {
+      const rows = serverCountedRows(rawValue);
+      if (rows !== undefined) {
+        if (rows > 0) record(paramLabel, rows, unitPrice);
+        return;
+      }
+    }
 
     // A samples spreadsheet bills per row. Only here, in parameter pricing: a
     // service-priced operation with a sheet on it is not multiplied by the count.

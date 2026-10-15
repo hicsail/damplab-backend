@@ -24,7 +24,7 @@ import { ActivityEventType } from '../../activity/activity-event.model';
 import { WorkflowNodeJob } from '../dtos/workflow-node-job.dto';
 import { AvailabilityService, InventoryConflict } from '../../availability/availability.service';
 import { NodeArchiveFilter } from '../dtos/node-archive-filter.dto';
-import { SAMPLE_SHEET_PARAM_TYPE } from '../utils/sample-sheet.util';
+import { fileParameterIds, holdsStorageKey, TABLE_PARAM_TYPE } from '../utils/sample-sheet.util';
 
 @Resolver(() => WorkflowNode)
 export class WorkflowNodeResolver {
@@ -352,8 +352,10 @@ export class WorkflowNodeResolver {
     // download URL here. The value may also arrive as an already-parsed object:
     // the job editor round-trips what this resolver returned, so a stale `url`
     // from an earlier read is replaced rather than handed back.
-    const fileParamIds = new Set<string>(
-      Array.isArray(service?.parameters) ? service.parameters.filter((p: any) => p && typeof p.id === 'string' && (p.type === 'file' || p.type === SAMPLE_SHEET_PARAM_TYPE)).map((p: any) => p.id) : []
+    const fileParamIds = new Set<string>(fileParameterIds(service?.parameters));
+    // Parameters stored as `table`: before table-upload they never held a file.
+    const gridParamIds = new Set<string>(
+      Array.isArray(service?.parameters) ? service.parameters.filter((p: any) => p && typeof p.id === 'string' && p.type === TABLE_PARAM_TYPE).map((p: any) => p.id) : []
     );
 
     const enrichFileMeta = async (raw: unknown): Promise<string | number | boolean | Record<string, unknown> | null> => {
@@ -379,6 +381,11 @@ export class WorkflowNodeResolver {
     const enriched: FormDataEntry[] = await Promise.all(
       normalized.map(async (entry) => {
         if (!fileParamIds.has(entry.id)) return entry;
+        // Whatever is stored on a `table` parameter without a storage key — the
+        // old empty string, text, a number — is handed back exactly as stored,
+        // as it always was. The job editor round-trips what this returns, so
+        // altering it here would rewrite the answer on the next save.
+        if (gridParamIds.has(entry.id) && !holdsStorageKey(entry.value)) return entry;
         if (Array.isArray(entry.value)) {
           const values = await Promise.all(entry.value.map((v) => enrichFileMeta(v)));
           return { ...entry, value: values };

@@ -1,7 +1,7 @@
 import { ParameterSnapshotEntry } from '../models/parameter-snapshot.model';
 import { getMultiValueParamIds, normalizeFormDataToArray } from './form-data.util';
 import { isEmptyParamValue } from '../../job-version/param-values.util';
-import { SAMPLE_SHEET_PARAM_TYPE } from './sample-sheet.util';
+import { SAMPLE_SHEET_PARAM_TYPE, TABLE_PARAM_TYPE } from './sample-sheet.util';
 import { isOtherTextEntryId, otherLabel, otherTextEntryId, otherTextParentId } from './other-option.util';
 import { hiddenParameterIds } from '../../services/parameter-conditions';
 import {
@@ -24,7 +24,7 @@ const RESERVED_PARAM_NAMES: Readonly<Record<string, string>> = {
 };
 
 const OPTION_TYPES = new Set(['dropdown', 'enum']);
-const FILE_TYPES = new Set(['file', SAMPLE_SHEET_PARAM_TYPE]);
+const FILE_TYPES = new Set(['file', TABLE_PARAM_TYPE, SAMPLE_SHEET_PARAM_TYPE]);
 
 interface ParamDef {
   id: string;
