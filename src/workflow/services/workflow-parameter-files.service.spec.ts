@@ -38,3 +38,14 @@ describe('WorkflowParameterFilesService.readObject', () => {
     await expect(serviceWith(jest.fn(async () => ({}))).readObject('k', 10)).rejects.toThrow();
   });
 });
+
+describe('WorkflowParameterFilesService.createPresignedUpload', () => {
+  it('mints a key with no run of dots in the file name, so the key passes the `..` guards', async () => {
+    // A real (offline) client: signing a URL needs no network or credentials beyond these.
+    process.env.AWS_ACCESS_KEY_ID = 'test';
+    process.env.AWS_SECRET_ACCESS_KEY = 'test';
+    const service = new WorkflowParameterFilesService(config({ AWS_REGION: 'us-east-1', WORKFLOW_PARAMETER_FILES_BUCKET: 'bucket' }));
+    const upload = await service.createPresignedUpload({ clientToken: 't', filename: 'Samples..final...xlsx', contentType: 'x', size: 1, userSub: 'u' } as any);
+    expect(upload.key).toMatch(/^workflow-parameters\/u\/[0-9a-f-]{36}-Samples\.final\.xlsx$/);
+  });
+});

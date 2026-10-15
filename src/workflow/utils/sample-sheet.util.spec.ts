@@ -106,6 +106,13 @@ describe('sample-sheet.util', () => {
       expect(keyBelongsToUploader('sample-sheet-templates/abc.xlsx', 'user-1')).toBe(false);
       expect(keyBelongsToUploader('workflow-parameters/user-10/abc.xlsx', 'user-1')).toBe(false);
     });
+
+    it('refuses `..` only as a whole path segment: a dotted file name is the caller’s own', () => {
+      expect(keyBelongsToUploader('workflow-parameters/user-1/uuid-a..b.csv', 'user-1')).toBe(true);
+      expect(keyBelongsToUploader('workflow-parameters/user-1/uuid-Samples..final.xlsx', 'user-1')).toBe(true);
+      expect(keyBelongsToUploader('workflow-parameters/user-1/../user-2/uuid-a.csv', 'user-1')).toBe(false);
+      expect(keyBelongsToUploader('workflow-parameters/user-1/uuid-a.csv/..', 'user-1')).toBe(false);
+    });
   });
 
   describe('sampleSheetReplaceBlockedReason', () => {

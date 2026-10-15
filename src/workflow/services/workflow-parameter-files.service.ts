@@ -65,7 +65,7 @@ export class WorkflowParameterFilesService {
       if (!this.s3 || !this.bucket) {
         throw new InternalServerErrorException('Workflow parameter file storage is not configured on the server.');
       }
-      const safeFilename = request.filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const safeFilename = request.filename.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.{2,}/g, '.');
       const prefix = request.keyPrefix ?? `workflow-parameters/${request.userSub}/`;
       const key = `${prefix}${uuidv4()}-${safeFilename}`;
       const command = new PutObjectCommand({

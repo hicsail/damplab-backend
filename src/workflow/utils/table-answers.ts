@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { ObjectTooLargeError } from '../services/workflow-parameter-files.service';
 import { FormDataEntry } from './form-data.util';
-import { expectedColumns, fileRecord, flattenValues, isTableParam, sampleSheetKeyOf, SERVER_COUNTED, TableParam, tableIsSetUp } from './sample-sheet.util';
+import { expectedColumns, fileRecord, flattenValues, hasParentSegment, isTableParam, sampleSheetKeyOf, SERVER_COUNTED, TableParam, tableIsSetUp } from './sample-sheet.util';
 import { checkTableFile, TABLE_FILE_NOT_FETCHED_MESSAGE, TABLE_FILE_TOO_LARGE_MESSAGE, TABLE_NOT_SET_UP_MESSAGE, TableFileError } from './table-file';
 
 /**
@@ -92,7 +92,7 @@ export interface CountNewTableAnswersInput {
 
 async function countOne(param: TableParam, value: unknown, key: string | undefined, input: CountNewTableAnswersInput): Promise<string> {
   const refuse = (message: string): BadRequestException => refusal(param, input.operation, message);
-  if (!key || !key.startsWith(TABLE_UPLOAD_KEY_PREFIX) || key.includes('..')) throw refuse(TABLE_FILE_NOT_FETCHED_MESSAGE);
+  if (!key || !key.startsWith(TABLE_UPLOAD_KEY_PREFIX) || hasParentSegment(key)) throw refuse(TABLE_FILE_NOT_FETCHED_MESSAGE);
   if (!tableIsSetUp(param)) throw refuse(TABLE_NOT_SET_UP_MESSAGE);
 
   let buffer: Buffer;

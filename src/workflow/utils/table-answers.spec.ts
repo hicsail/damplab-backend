@@ -112,6 +112,14 @@ describe('countNewTableAnswers — a new key (rule 22)', () => {
     expect(readObject).not.toHaveBeenCalled();
   });
 
+  it('counts a key whose file name contains `..` (not a path segment)', async () => {
+    const key = 'workflow-parameters/me/uuid-a..b.csv';
+    const readObject = reader();
+    const out = await run([{ id: 'plate', value: sent(key) }], readObject);
+    expect(readObject).toHaveBeenCalledWith(key);
+    expect(JSON.parse(out[0].value).sampleCount).toBe(3);
+  });
+
   it('refuses a non-empty value with no storage key (a file that was never stored)', async () => {
     const readObject = reader();
     await expect(run([{ id: 'plate', value: JSON.stringify({ filename: 'p.csv', notUploaded: true, sampleCount: 4 }) }], readObject)).rejects.toThrow('This file could not be read; upload it again.');

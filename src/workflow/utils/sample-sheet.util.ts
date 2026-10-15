@@ -183,8 +183,11 @@ export function uploadKeyPrefixFor(userSub: string | undefined): string {
   return `workflow-parameters/${userSub ?? 'anonymous'}/`;
 }
 
+/** Whether a storage key climbs out of its folder: `..` as a whole path segment. A name like `a..b.csv` does not. */
+export const hasParentSegment = (key: string): boolean => key.split('/').includes('..');
+
 export function keyBelongsToUploader(key: string, userSub: string | undefined): boolean {
-  return typeof key === 'string' && key.startsWith(uploadKeyPrefixFor(userSub)) && !key.includes('..');
+  return typeof key === 'string' && key.startsWith(uploadKeyPrefixFor(userSub)) && !hasParentSegment(key);
 }
 
 /** A parameter's answer as a flat list: a multi-value answer is an array (possibly nested), anything else is one value. */
