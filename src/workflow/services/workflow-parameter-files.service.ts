@@ -116,8 +116,12 @@ export class WorkflowParameterFilesService {
   async readObject(key: string, maxBytes: number): Promise<Buffer> {
     if (!this.s3 || !this.bucket) throw new Error('Workflow parameter file storage is not configured on the server.');
     const response = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
-    if (typeof response.ContentLength === 'number' && response.ContentLength > maxBytes) throw new ObjectTooLargeError();
     const body = response.Body as (AsyncIterable<Uint8Array> & { destroy?: () => void }) | undefined;
+    if (typeof response.ContentLength === 'number' && response.ContentLength > maxBytes) {
+      // Release the pooled socket: an unread body holds it until it is destroyed.
+      body?.destroy?.();
+      throw new ObjectTooLargeError();
+    }
     if (!body) throw new Error('The stored object has no body.');
     const chunks: Buffer[] = [];
     let total = 0;

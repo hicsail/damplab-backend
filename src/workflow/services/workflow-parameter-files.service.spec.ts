@@ -20,6 +20,7 @@ describe('WorkflowParameterFilesService.readObject', () => {
     const body = Readable.from([Buffer.from('x')]);
     const send = jest.fn(async () => ({ ContentLength: 11, Body: body }));
     await expect(serviceWith(send).readObject('k', 10)).rejects.toBeInstanceOf(ObjectTooLargeError);
+    expect(body.destroyed).toBe(true);
   });
 
   it('refuses an object that turns out longer than the cap while it is read (no declared length)', async () => {
