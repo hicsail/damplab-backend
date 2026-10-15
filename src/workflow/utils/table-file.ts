@@ -1,4 +1,5 @@
 import * as ExcelJS from 'exceljs';
+import * as JSZip from 'jszip';
 import { Readable } from 'stream';
 
 /**
@@ -15,6 +16,8 @@ import { Readable } from 'stream';
  */
 
 export const TABLE_FILE_MAX_BYTES = 10 * 1024 * 1024;
+/** The most a workbook may inflate to, counted as it is inflated (the 10 MB cap above is on compressed bytes). */
+export const TABLE_FILE_MAX_INFLATED_BYTES = 50 * 1024 * 1024;
 
 export const TABLE_FILE_UNREADABLE_MESSAGE = 'This file could not be read as a spreadsheet. Save it as .xlsx or .csv and try again.';
 export const TABLE_FILE_NO_SHEETS_MESSAGE = 'This spreadsheet has no sheets in it.';
@@ -70,7 +73,7 @@ export function missingColumns(header: readonly string[], expected: readonly str
 /** `cell.text` renders a formula by its cached result, rich text as its string and an empty cell as ''. */
 function worksheetRows(worksheet: ExcelJS.Worksheet): string[][] {
   const rows: string[][] = [];
-  worksheet.eachRow({ includeEmpty: true }, (row) => {
+  worksheet.eachRow((row) => {
     const cells: string[] = [];
     for (let column = 1; column <= row.cellCount; column++) cells.push(row.getCell(column).text ?? '');
     rows.push(cells);
@@ -83,6 +86,32 @@ const isZip = (buffer: Buffer): boolean => buffer.length >= 2 && buffer[0] === 0
 const hasUtf8Bom = (buffer: Buffer): boolean => buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
 
 /**
+ * Refuses an archive whose entries inflate beyond TABLE_FILE_MAX_INFLATED_BYTES.
+ * The sizes a zip declares are the attacker's to choose, so this inflates every
+ * entry as a stream and counts the bytes that actually come out, stopping at the
+ * cap; the declared sizes are never consulted. A malformed archive throws too.
+ */
+async function assertInflatedWithinCap(buffer: Buffer): Promise<void> {
+  const zip = await JSZip.loadAsync(buffer);
+  let total = 0;
+  for (const entry of Object.values(zip.files)) {
+    if (entry.dir) continue;
+    await new Promise<void>((resolve, reject) => {
+      const stream = entry.nodeStream('nodebuffer');
+      stream.on('data', (chunk: Buffer) => {
+        total += chunk.length;
+        if (total > TABLE_FILE_MAX_INFLATED_BYTES) {
+          stream.pause();
+          reject(new TableFileError(TABLE_FILE_UNREADABLE_MESSAGE));
+        }
+      });
+      stream.on('error', reject);
+      stream.on('end', () => resolve());
+    });
+  }
+}
+
+/**
  * The first visible worksheet of the bytes, by what the bytes are: `PK` magic
  * is a workbook; anything else is CSV text, unless it holds a NUL byte, which
  * no text file does (that is what turns away `.xls`, PDFs and images).
@@ -90,12 +119,16 @@ const hasUtf8Bom = (buffer: Buffer): boolean => buffer.length >= 3 && buffer[0] 
 async function firstWorksheet(buffer: Buffer): Promise<ExcelJS.Worksheet | undefined> {
   const workbook = new ExcelJS.Workbook();
   if (isZip(buffer)) {
+    await assertInflatedWithinCap(buffer);
     await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
     return workbook.worksheets.find((sheet) => sheet.state === 'visible') ?? workbook.worksheets[0];
   }
   if (buffer.includes(0)) throw new TableFileError(TABLE_FILE_UNREADABLE_MESSAGE);
   // Through exceljs rather than splitting on newlines: a quoted cell may hold the delimiter or a line break.
-  return workbook.csv.read(Readable.from(hasUtf8Bom(buffer) ? buffer.subarray(3) : buffer));
+  return workbook.csv.read(Readable.from(hasUtf8Bom(buffer) ? buffer.subarray(3) : buffer), {
+    // A header is its text: left to itself exceljs turns `007` into 7 and `2024-01-05` into a date.
+    map: (cell: string) => cell
+  });
 }
 
 /** The header row and row count of an uploaded file, or a TableFileError saying why it cannot be read. */

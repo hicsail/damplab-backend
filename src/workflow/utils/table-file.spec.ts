@@ -1,4 +1,5 @@
 import * as ExcelJS from 'exceljs';
+import * as JSZip from 'jszip';
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
@@ -9,6 +10,7 @@ import {
   readTableFile,
   readTableRows,
   TABLE_FILE_MAX_BYTES,
+  TABLE_FILE_MAX_INFLATED_BYTES,
   TABLE_FILE_NO_SHEETS_MESSAGE,
   TABLE_FILE_NOT_FETCHED_MESSAGE,
   TABLE_FILE_TOO_LARGE_MESSAGE,
@@ -133,6 +135,34 @@ describe('readTableFile', () => {
 
   it('refuses a file over the size cap without parsing it', async () => {
     await expect(readTableFile(Buffer.alloc(TABLE_FILE_MAX_BYTES + 1, 0x61))).rejects.toThrow(TABLE_FILE_TOO_LARGE_MESSAGE);
+  });
+
+  // I1: the 10 MB cap is on compressed bytes; the inflated size is what costs memory.
+  it('refuses a small zip that inflates beyond the inflated-size cap, as unreadable', async () => {
+    const zip = new JSZip();
+    zip.file('xl/worksheets/sheet1.xml', Buffer.alloc(TABLE_FILE_MAX_INFLATED_BYTES + 1024 * 1024, 0x61));
+    const bomb = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    expect(bomb.byteLength).toBeLessThan(TABLE_FILE_MAX_BYTES);
+    await expect(readTableFile(bomb)).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
+  });
+
+  it('does not materialise rows that only carry formatting', async () => {
+    const buffer = await xlsxBuffer((workbook) => {
+      const sheet = workbook.addWorksheet('Table');
+      sheet.addRows([['Inducer'], ['IPTG']]);
+      sheet.getCell('A1000000').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+    });
+    await expect(readTableFile(buffer)).resolves.toEqual({ header: ['Inducer'], rowCount: 1 });
+  });
+
+  // F12: exceljs types CSV cells before .text; a header is its text.
+  it('reads CSV header cells as written, not as numbers or dates', async () => {
+    const contents = await readTableFile(Buffer.from('2024-01-05,007,1.50\nx,y,z\n', 'utf8'));
+    expect(contents.header).toEqual(['2024-01-05', '007', '1.50']);
+  });
+
+  it('refuses a CSV with an unterminated quote as unreadable (the browser reader does the same)', async () => {
+    await expect(readTableFile(Buffer.from('Inducer,"Concentration\nIPTG,1\n', 'utf8'))).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
   });
 
   it('accepts a header with zero rows below, counting 0', async () => {
