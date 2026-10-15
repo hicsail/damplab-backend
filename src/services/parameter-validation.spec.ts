@@ -98,6 +98,13 @@ describe('effectiveValidation (rule 24)', () => {
 });
 
 describe('parameterDefinitionError', () => {
+  // An answer is stored under its parameter's id; a file parameter without one would never have its file uploaded.
+  it.each(['file', 'table', 'sampleSheet'])('refuses a %s parameter with no id', (type) => {
+    expect(parameterDefinitionError({ name: 'Plasmid map', type })).toBe('Parameter “Plasmid map”: a File Upload or Table parameter needs an id.');
+    expect(parameterDefinitionError({ id: '  ', name: 'Plasmid map', type })).toBe('Parameter “Plasmid map”: a File Upload or Table parameter needs an id.');
+    expect(parameterDefinitionError({ id: 'map', name: 'Plasmid map', type })).toBeNull();
+  });
+
   it('accepts a parameter with neither new field', () => {
     expect(parameterDefinitionError({ id: 'a', name: 'A', type: 'string' })).toBeNull();
   });
