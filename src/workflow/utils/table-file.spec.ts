@@ -268,6 +268,14 @@ describe('worksheetCells (exceljs private storage, pinned against the public wal
     return workbook.worksheets[0];
   };
 
+  // m7: worksheetCells reads 4.4.0 internals, so an upgrade must be a deliberate change that passes these specs.
+  it('runs on exceljs pinned to exactly 4.4.0', () => {
+    const manifest = JSON.parse(readFileSync(resolve(__dirname, '../../../package.json'), 'utf8')) as { dependencies: Record<string, string> };
+    expect(manifest.dependencies.exceljs).toBe('4.4.0');
+    const installed = JSON.parse(readFileSync(require.resolve('exceljs/package.json'), 'utf8')) as { version: string };
+    expect(installed.version).toBe('4.4.0');
+  });
+
   it('still finds exceljs keeping rows and cells in sparse arrays', async () => {
     const worksheet = await loaded(fixture('samples-96.xlsx'));
     const rows = (worksheet as unknown as { _rows: unknown })._rows;
