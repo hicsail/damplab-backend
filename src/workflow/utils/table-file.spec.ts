@@ -161,6 +161,11 @@ describe('readTableFile', () => {
     expect(contents.header).toEqual(['2024-01-05', '007', '1.50']);
   });
 
+  // M1: a header cell that is a number reads as its value's text, in both readers (a display format such as 000 is not applied).
+  it('reads numeric .xlsx header cells as their value’s text (shared fixture)', async () => {
+    await expect(readTableFile(fixture('numeric-header.xlsx'))).resolves.toEqual({ header: ['Sample ID', '2024', '7', '1.5'], rowCount: 2 });
+  });
+
   it('refuses a CSV with an unterminated quote as unreadable (the browser reader does the same)', async () => {
     await expect(readTableFile(Buffer.from('Inducer,"Concentration\nIPTG,1\n', 'utf8'))).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
   });
@@ -198,7 +203,8 @@ describe('checkTableFile', () => {
       'samples-96.xlsx': '65f9e17b5e998608381f5979a4a96021ca8440227fc92d38b17426c931f90bfc',
       'samples-with-gaps.csv': '4b2fd83ec9429a8704a4243db216a0834d402386df7e532aece603315e4dcc70',
       'template-with-banner.xlsx': 'd86034e74901ca53b82d59b0d657f6c14a0395531bc2f1759bffcbc51371211a',
-      'samples-with-banner.xlsx': 'a0447dc38ae4007ab9f03885c10b42f872743ddb17139b3fbee2306699a815fd'
+      'samples-with-banner.xlsx': 'a0447dc38ae4007ab9f03885c10b42f872743ddb17139b3fbee2306699a815fd',
+      'numeric-header.xlsx': '6ea2cb9ee9f6255f3279026643fa30e3c6d124e20931d2084ebc8516027ad660'
     };
     for (const [name, hash] of Object.entries(expected)) expect(createHash('sha256').update(fixture(name)).digest('hex')).toBe(hash);
   });
