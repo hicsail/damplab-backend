@@ -172,6 +172,17 @@ describe('a Table answer stored under the string "table"', () => {
     expect(buildParameterSnapshot(service, formData)).toEqual([{ id: 't', name: 'Plate map', type: 'table', displayValue: 'plate.xlsx' }]);
   });
 
+  // F11: a `table` answer written before this change is not a file; it displays as it did.
+  it('shows a keyless legacy answer as it was shown before, never as an attached file', () => {
+    const show = (value: unknown): string | undefined => buildParameterSnapshot({ parameters: [{ id: 't', name: 'Plate map', type: 'table' }] }, [{ id: 't', value }])[0]?.displayValue;
+    expect(show('')).toBeUndefined();
+    expect(show('some text')).toBe('some text');
+    expect(show(3)).toBe('3');
+    expect(show('[{"a":1}]')).toBe('[{"a":1}]');
+    expect(show({ data: [[1]] })).toBe('{"data":[[1]]}');
+    expect(show(JSON.stringify({ filename: 'x.csv', sampleCount: 2 }))).toBe(JSON.stringify({ filename: 'x.csv', sampleCount: 2 }));
+  });
+
   it('has no entry for the old empty answer', () => {
     expect(buildParameterSnapshot({ parameters: [{ id: 't', name: 'Plate map', type: 'table' }] }, [{ id: 't', value: '' }])).toEqual([]);
   });
