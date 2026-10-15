@@ -75,6 +75,12 @@ describe('parameterSetSampleSheetTemplateUrl', () => {
     expect(createPresignedDownload).toHaveBeenCalledWith(template.key, template.contentType);
   });
 
+  it('presigns the template of a parameter stored as `table` as it does a `sampleSheet`', async () => {
+    const { resolver, createPresignedDownload } = setHarness([{ id: 'sheet', type: 'table', templateFile: template }]);
+    await expect(resolver.parameterSetSampleSheetTemplateUrl('set-1', 'sheet')).resolves.toBe('https://s3/sample-sheet-templates/abc.xlsx');
+    expect(createPresignedDownload).toHaveBeenCalledWith(template.key, template.contentType);
+  });
+
   it('is null when the set, the parameter or the template is missing', async () => {
     await expect(setHarness(null).resolver.parameterSetSampleSheetTemplateUrl('gone', 'sheet')).resolves.toBeNull();
     await expect(setHarness([{ id: 'other', type: 'string' }]).resolver.parameterSetSampleSheetTemplateUrl('set-1', 'sheet')).resolves.toBeNull();
