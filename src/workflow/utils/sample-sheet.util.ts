@@ -1,16 +1,15 @@
 import { Job, JobState } from '../../job/job.model';
 
 /**
- * A samples spreadsheet is a catalog parameter of type `sampleSheet`: staff
- * attach a blank template with the lab's columns, the customer downloads it,
- * fills it in and attaches it to the operation, and the number of rows below
- * the header is shown as the sample count.
+ * A Table is a catalog parameter whose stored type is `table` or `sampleSheet`:
+ * staff list its columns (and may attach a blank template), the customer
+ * downloads a template, fills it in and attaches it to the operation, and the
+ * number of rows below the header is the sample count.
  *
- * The count is read in the browser when the file is picked
- * (`damplab-ui/src/utils/sampleSheet.ts`) and stored alongside the file's key.
- * On an operation priced "by parameter" it is the quantity the parameter's
- * price is multiplied by — see `sampleCountFromValue` below for what that
- * means for trust.
+ * The server reads the uploaded file and writes the count itself
+ * (`table-answers.ts`, `table-file.ts`); a count the client sends is ignored.
+ * On an operation priced "by parameter" a value the server counted is the
+ * quantity the parameter's price is multiplied by (`SERVER_COUNTED` below).
  *
  * The stored value is a JSON string in the node's formData, the same shape as a
  * `file` parameter plus `sampleCount`, so everything that already reads file

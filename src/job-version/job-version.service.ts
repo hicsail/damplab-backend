@@ -43,7 +43,7 @@ interface PreparedNode {
   clientId: string;
   patch: NodeContentPatch;
   snapshot: JobVersionNode;
-  /** Ids of this node's uploaded-file parameters (`file` and `sampleSheet`), whose stored keys are presigned on read. */
+  /** Ids of this node's uploaded-file parameters (`file` and Table), whose stored keys are presigned on read. */
   fileParamIds: string[];
   /** The catalogue's name and effective parameters for this node's operation. Read by the answer check; never written. */
   catalogService: { name: unknown; parameters: unknown };
@@ -568,14 +568,14 @@ export class JobVersionService {
 
     const liveNodes = await this.loadLiveNodes(job);
 
-    // Prepared first, deliberately: it resolves each node against the catalogue
-    // and normalizes formData, so the guard below compares like with like. It
-    // only reads, so nothing is written if the guard then rejects.
     // Only the editor's save names an uploader. A version restore and a
     // withdrawal do not: they replay stored values from history unchanged, so
     // nothing below reads storage or rewrites a Table value for them.
     const countTables = opts.uploaderSub !== undefined;
     const category = job.customerCategory as CustomerCategory | undefined;
+    // Prepared first, deliberately: it resolves each node against the catalogue
+    // and normalizes formData, so the guards below compare like with like. It
+    // only reads, so nothing is written if a guard then rejects.
     const prepared = await this.prepareWorkflows(
       input.workflows,
       category,
