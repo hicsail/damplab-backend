@@ -160,6 +160,33 @@ export function keyBelongsToUploader(key: string, userSub: string | undefined): 
   return typeof key === 'string' && key.startsWith(uploadKeyPrefixFor(userSub)) && !key.includes('..');
 }
 
+/** A parameter's answer as a flat list: a multi-value answer is an array (possibly nested), anything else is one value. */
+export function flattenValues(value: unknown): unknown[] {
+  return Array.isArray(value) ? value.flatMap(flattenValues) : [value];
+}
+
+/**
+ * The first storage key among the answers to `file` and Table parameters that
+ * is not under the caller's own upload prefix, or null when there is none.
+ *
+ * The node resolver presigns a download for every key stored on such a
+ * parameter, and the server reads a Table's file itself, so an answer naming
+ * someone else's key would hand the submitter that person's file. A value
+ * with no key is not this function's business: nothing can be presigned from it.
+ */
+export function foreignFileKey(parameters: unknown, formData: ReadonlyArray<{ id: string; value?: unknown }>, userSub: string | undefined): string | null {
+  const guarded = new Set(fileParameterIds(parameters));
+  if (guarded.size === 0) return null;
+  for (const entry of formData ?? []) {
+    if (!entry || !guarded.has(entry.id)) continue;
+    for (const value of flattenValues(entry.value)) {
+      const key = sampleSheetKeyOf(value);
+      if (key !== undefined && !keyBelongsToUploader(key, userSub)) return key;
+    }
+  }
+  return null;
+}
+
 /**
  * Why a sheet cannot be replaced right now, or null when it can.
  *

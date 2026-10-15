@@ -3,6 +3,8 @@ import {
   expectedColumns,
   fileParameterIds,
   findTableParam,
+  flattenValues,
+  foreignFileKey,
   holdsStorageKey,
   isTableParam,
   isTableType,
@@ -191,6 +193,64 @@ describe('sampleSheetKeyOf', () => {
       expect(holdsStorageKey(JSON.stringify({ filename: 'a.csv', key: 'workflow-parameters/u/a.csv' }))).toBe(true);
       expect(holdsStorageKey(['', { key: 'workflow-parameters/u/a.csv' }])).toBe(true);
       for (const value of [undefined, null, '', 'legacy', 3, true, [], [''], { rows: [] }, JSON.stringify({ filename: 'a.csv', notUploaded: true })]) expect(holdsStorageKey(value)).toBe(false);
+    });
+  });
+
+  describe('flattenValues', () => {
+    it('flattens nested arrays and wraps a scalar', () => {
+      expect(flattenValues([1, [2, [3]], 4])).toEqual([1, 2, 3, 4]);
+      expect(flattenValues('a')).toEqual(['a']);
+      expect(flattenValues(undefined)).toEqual([undefined]);
+    });
+  });
+
+  describe('foreignFileKey (R1)', () => {
+    const parameters = [
+      { id: 'doc', type: 'file' },
+      { id: 'sheet', type: 'sampleSheet' },
+      { id: 'plate', type: 'table' },
+      { id: 'note', type: 'string' }
+    ];
+    const value = (key: string): string => JSON.stringify({ filename: 'f', key });
+    const mine = 'workflow-parameters/me/a.csv';
+    const theirs = 'workflow-parameters/them/a.csv';
+
+    it('is null when every file and Table key is under the caller’s own prefix', () => {
+      const formData = [
+        { id: 'doc', value: value(mine) },
+        { id: 'sheet', value: value(mine) },
+        { id: 'plate', value: [value(mine), { key: mine }] }
+      ];
+      expect(foreignFileKey(parameters, formData, 'me')).toBeNull();
+    });
+
+    it('names the first key that is not — on a file parameter, a sample sheet or a Table; as a string, an object or an array element', () => {
+      expect(foreignFileKey(parameters, [{ id: 'doc', value: value(theirs) }], 'me')).toBe(theirs);
+      expect(foreignFileKey(parameters, [{ id: 'sheet', value: { key: theirs } }], 'me')).toBe(theirs);
+      expect(foreignFileKey(parameters, [{ id: 'plate', value: [value(mine), value(theirs)] }], 'me')).toBe(theirs);
+    });
+
+    it('treats any key outside the caller’s folder as foreign: another storage area, a parent-directory segment, a look-alike prefix', () => {
+      for (const key of ['sample-sheet-templates/blank.xlsx', 'job-attachments/j/x.pdf', 'workflow-parameters/me/../them/a.csv', 'workflow-parameters/me-too/a.csv']) {
+        expect(foreignFileKey(parameters, [{ id: 'doc', value: value(key) }], 'me')).toBe(key);
+      }
+    });
+
+    it('ignores blanks, values with no key, and parameters that hold no file', () => {
+      const formData = [
+        { id: 'doc', value: null },
+        { id: 'sheet', value: '' },
+        { id: 'plate', value: JSON.stringify({ filename: 'f', notUploaded: true }) },
+        { id: 'doc', value: 'not json' },
+        { id: 'note', value: value(theirs) },
+        { id: 'gone', value: value(theirs) }
+      ];
+      expect(foreignFileKey(parameters, formData, 'me')).toBeNull();
+    });
+
+    it('with no caller sub, only the shared anonymous folder passes — the folder such a caller’s uploads are minted under', () => {
+      expect(foreignFileKey(parameters, [{ id: 'doc', value: value(mine) }], undefined)).toBe(mine);
+      expect(foreignFileKey(parameters, [{ id: 'doc', value: value('workflow-parameters/anonymous/a.csv') }], undefined)).toBeNull();
     });
   });
 });

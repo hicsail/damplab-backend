@@ -7,6 +7,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-d
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { REQUEST } from '@nestjs/core';
 import { deriveCustomerCategory } from '../../pricing/pricing-groups';
+import { foreignFileKey } from '../utils/sample-sheet.util';
 import { withoutHiddenAnswers } from '../../services/parameter-conditions';
 
 // parameterSnapshot is server-written and an object type: exposing it on an input would both let clients forge it and fail schema generation.
@@ -31,6 +32,21 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     // An answer to a hidden parameter is dropped here, before pricing and storing:
     // the client is not trusted to have left it out.
     const formData = withoutHiddenAnswers(service.parameters, normalizeFormDataToArray(value.formData, multiValueParamIds));
+    // A file or Table answer may only name a storage key this caller uploaded.
+    // The node resolver presigns a download for every stored key, so a key that
+    // is someone else's must be refused here, before it is read or stored.
+    // After the hidden strip: a hidden answer is dropped, not refused.
+    //
+    // In a request-scoped GraphQL provider REQUEST is the GraphQL context
+    // ({ req }), and the auth guard writes the caller onto that req — pinned on
+    // a real request by add-node.input.wiring.spec.ts. The category derivation
+    // further down reads `this.request?.user`, which is a different question
+    // with its own history; it is deliberately not touched here.
+    const caller = this.request?.req?.user;
+    if (foreignFileKey(service.parameters, formData, caller?.sub) !== null) {
+      const operation = typeof value.label === 'string' && value.label.trim() !== '' ? value.label : service.name;
+      throw new BadRequestException(`The file on "${operation}" was not uploaded by you. Upload it again and retry.`);
+    }
     // Prices from the **requesting user's** Keycloak identity, which is right at
     // checkout (the customer is the requester) and wrong whenever staff act on a
     // customer's job — a technician adding a node would stamp it at the staff tier.
