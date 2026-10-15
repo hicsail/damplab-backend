@@ -28,6 +28,14 @@ export interface WorkflowParameterPresignedUploadResponse {
   size: number;
 }
 
+/** An object larger than the caller is prepared to read. */
+export class ObjectTooLargeError extends Error {
+  constructor() {
+    super('The stored object is larger than the read limit.');
+    this.name = 'ObjectTooLargeError';
+  }
+}
+
 @Injectable()
 export class WorkflowParameterFilesService {
   private readonly s3: S3Client | null;
@@ -96,5 +104,31 @@ export class WorkflowParameterFilesService {
       console.error('Failed to create S3 presigned download URL for workflow parameter file', err);
       return null;
     }
+  }
+
+  /**
+   * The bytes of a stored object, for the server to read itself. Unlike the
+   * presign methods this throws on every failure — unconfigured storage, a
+   * missing object, an object over `maxBytes` — because its callers must refuse
+   * a file they could not read rather than accept it unread. The caller decides
+   * which keys may be read; this reads whatever key it is given.
+   */
+  async readObject(key: string, maxBytes: number): Promise<Buffer> {
+    if (!this.s3 || !this.bucket) throw new Error('Workflow parameter file storage is not configured on the server.');
+    const response = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if (typeof response.ContentLength === 'number' && response.ContentLength > maxBytes) throw new ObjectTooLargeError();
+    const body = response.Body as (AsyncIterable<Uint8Array> & { destroy?: () => void }) | undefined;
+    if (!body) throw new Error('The stored object has no body.');
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for await (const chunk of body) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        body.destroy?.();
+        throw new ObjectTooLargeError();
+      }
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
   }
 }
