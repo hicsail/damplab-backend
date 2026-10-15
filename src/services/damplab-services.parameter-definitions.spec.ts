@@ -97,3 +97,56 @@ describe('DampLabServices refuses a bad “show only if” (show-only-if rule 34
     expect(model.create).not.toHaveBeenCalled();
   });
 });
+
+describe('DampLabServices refuses a Table with no columns and no staff template (table-upload rule 12)', () => {
+  const bare = { id: 'plate', name: 'Plate map', type: 'table' };
+  const MESSAGE = 'Parameter “Plate map”: a Table needs at least one column.';
+
+  it('update: a new unconfigured Table is refused before anything is written', async () => {
+    const { svc, model } = build();
+    await expect(svc.update(op(), { parameters: [bare] } as any)).rejects.toThrow(BadRequestException);
+    await expect(svc.update(op(), { parameters: [bare] } as any)).rejects.toThrow(MESSAGE);
+    expect(model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('update: one already stored that way still saves when the write does not change its type, columns or template', async () => {
+    const { svc, model } = build();
+    const stored = { ...op(), parameters: [bare], ownParameters: [bare] };
+    const parameters = [
+      { ...bare, description: 'now described' },
+      { id: 'n', name: 'Cycles', type: 'number' }
+    ];
+    await svc.update(stored, { parameters } as any);
+    expect(model.updateOne).toHaveBeenCalledWith({ _id: 'op1' }, { parameters });
+  });
+
+  it('update: compares against the operation’s own parameters, not a same-id parameter that came from a set', async () => {
+    const { svc } = build();
+    const fromSet = { ...bare, fromParameterSetId: 'set1' };
+    const stored = { ...op(), parameters: [fromSet], ownParameters: [] };
+    await expect(svc.update(stored, { parameters: [bare] } as any)).rejects.toThrow(MESSAGE);
+  });
+
+  it('update: removing the last column is refused', async () => {
+    const { svc } = build();
+    const configured = { ...bare, tableData: { columns: [{ header: 'A', field: 'a' }] } };
+    const stored = { ...op(), parameters: [configured], ownParameters: [configured] };
+    await expect(svc.update(stored, { parameters: [{ ...bare, tableData: { columns: [] } }] } as any)).rejects.toThrow(MESSAGE);
+  });
+
+  it('update: a Table with columns, and a legacy sample sheet with a staff template, are written', async () => {
+    const { svc, model } = build();
+    const parameters = [
+      { ...bare, tableData: { columns: [{ header: 'Inducer', field: 'inducer' }] } },
+      { id: 'sheet', name: 'Samples', type: 'sampleSheet', templateFile: { key: 'sample-sheet-templates/a.xlsx' } }
+    ];
+    await svc.update(op(), { parameters } as any);
+    expect(model.updateOne).toHaveBeenCalledWith({ _id: 'op1' }, { parameters });
+  });
+
+  it('create: an unconfigured Table is refused', async () => {
+    const { svc, model } = build();
+    await expect(svc.create({ name: 'New', parameters: [bare] } as any)).rejects.toThrow(MESSAGE);
+    expect(model.create).not.toHaveBeenCalled();
+  });
+});

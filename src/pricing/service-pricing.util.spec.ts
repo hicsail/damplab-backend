@@ -546,6 +546,51 @@ describe('samples spreadsheet pricing', () => {
   });
 });
 
+describe('a file the server counted bills per row, under either stored string (R2a, R2d)', () => {
+  const serviceOf = (type: string, extra: Record<string, unknown> = {}): any => ({
+    pricingMode: ServicePricingMode.PARAMETER,
+    parameters: [{ id: 'samples', name: 'Samples', type, price: 3, ...extra }]
+  });
+  const counted = (sampleCount: number): string => JSON.stringify({ filename: 'samples.xlsx', key: 'workflow-parameters/u/x', sampleCount, countedBy: 'server' });
+
+  it.each(['table', 'sampleSheet'])('%s: price × rows, itemised; zero rows bills nothing', (type) => {
+    const breakdown = calculateServiceCostBreakdown(serviceOf(type), [{ id: 'samples', value: counted(12) }]);
+    expect(breakdown.cost).toBe(36);
+    expect(breakdown.details).toEqual([{ label: 'Samples', quantity: 12, unitPrice: 3, total: 36 }]);
+    expect(calculateServiceCost(serviceOf(type), [{ id: 'samples', value: counted(0) }])).toBe(0);
+  });
+
+  it.each(['table', 'sampleSheet'])('%s: the parsed object the editor round-trips prices the same', (type) => {
+    expect(calculateServiceCost(serviceOf(type), [{ id: 'samples', value: { ...JSON.parse(counted(12)), url: 'https://s3/x' } }])).toBe(36);
+  });
+
+  it.each(['table', 'sampleSheet'])('%s with allowMultipleValues: the rows of the counted files are summed', (type) => {
+    const multi = serviceOf(type, { allowMultipleValues: true });
+    expect(calculateServiceCost(multi, [{ id: 'samples', value: counted(12) }])).toBe(36);
+    expect(calculateServiceCost(multi, [{ id: 'samples', value: [counted(12), counted(3)] }])).toBe(45);
+  });
+
+  it.each(['table', 'sampleSheet'])('%s flagged as a priced multiplier still bills the counted rows', (type) => {
+    expect(calculateServiceCost(serviceOf(type, { isPriceMultiplier: true }), [{ id: 'samples', value: counted(12) }])).toBe(36);
+  });
+
+  it('an unpriced Table bills nothing, and an operation-priced line ignores the count', () => {
+    const unpriced: any = { pricingMode: ServicePricingMode.PARAMETER, parameters: [{ id: 'samples', name: 'Samples', type: 'table' }] };
+    expect(calculateServiceCost(unpriced, [{ id: 'samples', value: counted(12) }])).toBe(0);
+    const byOperation: any = { pricingMode: ServicePricingMode.SERVICE, price: 50, parameters: [{ id: 'samples', name: 'Samples', type: 'table', price: 3 }] };
+    expect(calculateServiceCost(byOperation, [{ id: 'samples', value: counted(12) }])).toBe(50);
+  });
+
+  // The other half of R2a is table-price-characterization.spec.ts: a value
+  // without the mark prices exactly as before. One case is repeated here so
+  // the contrast is on one screen.
+  it('the same file without the server’s mark keeps its old bill: × 1 on a `table` parameter, × its stored count on a `sampleSheet`', () => {
+    const unmarked = JSON.stringify({ filename: 'samples.xlsx', key: 'workflow-parameters/u/x', sampleCount: 12 });
+    expect(calculateServiceCost(serviceOf('table'), [{ id: 'samples', value: unmarked }])).toBe(3);
+    expect(calculateServiceCost(serviceOf('sampleSheet'), [{ id: 'samples', value: unmarked }])).toBe(36);
+  });
+});
+
 /**
  * An equipment-use operation is priced as its own hourly rate times the booked
  * window. "Based on selected options" has nothing to price there, so a service

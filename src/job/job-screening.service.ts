@@ -16,6 +16,13 @@ import { getFormStringFromEntries, looksLikeNucleotideSequence, normalizeFormDat
 import { screeningSliceName } from './job-screening-name.util';
 
 /**
+ * Biosecurity screening is paused: submission and resubmission no longer start
+ * a screen. Staff's "re-run screening" still works on demand. Flip back to
+ * true when the feature is finished.
+ */
+export const AUTO_SCREENING_ENABLED = false;
+
+/**
  * Homology screening for a job: find the customer-supplied sequences, send them
  * to a screening provider, record the verdict on the job.
  *
@@ -328,6 +335,7 @@ export class JobScreeningService {
 
   /** Dispatch without blocking the caller. Errors are recorded, never thrown. */
   screenJobInBackground(jobId: string, userSub: string): void {
+    if (!AUTO_SCREENING_ENABLED) return;
     void this.screenJob(jobId, userSub).catch((error) => {
       this.logger.error(`Unhandled screening failure for job ${jobId}: ${messageOf(error)}`);
     });

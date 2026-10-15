@@ -67,11 +67,27 @@ const plan = [
         ...s,
         _id: oid(s.id),
         id: undefined,
+        // `parameters` from GraphQL is the effective list; only the operation's own are stored.
+        // An export taken before ownParameters was fetched falls back to it, set entries included.
+        parameters: Array.isArray(s.ownParameters) ? s.ownParameters : s.parameters,
+        ownParameters: undefined,
+        parameterSetIds: oids(s.parameterSetIds),
         allowedConnections: oids((s.allowedConnections ?? []).map((c) => c.id)),
         inventoryRequirements: oids(s.inventoryRequirements)
       })
     )
   },
+  // Only when the export carried them: an older export would otherwise empty the local sets.
+  ...(Array.isArray(data.parameterSets)
+    ? [
+        {
+          collection: 'parametersets',
+          docs: data.parameterSets.map((p) =>
+            clean({ ...p, _id: oid(p.id), id: undefined, createdAt: date(p.createdAt), updatedAt: date(p.updatedAt) })
+          )
+        }
+      ]
+    : []),
   {
     collection: 'categories',
     docs: (data.categories ?? []).map((c) =>
@@ -153,6 +169,8 @@ if (!DRY) {
 
   const check = (label, refs, pool) => refs.filter((r) => !pool.has(String(r))).forEach((r) => dangling.push(`${label} → ${r}`));
 
+  const setIds = new Set((await db.collection('parametersets').find({}, { projection: { _id: 1 } }).toArray()).map((d) => String(d._id)));
+  for (const s of await db.collection('damplabservices').find({}).toArray()) check(`service "${s.name}".parameterSetIds`, s.parameterSetIds ?? [], setIds);
   for (const c of await db.collection('categories').find({}).toArray()) check(`category "${c.label}"`, c.services ?? [], serviceIds);
   for (const b of await db.collection('bundles').find({}).toArray()) check(`bundle "${b.label}"`, b.services ?? [], serviceIds);
   for (const s of await db.collection('damplabservices').find({}).toArray()) check(`service "${s.name}".allowedConnections`, s.allowedConnections ?? [], serviceIds);
