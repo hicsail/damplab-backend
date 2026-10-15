@@ -94,6 +94,7 @@ const GATES: Row[] = [
   [JobResolver, 'markJobsFeedViewed', Permission.JobsViewAll],
   [JobResolver, 'archiveJob', Permission.JobsViewAll],
   [JobResolver, 'unarchiveJob', Permission.JobsViewAll],
+  [JobResolver, 'reopenJob', Permission.JobsViewAll],
   [WorkflowResolver, 'workflowById', Permission.JobsViewAll],
   [JobResolver, 'jobClients', Permission.JobsViewAll],
   [JobResolver, 'rerunJobHomologyScreening', Permission.JobsViewAll],
