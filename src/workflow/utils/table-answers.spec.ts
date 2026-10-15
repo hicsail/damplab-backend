@@ -203,3 +203,25 @@ describe('a key already stored on the node for that parameter (rules 23, 24)', (
     expect(withStoredTableAnswers(parameters, formData, undefined)).toEqual(formData);
   });
 });
+
+// A keyless value already stored — e.g. the browser placeholders some Prod jobs hold — must survive an untouched save
+// however the client spells it back, and is written back exactly as stored.
+describe('a keyless value already stored on the node for that parameter', () => {
+  const placeholder = { __kind: 'pending-file', localId: 'abc', filename: 'Master.xlsx', contentType: 'application/vnd.ms-excel', size: 74841, sampleCount: 9 };
+  const stored = [{ id: 'legacy', value: placeholder }];
+
+  it.each([
+    ['the same object', placeholder],
+    ['its keys in another order', { sampleCount: 9, size: 74841, filename: 'Master.xlsx', contentType: 'application/vnd.ms-excel', localId: 'abc', __kind: 'pending-file' }],
+    ['a JSON string of it', JSON.stringify(placeholder)]
+  ])('is kept as stored when sent back as %s, and nothing is fetched', async (_label, value) => {
+    const readObject = reader();
+    const out = await run([{ id: 'legacy', value }], readObject, stored);
+    expect(out[0].value).toBe(placeholder);
+    expect(readObject).not.toHaveBeenCalled();
+  });
+
+  it('a keyless value that differs from what is stored is still refused', async () => {
+    await expect(run([{ id: 'legacy', value: { ...placeholder, sampleCount: 90 } }], reader(), stored)).rejects.toThrow('could not be read');
+  });
+});

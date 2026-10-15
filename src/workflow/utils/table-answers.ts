@@ -30,7 +30,31 @@ export type ReadObject = (key: string) => Promise<Buffer>;
 export const TABLE_UPLOAD_KEY_PREFIX = 'workflow-parameters/';
 
 const isBlank = (value: unknown): boolean => value === null || value === undefined || value === '';
-const raw = (value: unknown): string => (typeof value === 'string' ? value : JSON.stringify(value));
+/**
+ * A value as order-free text: a JSON string is parsed first and object keys are sorted, so the same stored value
+ * matches however the client spells it back (object or string, any key order).
+ */
+function canonical(value: unknown): string {
+  let parsed = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return JSON.stringify(value);
+    }
+  }
+  const sorted = (v: unknown): unknown =>
+    Array.isArray(v)
+      ? v.map(sorted)
+      : v && typeof v === 'object'
+      ? Object.fromEntries(
+          Object.keys(v)
+            .sort()
+            .map((k) => [k, sorted((v as Record<string, unknown>)[k])])
+        )
+      : v;
+  return JSON.stringify(sorted(parsed));
+}
 
 function tableParamsById(parameters: unknown): Map<string, TableParam> {
   const byId = new Map<string, TableParam>();
@@ -142,11 +166,14 @@ export async function countNewTableAnswers(input: CountNewTableAnswersInput): Pr
     }
     const before = storedValuesFor(input.stored, entry.id);
     const storedKeys = new Set(before.map(sampleSheetKeyOf).filter((key): key is string => !!key));
-    const storedRaw = new Set(before.map(raw));
+    // A keyless value equal to a stored one is written back as stored, never re-read.
+    const storedByCanonical = new Map(before.map((value) => [canonical(value), value] as const));
     const one = async (value: unknown): Promise<unknown> => {
       if (isBlank(value)) return value;
       const key = sampleSheetKeyOf(value);
-      if (key ? storedKeys.has(key) : storedRaw.has(raw(value))) return value;
+      if (key) {
+        if (storedKeys.has(key)) return value;
+      } else if (storedByCanonical.has(canonical(value))) return storedByCanonical.get(canonical(value));
       return countOne(param, value, key, input);
     };
     if (Array.isArray(entry.value)) {
