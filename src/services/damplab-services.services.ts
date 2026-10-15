@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { parametersById, tableDefinitionError } from '../workflow/utils/sample-sheet.util';
 import { DampLabService, DampLabServiceDocument, ServicePricingMode } from './models/damplab-service.model';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -232,11 +233,17 @@ export class DampLabServices {
     if (violation) throw new BadRequestException(violation);
   }
 
-  /** A parameter's validation must parse, its display must fit its type and its “show only if” must be a well-formed, loop-free tree — refused here so no save path can store one that is not. */
-  private assertParameterDefinitionsValid(parameters: unknown): void {
+  /**
+   * A parameter's validation must parse, its display must fit its type, its “show only if” must be a well-formed, loop-free tree, and a Table
+   * must have a column or a staff template — refused here so no save path can store one that is not. `stored` is the operation's own
+   * parameters before this write: a Table is only held to its rule when this write is what changes it.
+   */
+  private assertParameterDefinitionsValid(parameters: unknown, stored: unknown = []): void {
     if (!Array.isArray(parameters)) return;
+    const previous = parametersById(stored);
     for (const parameter of parameters) {
-      const error = parameterDefinitionError(parameter) ?? conditionDefinitionError(parameter, parameters);
+      const error =
+        parameterDefinitionError(parameter) ?? conditionDefinitionError(parameter, parameters) ?? tableDefinitionError(parameter, previous.get((parameter as { id?: string } | null)?.id ?? ''));
       if (error) throw new BadRequestException(error);
     }
   }
@@ -248,7 +255,9 @@ export class DampLabServices {
     const write: Record<string, unknown> = { ...(changes as any) };
     if (Object.prototype.hasOwnProperty.call(write, 'parameters')) {
       write.parameters = stripSetDerivedParameters(write.parameters);
-      this.assertParameterDefinitionsValid(write.parameters);
+      // The operation's own stored parameters, never the effective list: a
+      // same-id parameter that arrived from a set is not this one's history.
+      this.assertParameterDefinitionsValid(write.parameters, stripSetDerivedParameters((service as any).ownParameters ?? service.parameters ?? []));
     }
     if (Array.isArray(write.parameterSetIds)) await this.assertParameterSetsCompatible(write.parameterSetIds);
     const mergedEquipmentUse = (changes as any).equipmentUse ?? (service as any).equipmentUse;

@@ -103,6 +103,33 @@ export function expectedColumns(param: unknown): string[] {
 /** A Table can be answered only when it has a column or a staff template. */
 export const tableIsSetUp = (param: unknown): boolean => expectedColumns(param).length > 0 || templateKeyOf(param) !== null;
 
+const tableDefinitionKey = (param: unknown): string => JSON.stringify([expectedColumns(param), templateKeyOf(param)]);
+
+/**
+ * Why a Table definition may not be saved, or null. A Table needs a column or
+ * a staff template, or no file could ever be checked against it. Refused only
+ * when this write is what leaves it that way — the parameter is new, or its
+ * type (`sampleSheet` and `table` being one type), columns or template differ
+ * from `previous`, the stored parameter of the same id — so a catalog that
+ * already holds such a Table can still be edited elsewhere.
+ */
+export function tableDefinitionError(parameter: unknown, previous: unknown): string | null {
+  if (!parameter || typeof parameter !== 'object') return null;
+  const p = parameter as { id?: unknown; name?: unknown; type?: unknown };
+  if (!isTableType(p.type) || tableIsSetUp(parameter)) return null;
+  const before = previous as { type?: unknown } | null | undefined;
+  if (before && typeof before === 'object' && isTableType(before.type) && tableDefinitionKey(before) === tableDefinitionKey(parameter)) return null;
+  const label = typeof p.name === 'string' && p.name.trim() !== '' ? p.name.trim() : String(p.id ?? '');
+  return `Parameter “${label}”: a Table needs at least one column.`;
+}
+
+/** Stored parameters by id, for `tableDefinitionError`'s `previous`. */
+export function parametersById(parameters: unknown): Map<string, unknown> {
+  const byId = new Map<string, unknown>();
+  if (Array.isArray(parameters)) for (const p of parameters) if (p && typeof p === 'object' && typeof (p as { id?: unknown }).id === 'string') byId.set((p as { id: string }).id, p);
+  return byId;
+}
+
 /** Ids of the parameters whose stored value is a storage key: `file` and Table. */
 export function fileParameterIds(parameters: unknown): string[] {
   if (!Array.isArray(parameters)) return [];

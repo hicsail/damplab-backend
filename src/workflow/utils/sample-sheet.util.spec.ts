@@ -15,10 +15,45 @@ import {
   SERVER_COUNTED,
   serverCountedRows,
   tableIsSetUp,
+  tableDefinitionError,
   templateKeyOf
 } from './sample-sheet.util';
 
 describe('sample-sheet.util', () => {
+  describe('tableDefinitionError (rule 12)', () => {
+    const bare = { id: 't', name: 'Plate map', type: 'table' };
+    const withColumn = { ...bare, tableData: { columns: [{ header: 'A', field: 'a' }] } };
+    const withTemplate = { id: 't', name: 'Plate map', type: 'sampleSheet', templateFile: { key: 'sample-sheet-templates/a.xlsx' } };
+    const MESSAGE = 'Parameter “Plate map”: a Table needs at least one column.';
+
+    it('refuses a new Table with no columns and no staff template', () => {
+      expect(tableDefinitionError(bare, undefined)).toBe(MESSAGE);
+      expect(tableDefinitionError({ ...bare, tableData: { columns: [{ header: '  ' }], rows: [{ a: 1 }] } }, undefined)).toBe(MESSAGE);
+    });
+
+    it('accepts a Table with a column, or with a staff template, new or not', () => {
+      expect(tableDefinitionError(withColumn, undefined)).toBeNull();
+      expect(tableDefinitionError(withTemplate, undefined)).toBeNull();
+    });
+
+    it('lets an unconfigured Table through when it is stored that way and this write does not change it', () => {
+      expect(tableDefinitionError({ ...bare, description: 'edited' }, bare)).toBeNull();
+      // The alias alone is not a change.
+      expect(tableDefinitionError(bare, { ...bare, type: 'sampleSheet' })).toBeNull();
+    });
+
+    it('refuses when this write is what leaves it unconfigured', () => {
+      expect(tableDefinitionError(bare, withColumn)).toBe(MESSAGE);
+      expect(tableDefinitionError({ ...withTemplate, templateFile: null }, withTemplate)).toBe('Parameter “Plate map”: a Table needs at least one column.');
+      expect(tableDefinitionError(bare, { id: 't', name: 'Plate map', type: 'string' })).toBe(MESSAGE);
+    });
+
+    it('says nothing about other types, and falls back to the id for a nameless parameter', () => {
+      expect(tableDefinitionError({ id: 'f', type: 'file' }, undefined)).toBeNull();
+      expect(tableDefinitionError({ id: 't', type: 'table' }, undefined)).toBe('Parameter “t”: a Table needs at least one column.');
+    });
+  });
+
   describe('sampleCountFromValue', () => {
     it('reads the count off the stored JSON string and off a parsed object', () => {
       expect(sampleCountFromValue(JSON.stringify({ filename: 'a.xlsx', key: 'k', sampleCount: 12 }))).toBe(12);
