@@ -58,7 +58,8 @@ const PRICING = `pricing { internal externalAcademic externalMarket externalNoSa
 const QUERIES = {
   services: `{ services {
       id name serviceCategoryNumber serviceCategoryName unit icon
-      description parameters paramGroups result resultParams
+      description parameters ownParameters parameterSetIds paramGroups result resultParams
+      hiddenFromClients equipmentUse
       allowedConnections { id }
       inventoryRequirements
       price ${PRICING}
@@ -66,6 +67,11 @@ const QUERIES = {
       pricingMode allowMultipleRuns deliverables notes
       protocolId protocolIds isDeleted
   } }`,
+
+  // Operations reference these by id; `services.parameters` is the EFFECTIVE list
+  // (own + every set's), so the import stores `ownParameters` and rebuilds the rest
+  // from these sets, exactly as the backend does.
+  parameterSets: `{ parameterSets { id name description parameters createdAt updatedAt } }`,
 
   categories: `{ categories { id label services { id } } }`,
 
