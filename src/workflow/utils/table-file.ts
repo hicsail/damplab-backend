@@ -75,7 +75,9 @@ function worksheetRows(worksheet: ExcelJS.Worksheet): string[][] {
   const rows: string[][] = [];
   worksheet.eachRow((row) => {
     const cells: string[] = [];
-    for (let column = 1; column <= row.cellCount; column++) cells.push(row.getCell(column).text ?? '');
+    // Only the cells that exist: `getCell` over 1..cellCount would create every missing one, and one cell in column XFD is 16,384.
+    // Position does not matter: blanks are dropped from the header and a row's emptiness is any cell having content.
+    row.eachCell({ includeEmpty: false }, (cell) => cells.push(cell.text ?? ''));
     rows.push(cells);
   });
   return rows;

@@ -166,6 +166,23 @@ describe('readTableFile', () => {
     await expect(readTableFile(fixture('numeric-header.xlsx'))).resolves.toEqual({ header: ['Sample ID', '2024', '7', '1.5'], rowCount: 2 });
   });
 
+  // C1: a row's width is whatever column its last cell is in; walking it densely made one cell in XFD cost 16,384 cells.
+  it('reads rows whose only cell is in the last column (XFD) without materialising the empty ones', async () => {
+    const buffer = await xlsxBuffer((workbook) => {
+      const sheet = workbook.addWorksheet('Table');
+      sheet.getCell('A1').value = 'Inducer';
+      sheet.getCell('XFD1').value = 'Far';
+      for (let r = 2; r <= 3000; r++) sheet.getCell(`XFD${r}`).value = 'x';
+    });
+    expect(buffer.byteLength).toBeLessThan(1024 * 1024);
+    const before = process.memoryUsage().heapUsed;
+    const started = Date.now();
+    await expect(readTableFile(buffer)).resolves.toEqual({ header: ['Inducer', 'Far'], rowCount: 2999 });
+    expect(Date.now() - started).toBeLessThan(10000);
+    // Dense, 3,000 rows x 16,384 cells is gigabytes; sparse stays far under this.
+    expect(process.memoryUsage().heapUsed - before).toBeLessThan(300 * 1024 * 1024);
+  }, 60000);
+
   it('refuses a CSV with an unterminated quote as unreadable (the browser reader does the same)', async () => {
     await expect(readTableFile(Buffer.from('Inducer,"Concentration\nIPTG,1\n', 'utf8'))).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
   });
