@@ -4,6 +4,7 @@ import { Args, GqlExecutionContext, GraphQLModule, Mutation, Query, Resolver } f
 import { Test } from '@nestjs/testing';
 import * as request from 'supertest';
 import { DampLabServices } from '../../services/damplab-services.services';
+import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { AddNodeInput, AddNodeInputFull, AddNodeInputPipe } from './add-node.input';
 
 /**
@@ -54,7 +55,13 @@ describe('AddNodeInputPipe sees the caller on a real GraphQL request (F4)', () =
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({
       imports: [GraphQLModule.forRoot<ApolloDriverConfig>({ driver: ApolloDriver, autoSchemaFile: true })],
-      providers: [SubmitResolver, HeaderAuthGuard, AddNodeInputPipe, { provide: DampLabServices, useValue: { findOneActive: async (): Promise<typeof service> => service } }]
+      providers: [
+        SubmitResolver,
+        HeaderAuthGuard,
+        AddNodeInputPipe,
+        { provide: WorkflowParameterFilesService, useValue: { readObject: jest.fn() } },
+        { provide: DampLabServices, useValue: { findOneActive: async (): Promise<typeof service> => service } }
+      ]
     }).compile();
     app = moduleRef.createNestApplication();
     await app.init();

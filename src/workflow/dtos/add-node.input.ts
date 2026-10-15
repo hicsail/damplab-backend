@@ -8,6 +8,9 @@ import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pr
 import { REQUEST } from '@nestjs/core';
 import { deriveCustomerCategory } from '../../pricing/pricing-groups';
 import { foreignFileKey } from '../utils/sample-sheet.util';
+import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
+import { countNewTableAnswers } from '../utils/table-answers';
+import { TABLE_FILE_MAX_BYTES } from '../utils/table-file';
 import { withoutHiddenAnswers } from '../../services/parameter-conditions';
 
 // parameterSnapshot is server-written and an object type: exposing it on an input would both let clients forge it and fail schema generation.
@@ -21,7 +24,7 @@ export type AddNodeInputFull = Omit<WorkflowNode, '_id'>;
 
 @Injectable({ scope: Scope.REQUEST })
 export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<AddNodeInputFull>> {
-  constructor(private readonly dampLabServices: DampLabServices, @Inject(REQUEST) private readonly request: any) {}
+  constructor(private readonly dampLabServices: DampLabServices, @Inject(REQUEST) private readonly request: any, private readonly files: WorkflowParameterFilesService) {}
 
   async transform(value: AddNodeInput): Promise<AddNodeInputFull> {
     const service = await this.dampLabServices.findOneActive(value.serviceId);
@@ -31,7 +34,7 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     const multiValueParamIds = getMultiValueParamIds(service.parameters);
     // An answer to a hidden parameter is dropped here, before pricing and storing:
     // the client is not trusted to have left it out.
-    const formData = withoutHiddenAnswers(service.parameters, normalizeFormDataToArray(value.formData, multiValueParamIds));
+    const shown = withoutHiddenAnswers(service.parameters, normalizeFormDataToArray(value.formData, multiValueParamIds));
     // A file or Table answer may only name a storage key this caller uploaded.
     // The node resolver presigns a download for every stored key, so a key that
     // is someone else's must be refused here, before it is read or stored.
@@ -43,10 +46,22 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     // further down reads `this.request?.user`, which is a different question
     // with its own history; it is deliberately not touched here.
     const caller = this.request?.req?.user;
-    if (foreignFileKey(service.parameters, formData, caller?.sub) !== null) {
+    if (foreignFileKey(service.parameters, shown, caller?.sub) !== null) {
       const operation = typeof value.label === 'string' && value.label.trim() !== '' ? value.label : service.name;
       throw new BadRequestException(`The file on "${operation}" was not uploaded by you. Upload it again and retry.`);
     }
+    // A Table's row count multiplies its price, so the server reads the file
+    // itself: every Table value here is a new key, fetched, checked against the
+    // catalog's columns and stored with the server's count and its mark. After
+    // the hidden strip, so a hidden file is never fetched; after the ownership
+    // gate, so a key that is not the caller's is never read; before pricing, so
+    // the price uses this count. A refusal fails the whole submission.
+    const formData = await countNewTableAnswers({
+      parameters: service.parameters,
+      formData: shown,
+      operation: typeof value.label === 'string' && value.label.trim() !== '' ? value.label : service.name,
+      readObject: (key) => this.files.readObject(key, TABLE_FILE_MAX_BYTES)
+    });
     // Prices from the **requesting user's** Keycloak identity, which is right at
     // checkout (the customer is the requester) and wrong whenever staff act on a
     // customer's job — a technician adding a node would stamp it at the staff tier.

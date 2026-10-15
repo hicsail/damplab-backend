@@ -19,11 +19,14 @@ import { buildParameterSnapshot } from '../utils/parameter-snapshot.util';
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { SOWService } from '../../sow/sow.service';
 import { ReplaceSampleSheetInput, SampleSheetTemplateUpload, SampleSheetTemplateUploadRequest } from '../dtos/sample-sheet.dto';
+import { countNewTableAnswers } from '../utils/table-answers';
+import { TABLE_FILE_MAX_BYTES } from '../utils/table-file';
 import { findTableParam, keyBelongsToUploader, SAMPLE_SHEET_TEMPLATE_KEY_PREFIX, sampleSheetReplaceBlockedReason, templateKeyOf } from '../utils/sample-sheet.util';
 
 /**
- * Samples spreadsheets: the blank template on a catalog parameter, and
- * replacing the filled-in sheet on a submitted job.
+ * Table files (samples spreadsheets): the blank template on a catalog parameter, and
+ * replacing the filled-in sheet on a submitted job. The row count is the
+ * server's: it reads the file and ignores the client's sampleCount.
  *
  * The initial upload needs nothing here — on the canvas a `sampleSheet` value
  * is uploaded at submission exactly like a `file` parameter, through
@@ -129,18 +132,22 @@ export class SampleSheetResolver {
     if (!keyBelongsToUploader(input.file.key, user.sub)) {
       throw new ForbiddenException('That file was not uploaded by you. Upload it again and retry.');
     }
-    if (!Number.isInteger(input.file.sampleCount) || input.file.sampleCount < 0) {
-      throw new BadRequestException('sampleCount must be a non-negative whole number');
-    }
-
-    const value = globalThis.JSON.stringify({
-      filename: input.file.filename,
-      key: input.file.key,
-      contentType: input.file.contentType,
-      size: input.file.size,
-      sampleCount: input.file.sampleCount,
-      uploadedAt: new Date().toISOString()
+    // The count the client sent is never used: the server reads the object and
+    // stores its own. Naming the key that is already stored writes that stored
+    // value back unchanged, without reading it again.
+    const [counted] = await countNewTableAnswers({
+      parameters: service?.parameters,
+      formData: [
+        {
+          id: input.parameterId,
+          value: globalThis.JSON.stringify({ filename: input.file.filename, key: input.file.key, contentType: input.file.contentType, size: input.file.size, uploadedAt: new Date().toISOString() })
+        }
+      ],
+      stored: node.formData,
+      operation: node.label ?? service?.name ?? 'This operation',
+      readObject: (key) => this.files.readObject(key, TABLE_FILE_MAX_BYTES)
     });
+    const value = counted.value as string;
     // Reprice from the job's category, never the caller's: a technician fixing a
     // customer's list must not restamp the line at staff rates. The stored node
     // price is only a fallback — the SOW reprices from the catalog — but it is

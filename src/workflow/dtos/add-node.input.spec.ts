@@ -5,7 +5,7 @@ import { AddNodeInputPipe } from './add-node.input';
 describe('AddNodeInputPipe (createJob / addWorkflowToJob path)', () => {
   it('writes a parameter snapshot from the service it validated against', async () => {
     const service = { _id: 'svc', name: 'Gibson', price: 10, parameters: [{ id: 'vol', name: 'Volume', type: 'number' }] };
-    const pipe = new AddNodeInputPipe({ findOneActive: async () => service } as any, { user: { realm_access: { roles: [] } } });
+    const pipe = new AddNodeInputPipe({ findOneActive: async () => service } as any, { user: { realm_access: { roles: [] } } }, { readObject: jest.fn() } as any);
     const out = await pipe.transform({ id: 'n1', label: 'Gibson', serviceId: 'svc', formData: [{ id: 'vol', value: 7 }], additionalInstructions: '' } as any);
     expect(out.parameterSnapshot).toEqual([{ id: 'vol', name: 'Volume', type: 'number', displayValue: '7' }]);
   });
@@ -39,7 +39,7 @@ describe('AddNodeInputPipe discards answers to hidden parameters (show-only-if r
     ]
   };
   const transform = (sample: string): Promise<any> =>
-    new AddNodeInputPipe({ findOneActive: async () => service } as any, { user: { realm_access: { roles: [] } } }).transform({
+    new AddNodeInputPipe({ findOneActive: async () => service } as any, { user: { realm_access: { roles: [] } } }, { readObject: jest.fn() } as any).transform({
       id: 'n1',
       label: 'Extraction',
       serviceId: 'svc',
@@ -93,7 +93,8 @@ describe('AddNodeInputPipe refuses a storage key the caller did not upload (tabl
   };
   const file = (key: string): string => JSON.stringify({ filename: 'f.pdf', key, contentType: 'application/pdf', size: 3 });
   // On a real request the pipe's REQUEST is the GraphQL context: { req }, with the caller at req.user.
-  const pipeFor = (user: any): AddNodeInputPipe => new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user } });
+  const pipeFor = (user: any): AddNodeInputPipe =>
+    new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user } }, { readObject: jest.fn(async () => Buffer.from('Well\nA1\n')) } as any);
   const node = (formData: any[], label = 'Sequence'): any => ({ id: 'n1', label, serviceId: 'svc', formData, additionalInstructions: '' });
   const customer = { sub: 'customer-1', realm_access: { roles: [] } };
   const staff = { sub: 'staff-1', realm_access: { roles: ['damplab-staff'] } };
@@ -182,7 +183,7 @@ describe('AddNodeInputPipe refuses a storage key the caller did not upload (tabl
   });
 
   it('fails closed when the request carries no caller', async () => {
-    const pipe = new AddNodeInputPipe({ findOneActive: async () => service } as any, {});
+    const pipe = new AddNodeInputPipe({ findOneActive: async () => service } as any, {}, { readObject: jest.fn(async () => Buffer.from('Well\nA1\n')) } as any);
     await expect(pipe.transform(node([{ id: 'doc', value: file(own('a.pdf')) }]))).rejects.toThrow(REFUSAL);
   });
 
@@ -190,5 +191,112 @@ describe('AddNodeInputPipe refuses a storage key the caller did not upload (tabl
     const workflowPipe = new AddWorkflowInputPipe(pipeFor(customer));
     const workflow: any = { name: 'wf', nodes: [node([{ id: 'doc', value: file(own('a.pdf')) }]), node([{ id: 'doc', value: file(foreign) }])], edges: [] };
     await expect(workflowPipe.transform(workflow)).rejects.toThrow(REFUSAL);
+  });
+});
+
+describe('AddNodeInputPipe counts a Table file itself (table-upload rules 22, 24, 26, 28)', () => {
+  const columns = [{ header: 'Inducer', field: 'inducer' }];
+  const service = {
+    _id: 'svc',
+    name: 'Induction',
+    pricingMode: 'PARAMETER',
+    parameters: [
+      {
+        id: 'kind',
+        name: 'Kind',
+        type: 'dropdown',
+        options: [
+          { id: 'a', name: 'A' },
+          { id: 'b', name: 'B' }
+        ]
+      },
+      { id: 'plate', name: 'Plate map', type: 'table', price: 5, tableData: { columns }, showIf: { parameterId: 'kind', op: 'eq', optionIds: ['a'] } }
+    ]
+  };
+  const KEY = 'workflow-parameters/me/plate.csv';
+  const sent = (sampleCount: number): string => JSON.stringify({ filename: 'plate.csv', key: KEY, contentType: 'text/csv', size: 1, sampleCount });
+  const pipeWith = (readObject: jest.Mock): AddNodeInputPipe =>
+    new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user: { sub: 'me', realm_access: { roles: [] } } } }, { readObject } as any);
+  const node = (formData: any[]): any => ({ id: 'n1', label: 'Induce', serviceId: 'svc', formData, additionalInstructions: '' });
+
+  it('stores and prices the server’s count, not the client’s', async () => {
+    const readObject = jest.fn(async () => Buffer.from('Inducer\nIPTG\naTc\n'));
+    const out: any = await pipeWith(readObject).transform(
+      node([
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value: sent(500) }
+      ])
+    );
+    expect(readObject).toHaveBeenCalledWith(KEY, 10 * 1024 * 1024);
+    const stored = out.formData.find((e: any) => e.id === 'plate').value;
+    expect(JSON.parse(stored)).toMatchObject({ sampleCount: 2, countedBy: 'server' });
+    expect(out.price).toBe(10);
+    expect(out.parameterSnapshot).toContainEqual({ id: 'plate', name: 'Plate map', type: 'table', displayValue: 'plate.csv' });
+  });
+
+  // R1: the gate runs before the fetch.
+  it('never reads a file the caller did not upload: the submission is refused first', async () => {
+    const readObject = jest.fn(async () => Buffer.from('Inducer\nIPTG\n'));
+    const theirs = JSON.stringify({ filename: 'plate.csv', key: 'workflow-parameters/someone-else/plate.csv', contentType: 'text/csv', size: 1, sampleCount: 1 });
+    await expect(
+      pipeWith(readObject).transform(
+        node([
+          { id: 'kind', value: 'a' },
+          { id: 'plate', value: theirs }
+        ])
+      )
+    ).rejects.toThrow('The file on "Induce" was not uploaded by you. Upload it again and retry.');
+    expect(readObject).not.toHaveBeenCalled();
+  });
+
+  it('fails the whole submission when a column is missing, naming the node’s label', async () => {
+    const readObject = jest.fn(async () => Buffer.from('Strain\nBL21\n'));
+    await expect(
+      pipeWith(readObject).transform(
+        node([
+          { id: 'kind', value: 'a' },
+          { id: 'plate', value: sent(1) }
+        ])
+      )
+    ).rejects.toThrow('“Plate map” on “Induce”: This file is missing the columns: Inducer.');
+  });
+
+  it('fails as a 400 when storage cannot be read', async () => {
+    const readObject = jest.fn(async () => {
+      throw new Error('Workflow parameter file storage is not configured on the server.');
+    });
+    await expect(
+      pipeWith(readObject).transform(
+        node([
+          { id: 'kind', value: 'a' },
+          { id: 'plate', value: sent(1) }
+        ])
+      )
+    ).rejects.toThrow('“Plate map” on “Induce”: This file could not be read; upload it again.');
+  });
+
+  it('never fetches the file of a hidden Table: its answer is dropped first', async () => {
+    const readObject = jest.fn();
+    const out: any = await pipeWith(readObject).transform(
+      node([
+        { id: 'kind', value: 'b' },
+        { id: 'plate', value: sent(9) }
+      ])
+    );
+    expect(readObject).not.toHaveBeenCalled();
+    expect(out.formData.map((e: any) => e.id)).toEqual(['kind']);
+    expect(out.price).toBe(0);
+  });
+
+  it('bills nothing and fetches nothing for a Table with no file', async () => {
+    const readObject = jest.fn();
+    const out: any = await pipeWith(readObject).transform(
+      node([
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value: null }
+      ])
+    );
+    expect(readObject).not.toHaveBeenCalled();
+    expect(out.price).toBe(0);
   });
 });
