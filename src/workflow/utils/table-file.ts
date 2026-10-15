@@ -22,6 +22,8 @@ export const TABLE_FILE_MAX_INFLATED_BYTES = 50 * 1024 * 1024;
 export const TABLE_FILE_UNREADABLE_MESSAGE = 'This file could not be read as a spreadsheet. Save it as .xlsx or .csv and try again.';
 export const TABLE_FILE_NO_SHEETS_MESSAGE = 'This spreadsheet has no sheets in it.';
 export const TABLE_FILE_TOO_LARGE_MESSAGE = 'This file must be smaller than 10 MB.';
+/** A workbook under 10 MB whose contents inflate past TABLE_FILE_MAX_INFLATED_BYTES (about 9 MB of typical lab data). */
+export const TABLE_FILE_TOO_LARGE_TO_READ_MESSAGE = 'This spreadsheet is too large to read. Remove unused rows and columns and try again.';
 export const TABLE_FILE_NOT_FETCHED_MESSAGE = 'This file could not be read; upload it again.';
 export const TABLE_NOT_SET_UP_MESSAGE = 'This table has not been set up yet.';
 
@@ -123,7 +125,8 @@ const isZip = (buffer: Buffer): boolean => buffer.length >= 2 && buffer[0] === 0
 const hasUtf8Bom = (buffer: Buffer): boolean => buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf;
 
 /**
- * Refuses an archive whose entries inflate beyond TABLE_FILE_MAX_INFLATED_BYTES.
+ * Refuses an archive whose entries inflate beyond TABLE_FILE_MAX_INFLATED_BYTES,
+ * as too large to read (the browser twin applies the same cap before its preview).
  * The sizes a zip declares are the attacker's to choose, so this inflates every
  * entry as a stream and counts the bytes that actually come out, stopping at the
  * cap; the declared sizes are never consulted. A malformed archive throws too.
@@ -139,7 +142,7 @@ async function assertInflatedWithinCap(buffer: Buffer): Promise<void> {
         total += chunk.length;
         if (total > TABLE_FILE_MAX_INFLATED_BYTES) {
           stream.pause();
-          reject(new TableFileError(TABLE_FILE_UNREADABLE_MESSAGE));
+          reject(new TableFileError(TABLE_FILE_TOO_LARGE_TO_READ_MESSAGE));
         }
       });
       stream.on('error', reject);

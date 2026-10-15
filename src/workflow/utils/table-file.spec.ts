@@ -14,6 +14,7 @@ import {
   TABLE_FILE_NO_SHEETS_MESSAGE,
   TABLE_FILE_NOT_FETCHED_MESSAGE,
   TABLE_FILE_TOO_LARGE_MESSAGE,
+  TABLE_FILE_TOO_LARGE_TO_READ_MESSAGE,
   TABLE_FILE_UNREADABLE_MESSAGE,
   TABLE_NOT_SET_UP_MESSAGE,
   TableFileError,
@@ -59,6 +60,9 @@ describe('the messages (identical in damplab-ui/src/utils/sampleSheet.ts)', () =
     expect(TABLE_FILE_UNREADABLE_MESSAGE).toBe('This file could not be read as a spreadsheet. Save it as .xlsx or .csv and try again.');
     expect(TABLE_FILE_NO_SHEETS_MESSAGE).toBe('This spreadsheet has no sheets in it.');
     expect(TABLE_FILE_TOO_LARGE_MESSAGE).toBe('This file must be smaller than 10 MB.');
+    expect(TABLE_FILE_TOO_LARGE_TO_READ_MESSAGE).toBe('This spreadsheet is too large to read. Remove unused rows and columns and try again.');
+    // The browser applies the same inflated-size cap before its preview accepts a file.
+    expect(TABLE_FILE_MAX_INFLATED_BYTES).toBe(50 * 1024 * 1024);
     expect(TABLE_FILE_NOT_FETCHED_MESSAGE).toBe('This file could not be read; upload it again.');
     expect(TABLE_NOT_SET_UP_MESSAGE).toBe('This table has not been set up yet.');
     expect(missingColumnsMessage(['Concentration', 'Location'])).toBe('This file is missing the columns: Concentration, Location.');
@@ -164,12 +168,25 @@ describe('readTableFile', () => {
   });
 
   // I1: the 10 MB cap is on compressed bytes; the inflated size is what costs memory.
-  it('refuses a small zip that inflates beyond the inflated-size cap, as unreadable', async () => {
+  // I5: over the cap is a size refusal, not "not a spreadsheet".
+  it('refuses a small zip that inflates beyond the inflated-size cap, as too large to read', async () => {
     const zip = new JSZip();
     zip.file('xl/worksheets/sheet1.xml', Buffer.alloc(TABLE_FILE_MAX_INFLATED_BYTES + 1024 * 1024, 0x61));
     const bomb = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     expect(bomb.byteLength).toBeLessThan(TABLE_FILE_MAX_BYTES);
-    await expect(readTableFile(bomb)).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
+    await expect(readTableFile(bomb)).rejects.toThrow(TABLE_FILE_TOO_LARGE_TO_READ_MESSAGE);
+  });
+
+  // I5: a valid workbook (header `Inducer`, one row) padded with 52 MiB of whitespace between its rows. The browser
+  // refuses the same file with the same message before its preview, so the two never disagree on an over-cap file.
+  it('refuses a valid workbook that inflates past the cap with the too-large-to-read message (shared fixture)', async () => {
+    const buffer = fixture('over-inflation-cap.xlsx');
+    expect(buffer.byteLength).toBeLessThan(TABLE_FILE_MAX_BYTES);
+    await expect(readTableFile(buffer)).rejects.toThrow(new TableFileError(TABLE_FILE_TOO_LARGE_TO_READ_MESSAGE));
+  });
+
+  it('keeps the unreadable message for a zip that is not a valid archive', async () => {
+    await expect(readTableFile(Buffer.from('PK\u0003\u0004 not really a zip at all', 'latin1'))).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
   });
 
   it('does not materialise rows that only carry formatting', async () => {
@@ -217,6 +234,11 @@ describe('readTableFile', () => {
   // m5: an error cell reads as its error text in both readers (the browser used to read #N/A as its code, 42).
   it('reads an error cell as its error text (shared fixture)', async () => {
     await expect(readTableFile(fixture('error-cells.xlsx'))).resolves.toEqual({ header: ['#N/A', 'Inducer'], rowCount: 1 });
+  });
+
+  // m6: the dynamic-array errors too. A1 `#SPILL!` (error), B1 `Inducer`; A2 `#CALC!` only; B3 `IPTG`.
+  it('reads #SPILL! and #CALC! cells as their error text and counts a row holding only one (shared fixture)', async () => {
+    await expect(readTableFile(fixture('spill-cells.xlsx'))).resolves.toEqual({ header: ['#SPILL!', 'Inducer'], rowCount: 2 });
   });
 
   it('refuses a CSV with an unterminated quote as unreadable (the browser reader does the same)', async () => {
@@ -303,7 +325,9 @@ describe('checkTableFile', () => {
       'samples-with-banner.xlsx': 'a0447dc38ae4007ab9f03885c10b42f872743ddb17139b3fbee2306699a815fd',
       'numeric-header.xlsx': '6ea2cb9ee9f6255f3279026643fa30e3c6d124e20931d2084ebc8516027ad660',
       'last-column-rows.xlsx': '90fc23353c38dd7cf67a57c95d92acfb0bfb124352b2433d9cd43a598816af0f',
-      'error-cells.xlsx': '8cc104c8d7385a9d475f55e195bc8537a0fe427f4b9c87d6ab4feadc5e73489b'
+      'error-cells.xlsx': '8cc104c8d7385a9d475f55e195bc8537a0fe427f4b9c87d6ab4feadc5e73489b',
+      'spill-cells.xlsx': '375bb52a27337d4f62b270bbc06834cb50fcafa8c67ca997686ab1b10a4a5bcd',
+      'over-inflation-cap.xlsx': '4de5d8bc255713bae604f57c630712e89c32b715fee1b83c815019a05726c2e2'
     };
     for (const [name, hash] of Object.entries(expected)) expect(createHash('sha256').update(fixture(name)).digest('hex')).toBe(hash);
   });
