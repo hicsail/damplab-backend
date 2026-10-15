@@ -7,6 +7,7 @@ import { Workflow, WorkflowSchema } from '../workflow/models/workflow.model';
 import { WorkflowNode, WorkflowNodeSchema } from '../workflow/models/node.model';
 import { WorkflowEdge, WorkflowEdgeSchema } from '../workflow/models/edge.model';
 import { DampLabServicesModule } from '../services/damplab-services.module';
+import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
 import { JobVersionFieldsResolver } from './job-version-fields.resolver';
 
 /**
@@ -28,7 +29,10 @@ import { JobVersionFieldsResolver } from './job-version-fields.resolver';
     ]),
     DampLabServicesModule
   ],
-  providers: [JobVersionService, JobVersionFieldsResolver],
+  // WorkflowParameterFilesService is provided here rather than by importing
+  // WorkflowModule, which would close a cycle through JobModule. It needs only
+  // the global ConfigService.
+  providers: [JobVersionService, JobVersionFieldsResolver, WorkflowParameterFilesService],
   exports: [JobVersionService]
 })
 export class JobVersionModule {}

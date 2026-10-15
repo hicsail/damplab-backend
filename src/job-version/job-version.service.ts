@@ -10,12 +10,15 @@ import { Workflow, WorkflowDocument, WorkflowState } from '../workflow/models/wo
 import { WorkflowNode, WorkflowNodeDocument, WorkflowNodeState } from '../workflow/models/node.model';
 import { WorkflowEdge, WorkflowEdgeDocument } from '../workflow/models/edge.model';
 import { DampLabServices } from '../services/damplab-services.services';
-import { getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
+import { FormDataEntry, getMultiValueParamIds, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
 import { ParameterSnapshotEntry } from '../workflow/models/parameter-snapshot.model';
 import { buildParameterSnapshot } from '../workflow/utils/parameter-snapshot.util';
 import { calculateServiceCost, CustomerCategory } from '../pricing/service-pricing.util';
 import { fileParameterIds, keyBelongsToUploader, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
 import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
+import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
+import { countNewTableAnswers, withStoredTableAnswers } from '../workflow/utils/table-answers';
+import { TABLE_FILE_MAX_BYTES } from '../workflow/utils/table-file';
 import { withoutHiddenAnswers, withStoredHiddenAnswers } from '../services/parameter-conditions';
 
 /** Fields on a live WorkflowNode that a save is allowed to write. Everything else — state, assigneeId, startedAt, completedSteps, usedInventory, inventory reservations — belongs to the lab and is never touched here. */
@@ -44,6 +47,10 @@ interface PreparedNode {
   fileParamIds: string[];
   /** The catalogue's name and effective parameters for this node's operation. Read by the answer check; never written. */
   catalogService: { name: unknown; parameters: unknown };
+  /** The catalogue service this node was resolved against, kept so the node can be re-priced once its Table files are counted. */
+  service: any;
+  /** The earlier snapshot names for this node, for the same reason. */
+  priorSnapshot: ParameterSnapshotEntry[] | undefined;
 }
 
 /**
@@ -99,7 +106,8 @@ export class JobVersionService {
     @InjectModel(Workflow.name) private readonly workflowModel: Model<WorkflowDocument>,
     @InjectModel(WorkflowNode.name) private readonly nodeModel: Model<WorkflowNodeDocument>,
     @InjectModel(WorkflowEdge.name) private readonly edgeModel: Model<WorkflowEdgeDocument>,
-    private readonly dampLabServices: DampLabServices
+    private readonly dampLabServices: DampLabServices,
+    private readonly files: WorkflowParameterFilesService
   ) {}
 
   // ---------------------------------------------------------- version numbers
@@ -563,15 +571,24 @@ export class JobVersionService {
     // Prepared first, deliberately: it resolves each node against the catalogue
     // and normalizes formData, so the guard below compares like with like. It
     // only reads, so nothing is written if the guard then rejects.
+    // Only the editor's save names an uploader. A version restore and a
+    // withdrawal do not: they replay stored values from history unchanged, so
+    // nothing below reads storage or rewrites a Table value for them.
+    const countTables = opts.uploaderSub !== undefined;
+    const category = job.customerCategory as CustomerCategory | undefined;
     const prepared = await this.prepareWorkflows(
       input.workflows,
-      job.customerCategory as CustomerCategory | undefined,
+      category,
       this.priorSnapshots(liveNodes, opts.priorSnapshotsByClientId),
-      this.inFlightAnswers(liveNodes)
+      this.inFlightAnswers(liveNodes),
+      countTables ? new Map([...liveNodes].map(([clientId, live]) => [clientId, live.formData as unknown] as const)) : undefined
     );
     this.assertWorkInFlightUntouched(liveNodes, prepared);
     if (opts.uploaderSub !== undefined) this.assertSampleSheetKeysAllowed(liveNodes, prepared, opts.uploaderSub);
     if (opts.checkChangedAnswers) this.assertChangedAnswersValid(liveNodes, prepared);
+    // After the guards: the key-ownership check has passed before any object is
+    // fetched. Before anything is written: a refused file fails the whole save.
+    if (countTables) await this.countNewTableFiles(liveNodes, prepared, category);
 
     // Which nodes existed before this save, across every tree. Node deletion is
     // decided once, globally, at the end — never per tree.
@@ -692,6 +709,34 @@ export class JobVersionService {
   }
 
   /**
+   * Table files this save brings in: each one is fetched, checked against the
+   * catalogue's columns and stored with the server's own row count, and the
+   * node is priced and snapshotted again from those answers. A key already
+   * stored on the node was put back to its stored value in `prepareWorkflows`
+   * and is not read here.
+   */
+  private async countNewTableFiles(liveNodes: Map<string, LiveNode>, prepared: PreparedNode[][], category: CustomerCategory | undefined): Promise<void> {
+    for (const node of prepared.flat()) {
+      if (!node.fileParamIds.length) continue;
+      const formData = await countNewTableAnswers({
+        parameters: node.service.parameters,
+        formData: node.patch.formData as FormDataEntry[],
+        stored: liveNodes.get(node.clientId)?.formData,
+        operation: node.patch.label,
+        readObject: (key) => this.files.readObject(key, TABLE_FILE_MAX_BYTES)
+      });
+      const price = calculateServiceCost(node.service, formData, undefined, category);
+      const parameterSnapshot = buildParameterSnapshot(node.service, formData, node.priorSnapshot);
+      node.patch.formData = formData;
+      node.patch.price = price;
+      node.patch.parameterSnapshot = parameterSnapshot;
+      node.snapshot.formData = formData;
+      node.snapshot.price = price;
+      node.snapshot.parameterSnapshot = parameterSnapshot;
+    }
+  }
+
+  /**
    * B20: a file or spreadsheet swapped in the editor must be one already stored
    * on that parameter, or one this caller uploaded (both kinds share the
    * `workflow-parameters/{sub}/` prefix). The node resolver presigns a download
@@ -797,7 +842,9 @@ export class JobVersionService {
     workflows: SaveWorkflowInput[],
     category: CustomerCategory | undefined,
     priorByClientId: Map<string, ParameterSnapshotEntry[]> = new Map(),
-    inFlightByClientId: ReadonlyMap<string, { serviceId: string; formData: unknown }> = new Map()
+    inFlightByClientId: ReadonlyMap<string, { serviceId: string; formData: unknown }> = new Map(),
+    /** The stored answers of every live node, by client-side id. Present only for a save that counts Table files. */
+    storedByClientId?: ReadonlyMap<string, unknown>
   ): Promise<PreparedNode[][]> {
     const serviceIds = [...new Set(workflows.flatMap((w) => w.nodes.map((n) => String(n.serviceId))))];
     const services = new Map<string, any>();
@@ -821,6 +868,10 @@ export class JobVersionService {
         if (held && held.serviceId === String(service._id)) {
           formData = withStoredHiddenAnswers(service.parameters, formData, normalizeFormDataToArray(held.formData, multiValueParamIds));
         }
+        // A Table value whose key is already stored on this node goes back to
+        // its stored value — stored row count included — whatever the client
+        // sent with it. Pure; no storage access.
+        if (storedByClientId) formData = withStoredTableAnswers(service.parameters, formData, storedByClientId.get(node.id));
         const price = calculateServiceCost(service, formData, undefined, category);
         // From the normalized formData that is persisted, so the card cannot disagree with the stored value.
         const parameterSnapshot = buildParameterSnapshot(service, formData, priorByClientId.get(node.id));
@@ -828,6 +879,8 @@ export class JobVersionService {
 
         return {
           clientId: node.id,
+          service,
+          priorSnapshot: priorByClientId.get(node.id),
           catalogService: { name: service.name, parameters: service.parameters },
           fileParamIds: fileParameterIds(service.parameters),
           patch: {
