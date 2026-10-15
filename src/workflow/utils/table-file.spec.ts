@@ -16,7 +16,8 @@ import {
   TABLE_FILE_TOO_LARGE_MESSAGE,
   TABLE_FILE_UNREADABLE_MESSAGE,
   TABLE_NOT_SET_UP_MESSAGE,
-  TableFileError
+  TableFileError,
+  worksheetCells
 } from './table-file';
 
 const xlsxBuffer = async (build: (workbook: ExcelJS.Workbook) => void): Promise<Buffer> => {
@@ -24,6 +25,31 @@ const xlsxBuffer = async (build: (workbook: ExcelJS.Workbook) => void): Promise<
   build(workbook);
   return Buffer.from(await workbook.xlsx.writeBuffer());
 };
+
+/** A minimal workbook whose one sheet's `<sheetData>` is written by hand: exceljs's writer would itself walk the gaps. */
+const handBuiltXlsx = async (sheetData: string): Promise<Buffer> => {
+  const zip = new JSZip();
+  const rels = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  zip.file(
+    '[Content_Types].xml',
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'
+  );
+  zip.file(
+    '_rels/.rels',
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${rels}/officeDocument" Target="xl/workbook.xml"/></Relationships>`
+  );
+  zip.file(
+    'xl/workbook.xml',
+    `<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="${rels}"><sheets><sheet name="Table" sheetId="1" r:id="rId1"/></sheets></workbook>`
+  );
+  zip.file(
+    'xl/_rels/workbook.xml.rels',
+    `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="${rels}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`
+  );
+  zip.file('xl/worksheets/sheet1.xml', `<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${sheetData}</sheetData></worksheet>`);
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+};
+const inlineCell = (address: string, text: string): string => `<c r="${address}" t="inlineStr"><is><t>${text}</t></is></c>`;
 
 /** Byte-for-byte the files in `damplab-ui/test-fixtures/sample-sheets/`; the hash test pins that without reading across repos. */
 const fixture = (name: string): Buffer => readFileSync(resolve(__dirname, '../../../test-fixtures/sample-sheets', name));
@@ -166,22 +192,32 @@ describe('readTableFile', () => {
     await expect(readTableFile(fixture('numeric-header.xlsx'))).resolves.toEqual({ header: ['Sample ID', '2024', '7', '1.5'], rowCount: 2 });
   });
 
-  // C1: a row's width is whatever column its last cell is in; walking it densely made one cell in XFD cost 16,384 cells.
-  it('reads rows whose only cell is in the last column (XFD) without materialising the empty ones', async () => {
-    const buffer = await xlsxBuffer((workbook) => {
-      const sheet = workbook.addWorksheet('Table');
-      sheet.getCell('A1').value = 'Inducer';
-      sheet.getCell('XFD1').value = 'Far';
-      for (let r = 2; r <= 3000; r++) sheet.getCell(`XFD${r}`).value = 'x';
-    });
-    expect(buffer.byteLength).toBeLessThan(1024 * 1024);
+  // C1/C2: a row's width is whatever column its last cell is in. A dense walk made one cell in XFD cost 16,384 cells of
+  // memory (C1); exceljs's own eachRow/eachCell skip the holes but still visit every slot, so 30,000 such rows blocked
+  // the event loop for about 24 s (C2). The read must cost what the cells present cost. Shared with the UI repo, which
+  // reads the same file to the same result. The fixture is a hand-built workbook: A1 `Inducer`, XFD1 `Far`, then rows
+  // 2..30001 each holding one inline string in XFD.
+  it('reads 30,000 rows whose only cell is in the last column (XFD) in well under 2 s (shared fixture)', async () => {
+    const buffer = fixture('last-column-rows.xlsx');
     const before = process.memoryUsage().heapUsed;
     const started = Date.now();
-    await expect(readTableFile(buffer)).resolves.toEqual({ header: ['Inducer', 'Far'], rowCount: 2999 });
-    expect(Date.now() - started).toBeLessThan(10000);
-    // Dense, 3,000 rows x 16,384 cells is gigabytes; sparse stays far under this.
+    await expect(readTableFile(buffer)).resolves.toEqual({ header: ['Inducer', 'Far'], rowCount: 30000 });
+    expect(Date.now() - started).toBeLessThan(2000);
     expect(process.memoryUsage().heapUsed - before).toBeLessThan(300 * 1024 * 1024);
-  }, 60000);
+  }, 120000);
+
+  // C2: the row walk too must cost the rows present, not the last row's number (exceljs's eachRow visits every slot).
+  it('reads a sheet whose second row is numbered 2,000,000,000 in well under 2 s', async () => {
+    const buffer = await handBuiltXlsx(`<row r="1">${inlineCell('A1', 'Inducer')}</row><row r="2000000000">${inlineCell('A2000000000', 'IPTG')}</row>`);
+    const started = Date.now();
+    await expect(readTableFile(buffer)).resolves.toEqual({ header: ['Inducer'], rowCount: 1 });
+    expect(Date.now() - started).toBeLessThan(2000);
+  }, 300000);
+
+  // m5: an error cell reads as its error text in both readers (the browser used to read #N/A as its code, 42).
+  it('reads an error cell as its error text (shared fixture)', async () => {
+    await expect(readTableFile(fixture('error-cells.xlsx'))).resolves.toEqual({ header: ['#N/A', 'Inducer'], rowCount: 1 });
+  });
 
   it('refuses a CSV with an unterminated quote as unreadable (the browser reader does the same)', async () => {
     await expect(readTableFile(Buffer.from('Inducer,"Concentration\nIPTG,1\n', 'utf8'))).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
@@ -192,6 +228,50 @@ describe('readTableFile', () => {
       workbook.addWorksheet('Table').addRow(['Inducer', 'Concentration']);
     });
     await expect(readTableFile(buffer)).resolves.toEqual({ header: ['Inducer', 'Concentration'], rowCount: 0 });
+  });
+});
+
+// worksheetCells reads exceljs's private row and cell storage to skip the gaps. If an exceljs upgrade changes that
+// storage, this is where it shows: the fast read must list exactly the cells the public eachRow/eachCell walk lists.
+describe('worksheetCells (exceljs private storage, pinned against the public walk)', () => {
+  const publicWalk = (worksheet: ExcelJS.Worksheet): string[] => {
+    const seen: string[] = [];
+    worksheet.eachRow((row) => row.eachCell({ includeEmpty: false }, (cell) => seen.push(`${cell.address}=${cell.text}`)));
+    return seen;
+  };
+  const fastWalk = (worksheet: ExcelJS.Worksheet): string[] => worksheetCells(worksheet).flatMap((cells) => cells.map((cell) => `${cell.address}=${cell.text}`));
+  const loaded = async (buffer: Buffer): Promise<ExcelJS.Worksheet> => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+    return workbook.worksheets[0];
+  };
+
+  it('still finds exceljs keeping rows and cells in sparse arrays', async () => {
+    const worksheet = await loaded(fixture('samples-96.xlsx'));
+    const rows = (worksheet as unknown as { _rows: unknown })._rows;
+    expect(Array.isArray(rows)).toBe(true);
+    expect(Array.isArray((worksheet.findRow(1) as unknown as { _cells: unknown })._cells)).toBe(true);
+  });
+
+  it('lists the same cells in the same order as eachRow/eachCell', async () => {
+    const built = await xlsxBuffer((workbook) => {
+      const sheet = workbook.addWorksheet('Table');
+      sheet.getCell('C2').value = 'Inducer';
+      sheet.getCell('E2').value = 'Conc';
+      sheet.getCell('A4').value = 'merged';
+      sheet.mergeCells('A4:C5');
+      sheet.getCell('Z6').value = { formula: '1+1', result: 2 };
+      sheet.getCell('AA7').value = { error: '#REF!' };
+      sheet.getCell('B8').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFF00' } };
+      sheet.getCell('XFD9').value = 'far';
+    });
+    const files = [built, ...['samples-96.xlsx', 'samples-with-banner.xlsx', 'template-with-banner.xlsx', 'numeric-header.xlsx', 'error-cells.xlsx'].map(fixture)];
+    for (const buffer of files) {
+      const worksheet = await loaded(buffer);
+      const expected = publicWalk(worksheet);
+      expect(expected.length).toBeGreaterThan(0);
+      expect(fastWalk(worksheet)).toEqual(expected);
+    }
   });
 });
 
@@ -221,7 +301,9 @@ describe('checkTableFile', () => {
       'samples-with-gaps.csv': '4b2fd83ec9429a8704a4243db216a0834d402386df7e532aece603315e4dcc70',
       'template-with-banner.xlsx': 'd86034e74901ca53b82d59b0d657f6c14a0395531bc2f1759bffcbc51371211a',
       'samples-with-banner.xlsx': 'a0447dc38ae4007ab9f03885c10b42f872743ddb17139b3fbee2306699a815fd',
-      'numeric-header.xlsx': '6ea2cb9ee9f6255f3279026643fa30e3c6d124e20931d2084ebc8516027ad660'
+      'numeric-header.xlsx': '6ea2cb9ee9f6255f3279026643fa30e3c6d124e20931d2084ebc8516027ad660',
+      'last-column-rows.xlsx': '90fc23353c38dd7cf67a57c95d92acfb0bfb124352b2433d9cd43a598816af0f',
+      'error-cells.xlsx': '8cc104c8d7385a9d475f55e195bc8537a0fe427f4b9c87d6ab4feadc5e73489b'
     };
     for (const [name, hash] of Object.entries(expected)) expect(createHash('sha256').update(fixture(name)).digest('hex')).toBe(hash);
   });

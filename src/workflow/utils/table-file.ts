@@ -70,18 +70,53 @@ export function missingColumns(header: readonly string[], expected: readonly str
   return expected.filter((column) => !present.has(columnKey(column)));
 }
 
-/** `cell.text` renders a formula by its cached result, rich text as its string and an empty cell as ''. */
-function worksheetRows(worksheet: ExcelJS.Worksheet): string[][] {
-  const rows: string[][] = [];
-  worksheet.eachRow((row) => {
-    const cells: string[] = [];
-    // Only the cells that exist: `getCell` over 1..cellCount would create every missing one, and one cell in column XFD is 16,384.
-    // Position does not matter: blanks are dropped from the header and a row's emptiness is any cell having content.
-    row.eachCell({ includeEmpty: false }, (cell) => cells.push(cell.text ?? ''));
+/** Index order of the slots set in a sparse array: `Object.keys` visits only those, ascending. */
+const presentSlots = <T>(slots: readonly T[]): T[] => Object.keys(slots).map((key) => slots[Number(key)]);
+
+/**
+ * The rows a worksheet holds and the cells each row holds, both in order, as
+ * `eachRow()` / `eachCell()` give them but without visiting the gaps. Read
+ * through exceljs's private `_rows` and `_cells` arrays (exceljs 4.4.0,
+ * lib/doc/worksheet.js and lib/doc/row.js) because every public walk —
+ * `eachRow`, `rowCount` with `findRow`, `eachCell`, `values`, `hasValues` —
+ * visits every slot up to the last row or the row's last cell. One cell in
+ * column XFD is 16,384 slots (30,000 such rows blocked the event loop for about
+ * 24 s), and one row numbered 2,000,000,000 is two billion. If exceljs changes
+ * that shape, this falls back to the public walk (correct, only slower), and
+ * table-file.spec.ts fails loudly by comparing the two on real workbooks.
+ */
+export function worksheetCells(worksheet: ExcelJS.Worksheet): ExcelJS.Cell[][] {
+  const rowSlots = (worksheet as unknown as { _rows?: unknown })._rows;
+  if (!Array.isArray(rowSlots)) {
+    const rows: ExcelJS.Cell[][] = [];
+    worksheet.eachRow((row) => {
+      const cells: ExcelJS.Cell[] = [];
+      row.eachCell({ includeEmpty: false }, (cell) => cells.push(cell));
+      rows.push(cells);
+    });
+    return rows;
+  }
+  const rows: ExcelJS.Cell[][] = [];
+  for (const row of presentSlots(rowSlots as (ExcelJS.Row | undefined)[])) {
+    if (!row) continue;
+    const cellSlots = (row as unknown as { _cells?: unknown })._cells;
+    const cells: ExcelJS.Cell[] = [];
+    if (Array.isArray(cellSlots)) {
+      for (const cell of presentSlots(cellSlots as (ExcelJS.Cell | undefined)[])) if (cell && cell.type !== ExcelJS.ValueType.Null) cells.push(cell);
+    } else row.eachCell({ includeEmpty: false }, (cell) => cells.push(cell));
     rows.push(cells);
-  });
+  }
   return rows;
 }
+
+/**
+ * Each row's cells as text. `cell.text` renders a formula by its cached
+ * result, rich text as its string, an error as its error text (`#N/A`) and an
+ * empty cell as ''. Position does not matter: blanks are dropped from the
+ * header and a row's emptiness is any cell having content. A row with no
+ * cells is kept as an empty row, which the rule treats as no row.
+ */
+const worksheetRows = (worksheet: ExcelJS.Worksheet): string[][] => worksheetCells(worksheet).map((cells) => cells.map((cell) => cell.text ?? ''));
 
 /** Every `.xlsx` is a zip archive, which starts with these two bytes. */
 const isZip = (buffer: Buffer): boolean => buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
