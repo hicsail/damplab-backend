@@ -34,7 +34,7 @@ const isBlank = (value: unknown): boolean => value === null || value === undefin
  * A value as order-free text: a JSON string is parsed first and object keys are sorted, so the same stored value
  * matches however the client spells it back (object or string, any key order).
  */
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   let parsed = value;
   if (typeof value === 'string') {
     try {

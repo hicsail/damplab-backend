@@ -17,7 +17,7 @@ import { calculateServiceCost, CustomerCategory } from '../pricing/service-prici
 import { fileParameterIds, keyBelongsToUploader, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
 import { isEmptyParamValue, paramValuesById, paramValuesSemanticallyEqual } from './param-values.util';
 import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
-import { countNewTableAnswers, withStoredTableAnswers } from '../workflow/utils/table-answers';
+import { canonical, countNewTableAnswers, withStoredTableAnswers } from '../workflow/utils/table-answers';
 import { TABLE_FILE_MAX_BYTES } from '../workflow/utils/table-file';
 import { withoutHiddenAnswers, withStoredHiddenAnswers } from '../services/parameter-conditions';
 
@@ -753,7 +753,8 @@ export class JobVersionService {
   private assertSampleSheetKeysAllowed(liveNodes: Map<string, LiveNode>, prepared: PreparedNode[][], uploaderSub: string): void {
     const flatten = (value: unknown): unknown[] => (Array.isArray(value) ? value.flatMap(flatten) : [value]);
     const isBlank = (v: unknown): boolean => v === null || v === undefined || v === '';
-    const raw = (v: unknown): string => (typeof v === 'string' ? v : JSON.stringify(v));
+    // Order-free, as the count step compares: the same stored value however the client spells it back.
+    const raw = canonical;
     for (const workflow of prepared) {
       for (const node of workflow) {
         if (!node.fileParamIds.length) continue;

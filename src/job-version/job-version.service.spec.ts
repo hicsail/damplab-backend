@@ -1248,6 +1248,22 @@ describe('saveWorkflows — samples-spreadsheet keys (B20)', () => {
     await expect(saveRaw(setup(), [{ id: 'sheet', value: '' }])).resolves.toBeDefined();
   });
 
+  // Some Prod jobs store a browser placeholder (a file that was never uploaded); editing such a job must still save.
+  it('accepts a stored keyless value sent back with its keys in another order or as a string', async () => {
+    const placeholder = { __kind: 'pending-file', localId: 'abc', filename: 'Master.xlsx', size: 9, sampleCount: 9 };
+    const reordered = { sampleCount: 9, size: 9, filename: 'Master.xlsx', localId: 'abc', __kind: 'pending-file' };
+    for (const [type, extra] of [
+      ['sampleSheet', { templateFile: { key: 'sample-sheet-templates/blank.xlsx' } }],
+      ['file', {}]
+    ] as const) {
+      for (const sent of [reordered, JSON.stringify(reordered)]) {
+        const harness = buildHarness({ nodes: [liveNode({ formData: [{ id: 'sheet', value: placeholder }] })] });
+        (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({ ...SERVICE_A, parameters: [{ id: 'sheet', name: 'Samples', type, ...extra }] });
+        await expect(saveRaw(harness, [{ id: 'sheet', value: sent }])).resolves.toBeDefined();
+      }
+    }
+  });
+
   it('guards file parameters the same way', async () => {
     const harness = buildHarness({ nodes: [liveNode({ formData: [{ id: 'f', value: sheet('workflow-parameters/owner/old.pdf') }] })] });
     (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({ ...SERVICE_A, parameters: [{ id: 'f', name: 'File', type: 'file' }] });
