@@ -7,7 +7,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-d
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { REQUEST } from '@nestjs/core';
 import { deriveCustomerCategory } from '../../pricing/pricing-groups';
-import { foreignFileKey } from '../utils/sample-sheet.util';
+import { foreignFileKey, unuploadedFileName } from '../utils/sample-sheet.util';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { countNewTableAnswers } from '../utils/table-answers';
 import { TABLE_FILE_MAX_BYTES } from '../utils/table-file';
@@ -46,9 +46,14 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     // further down reads `this.request?.user`, which is a different question
     // with its own history; it is deliberately not touched here.
     const caller = this.request?.req?.user;
+    const operation = typeof value.label === 'string' && value.label.trim() !== '' ? value.label : service.name;
     if (foreignFileKey(service.parameters, shown, caller?.sub) !== null) {
-      const operation = typeof value.label === 'string' && value.label.trim() !== '' ? value.label : service.name;
       throw new BadRequestException(`The file on "${operation}" was not uploaded by you. Upload it again and retry.`);
+    }
+    // A picked file that never reached storage must not be saved as if it had: there would be nothing to download.
+    const unuploaded = unuploadedFileName(service.parameters, shown);
+    if (unuploaded !== null) {
+      throw new BadRequestException(`The file “${unuploaded}” on "${operation}" was not uploaded. Pick it again and resubmit.`);
     }
     // A Table's row count multiplies its price, so the server reads the file
     // itself: every Table value here is a new key, fetched, checked against the

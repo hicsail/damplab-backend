@@ -102,6 +102,19 @@ describe('AddNodeInputPipe refuses a storage key the caller did not upload (tabl
   const foreign = 'workflow-parameters/customer-2/secret.pdf';
   const REFUSAL = 'The file on "Sequence" was not uploaded by you. Upload it again and retry.';
 
+  // A file picked on the canvas that never reached storage (the page reloaded) arrives as the browser's placeholder.
+  it('refuses a picked file that was never uploaded, on a plain file parameter or inside a list, naming the file', async () => {
+    const placeholder = { __kind: 'pending-file', localId: 'x1', filename: 'Master.xlsx', contentType: 'application/pdf', size: 3 };
+    const NOT_UPLOADED = 'The file “Master.xlsx” on "Sequence" was not uploaded. Pick it again and resubmit.';
+    await expect(pipeFor(customer).transform(node([{ id: 'doc', value: placeholder }]))).rejects.toThrow(NOT_UPLOADED);
+    await expect(pipeFor(customer).transform(node([{ id: 'docs', value: [file(own('b.pdf')), JSON.stringify(placeholder)] }]))).rejects.toThrow(NOT_UPLOADED);
+  });
+
+  it('still accepts a file recorded by name only (the local-dev fallback)', async () => {
+    const byName = JSON.stringify({ filename: 'a.pdf', notUploaded: true, contentType: 'application/pdf', size: 3, uploadedAt: '2026-10-01T00:00:00.000Z' });
+    await expect(pipeFor(customer).transform(node([{ id: 'doc', value: byName }]))).resolves.toBeDefined();
+  });
+
   it('accepts files the caller uploaded, on every kind of file parameter', async () => {
     const formData = [
       { id: 'kind', value: 'a' },

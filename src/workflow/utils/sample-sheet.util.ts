@@ -217,6 +217,23 @@ export function foreignFileKey(parameters: unknown, formData: ReadonlyArray<{ id
 }
 
 /**
+ * The file name of the first answer to a file or Table parameter that is still the browser's placeholder for a picked
+ * file (`__kind: 'pending-file'`) — a file that never reached storage, usually because the page reloaded before
+ * submitting. Null when there is none. A value recorded by name only (`notUploaded`, the local-dev fallback) is not one.
+ */
+export function unuploadedFileName(parameters: unknown, formData: ReadonlyArray<{ id: string; value?: unknown }>): string | null {
+  const guarded = new Set(fileParameterIds(parameters));
+  for (const entry of formData ?? []) {
+    if (!entry || !guarded.has(entry.id)) continue;
+    for (const value of flattenValues(entry.value)) {
+      const record = fileRecord(value);
+      if (record?.__kind === 'pending-file') return typeof record.filename === 'string' && record.filename !== '' ? record.filename : 'file';
+    }
+  }
+  return null;
+}
+
+/**
  * Why a sheet cannot be replaced right now, or null when it can.
  *
  * Deliberately wider than `assertJobContractWritable`: a sample list is the
