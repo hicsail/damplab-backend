@@ -44,7 +44,7 @@ export class ParameterSetsService {
     }
     if (changes.description !== undefined) patch.description = changes.description?.trim() || null;
     if (changes.parameters !== undefined && changes.parameters !== null) {
-      patch.parameters = normalizeSetParameters(changes.parameters);
+      patch.parameters = normalizeSetParameters(changes.parameters, existing.parameters);
       await this.assertNoClashOnOperations(existing, patch.parameters as any[], (patch.name as string) ?? existing.name);
     }
     await this.model.updateOne({ _id: id }, { $set: patch }).exec();

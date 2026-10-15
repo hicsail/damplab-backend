@@ -176,6 +176,7 @@ interface Harness {
   versions: any[];
   job: any;
   raceVersionCreateOnce: () => void;
+  files: { readObject: jest.Mock };
 }
 
 /** Minimal mongoose-shaped fakes over plain arrays. */
@@ -290,7 +291,8 @@ function buildHarness(options: { nodes?: any[]; customerCategory?: string; servi
     findOneActive: async (id: string) => options.services?.find((s) => String(s._id) === String(id)) ?? (String(id) === SVC_A ? SERVICE_A : String(id) === SVC_B ? SERVICE_B : null)
   };
 
-  const service = new JobVersionService(versionModel, jobModel, workflowModel, nodeModel, edgeModel, dampLabServices);
+  const files = { readObject: jest.fn(async () => Buffer.from('Sample\ns1\ns2\n')) };
+  const service = new JobVersionService(versionModel, jobModel, workflowModel, nodeModel, edgeModel, dampLabServices, files as any);
   return {
     service,
     nodes,
@@ -298,6 +300,7 @@ function buildHarness(options: { nodes?: any[]; customerCategory?: string; servi
     workflows,
     versions,
     job,
+    files,
     raceVersionCreateOnce: (): void => {
       versionCreateRaces += 1;
     }
@@ -1180,7 +1183,7 @@ describe('saveWorkflows — parameter snapshot (B21, B22)', () => {
 });
 
 describe('saveWorkflows — samples-spreadsheet keys (B20)', () => {
-  const SHEET_SERVICE = { ...SERVICE_A, parameters: [{ id: 'sheet', name: 'Samples', type: 'sampleSheet' }] };
+  const SHEET_SERVICE = { ...SERVICE_A, parameters: [{ id: 'sheet', name: 'Samples', type: 'sampleSheet', templateFile: { key: 'sample-sheet-templates/blank.xlsx' } }] };
   const sheet = (key: string): string => JSON.stringify({ filename: 'a.xlsx', key, sampleCount: 2 });
   const setup = (): Harness => {
     const harness = buildHarness({ nodes: [liveNode({ formData: [{ id: 'sheet', value: sheet('workflow-parameters/owner/old.xlsx') }] })] });
@@ -1231,7 +1234,7 @@ describe('saveWorkflows — samples-spreadsheet keys (B20)', () => {
       const harness = setup();
       (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => ({
         ...SERVICE_A,
-        parameters: [{ id: 'sheet', name: 'Samples', type: 'sampleSheet', allowMultipleValues: true }]
+        parameters: [{ id: 'sheet', name: 'Samples', type: 'sampleSheet', allowMultipleValues: true, templateFile: { key: 'sample-sheet-templates/blank.xlsx' } }]
       });
       return harness;
     };
@@ -1437,5 +1440,265 @@ describe('saveWorkflows — answers to hidden parameters', () => {
     await service.restoreVersion(JOB_ID, 1000, author, 'Restored version 1.0');
     expect(nodes[0].formData).toEqual([{ id: 'sample', value: 'yeast' }]);
     expect(nodes[0].price).toBe(20);
+  });
+});
+
+describe('saveWorkflows — Table files are counted by the server (table-upload rules 22–25)', () => {
+  const OLD = 'workflow-parameters/owner/old.csv';
+  const OWN = 'workflow-parameters/member/new.csv';
+  // A file the server counted on an earlier save: it carries the server's mark, so a `table` parameter bills it per row.
+  const storedOld = JSON.stringify({ filename: 'old.csv', key: OLD, contentType: 'text/csv', size: 9, sampleCount: 7, uploadedAt: '2026-09-01T00:00:00.000Z', countedBy: 'server' });
+  const sent = (key: string, sampleCount: number): string => JSON.stringify({ filename: 'new.csv', key, contentType: 'text/csv', size: 1, sampleCount });
+  const TABLE_SERVICE = {
+    ...SERVICE_A,
+    pricingMode: 'PARAMETER',
+    parameters: [
+      {
+        id: 'kind',
+        name: 'Kind',
+        type: 'dropdown',
+        options: [
+          { id: 'a', name: 'A' },
+          { id: 'b', name: 'B' }
+        ]
+      },
+      { id: 'plate', name: 'Plate map', type: 'table', price: 5, tableData: { columns: [{ header: 'Sample', field: 'sample' }] } }
+    ]
+  };
+  const setup = (
+    formData: any[] = [
+      { id: 'kind', value: 'a' },
+      { id: 'plate', value: storedOld }
+    ],
+    service: any = TABLE_SERVICE
+  ): Harness => {
+    const harness = buildHarness({ nodes: [liveNode({ formData })] });
+    (harness.service as any).dampLabServices.findOneActive = async (): Promise<any> => service;
+    return harness;
+  };
+  const save = (harness: Harness, formData: any[], opts: any = { uploaderSub: 'member' }): Promise<any> =>
+    harness.service.saveWorkflows({ jobId: JOB_ID, note: 'table', workflows: [{ workflowId: WF_ID, nodes: [inputNode({ formData })], edges: [] }] } as any, author, opts);
+  const plateOf = (harness: Harness): any => harness.nodes[0].formData.find((e: any) => e.id === 'plate').value;
+
+  it('a new key is fetched, counted and priced by the server; the client’s count is ignored', async () => {
+    const harness = setup();
+    await save(harness, [
+      { id: 'kind', value: 'a' },
+      { id: 'plate', value: sent(OWN, 900) }
+    ]);
+    expect(harness.files.readObject).toHaveBeenCalledTimes(1);
+    expect(harness.files.readObject).toHaveBeenCalledWith(OWN, 10 * 1024 * 1024);
+    expect(JSON.parse(plateOf(harness))).toMatchObject({ filename: 'new.csv', key: OWN, sampleCount: 2, countedBy: 'server' });
+    expect(harness.nodes[0].price).toBe(10);
+    expect(harness.nodes[0].parameterSnapshot).toContainEqual({ id: 'plate', name: 'Plate map', type: 'table', displayValue: 'new.csv' });
+    // The version records what was stored, not what was sent.
+    const versionNode = harness.versions[harness.versions.length - 1].workflows[0].nodes[0];
+    expect(JSON.parse(versionNode.formData.find((e: any) => e.id === 'plate').value).sampleCount).toBe(2);
+  });
+
+  // Review Focus 3.
+  it('an unchanged key is written back exactly as stored — even resent as an object with a url and an edited count — and is never fetched', async () => {
+    const harness = setup();
+    await save(harness, [
+      { id: 'kind', value: 'a' },
+      { id: 'plate', value: { ...JSON.parse(storedOld), url: 'https://s3/presigned', sampleCount: 1 } }
+    ]);
+    expect(harness.files.readObject).not.toHaveBeenCalled();
+    expect(plateOf(harness)).toBe(storedOld);
+    expect(harness.nodes[0].price).toBe(35);
+  });
+
+  it('an unchanged key is kept even though it no longer matches the catalog’s columns', async () => {
+    const harness = setup();
+    harness.files.readObject.mockResolvedValue(Buffer.from('Wrong\nx\n'));
+    await save(harness, [
+      { id: 'kind', value: 'a' },
+      { id: 'plate', value: storedOld }
+    ]);
+    expect(plateOf(harness)).toBe(storedOld);
+  });
+
+  it('a refused file fails the whole save and writes nothing', async () => {
+    const harness = setup();
+    harness.files.readObject.mockResolvedValue(Buffer.from('Strain\nBL21\n'));
+    await expect(
+      save(harness, [
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value: sent(OWN, 1) }
+      ])
+    ).rejects.toThrow('“Plate map” on “Gibson Assembly”: This file is missing the columns: Sample.');
+    expect(plateOf(harness)).toBe(storedOld);
+    expect(harness.versions).toHaveLength(0);
+  });
+
+  it('a foreign key is refused by the ownership guard before anything is read', async () => {
+    const harness = setup();
+    await expect(
+      save(harness, [
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value: sent('workflow-parameters/other/stolen.csv', 1) }
+      ])
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(harness.files.readObject).not.toHaveBeenCalled();
+  });
+
+  // Review Focus 2.
+  it('the old empty answer stays the empty string, is not fetched, and keeps billing price × 1', async () => {
+    const harness = setup([
+      { id: 'kind', value: 'a' },
+      { id: 'plate', value: '' }
+    ]);
+    await save(harness, [
+      { id: 'kind', value: 'a' },
+      { id: 'plate', value: '' }
+    ]);
+    expect(harness.files.readObject).not.toHaveBeenCalled();
+    expect(plateOf(harness)).toBe('');
+    expect(harness.nodes[0].price).toBe(5);
+  });
+
+  it('removing the file leaves null and bills nothing', async () => {
+    const harness = setup();
+    await save(harness, [
+      { id: 'kind', value: 'a' },
+      { id: 'plate', value: null }
+    ]);
+    expect(plateOf(harness)).toBeNull();
+    expect(harness.nodes[0].price).toBe(0);
+  });
+
+  it('a hidden Table’s file is dropped before anything is fetched (rule 28)', async () => {
+    const hiding = { ...TABLE_SERVICE, parameters: [TABLE_SERVICE.parameters[0], { ...TABLE_SERVICE.parameters[1], showIf: { parameterId: 'kind', op: 'eq', optionIds: ['a'] } }] };
+    const harness = setup([{ id: 'kind', value: 'b' }], hiding);
+    await save(harness, [
+      { id: 'kind', value: 'b' },
+      { id: 'plate', value: sent(OWN, 3) }
+    ]);
+    expect(harness.files.readObject).not.toHaveBeenCalled();
+    expect(harness.nodes[0].formData.map((e: any) => e.id)).toEqual(['kind']);
+  });
+
+  // Review Focus 4.
+  it('a restore replays the version’s value unchanged and reads nothing, though its key differs from the live one (rule 25)', async () => {
+    const harness = setup();
+    const fromHistory = JSON.stringify({
+      filename: 'v1.csv',
+      key: 'workflow-parameters/owner/v1.csv',
+      contentType: 'text/csv',
+      size: 3,
+      sampleCount: 4,
+      uploadedAt: '2026-08-01T00:00:00.000Z',
+      countedBy: 'server'
+    });
+    // No uploaderSub: this is how restoreVersion and withdraw call saveWorkflows.
+    await save(
+      harness,
+      [
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value: fromHistory }
+      ],
+      {}
+    );
+    expect(harness.files.readObject).not.toHaveBeenCalled();
+    expect(plateOf(harness)).toBe(fromHistory);
+    expect(harness.nodes[0].price).toBe(20);
+  });
+
+  it('a node added in the editor has nothing stored: its Table file is counted', async () => {
+    const harness = setup();
+    await harness.service.saveWorkflows(
+      {
+        jobId: JOB_ID,
+        note: 'added',
+        workflows: [
+          {
+            workflowId: WF_ID,
+            nodes: [
+              inputNode({
+                formData: [
+                  { id: 'kind', value: 'a' },
+                  { id: 'plate', value: storedOld }
+                ]
+              }),
+              inputNode({
+                id: 'brand-new',
+                formData: [
+                  { id: 'kind', value: 'a' },
+                  { id: 'plate', value: sent(OWN, 80) }
+                ]
+              })
+            ],
+            edges: []
+          }
+        ]
+      } as any,
+      author,
+      { uploaderSub: 'member' }
+    );
+    const added = harness.nodes.find((n) => n.id === 'brand-new');
+    expect(JSON.parse(added.formData.find((e: any) => e.id === 'plate').value).sampleCount).toBe(2);
+    expect(added.price).toBe(10);
+  });
+
+  // The flows that must keep working on a job whose files the caller did not upload.
+  it('staff saving a customer’s job: the customer’s stored file is kept, though the key is not the staff member’s', async () => {
+    const harness = setup();
+    await save(
+      harness,
+      [
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value: storedOld }
+      ],
+      { uploaderSub: 'staff-1' }
+    );
+    expect(harness.files.readObject).not.toHaveBeenCalled();
+    expect(plateOf(harness)).toBe(storedOld);
+  });
+
+  it('staff saving a customer’s job: a file the staff member uploads replaces it and is counted', async () => {
+    const harness = setup();
+    await save(
+      harness,
+      [
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value: sent('workflow-parameters/staff-1/fixed.csv', 1) }
+      ],
+      { uploaderSub: 'staff-1' }
+    );
+    expect(JSON.parse(plateOf(harness))).toMatchObject({ key: 'workflow-parameters/staff-1/fixed.csv', sampleCount: 2, countedBy: 'server' });
+  });
+
+  // R2, Review Focus 2: a save in which nobody uploads rewrites no Table answer and moves no bill.
+  describe('an untouched save leaves every older answer, and its bill, exactly as it was', () => {
+    const [kind, plate] = TABLE_SERVICE.parameters;
+    const multi = { ...TABLE_SERVICE, parameters: [kind, { ...plate, allowMultipleValues: true }] };
+    const legacySheet = { ...TABLE_SERVICE, parameters: [kind, { id: 'plate', name: 'Samples', type: 'sampleSheet', price: 5, templateFile: { key: 'sample-sheet-templates/blank.xlsx' } }] };
+    // Stored before the server counted: the count is the one the uploader's browser sent, and there is no mark.
+    const clientCounted = JSON.stringify({ filename: 'old.xlsx', key: OLD, contentType: 'x', size: 9, sampleCount: 7, uploadedAt: '2026-09-01T00:00:00.000Z' });
+
+    it.each([
+      ['the old empty string on a `table`', TABLE_SERVICE, '', 5],
+      ['no file on a `table`', TABLE_SERVICE, null, 0],
+      ['text on a `table`', TABLE_SERVICE, 'legacy', 5],
+      ['a file-shaped answer the server never counted, on a `table`', TABLE_SERVICE, clientCounted, 5],
+      ['two empty strings on a multi-value `table`', multi, ['', ''], 10],
+      ['a sample sheet carrying its uploader’s count', legacySheet, clientCounted, 35],
+      ['the old empty string on a `sampleSheet`', legacySheet, '', 0]
+    ])('%s', async (_what, service, value, price) => {
+      const harness = setup(
+        [
+          { id: 'kind', value: 'a' },
+          { id: 'plate', value }
+        ],
+        service
+      );
+      await save(harness, [
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value }
+      ]);
+      expect(harness.files.readObject).not.toHaveBeenCalled();
+      expect(plateOf(harness)).toEqual(value);
+      expect(harness.nodes[0].price).toBe(price);
+    });
   });
 });
