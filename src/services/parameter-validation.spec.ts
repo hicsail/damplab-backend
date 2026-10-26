@@ -117,6 +117,25 @@ describe('parameterDefinitionError', () => {
   it('refuses a validation on a non-number', () => {
     expect(parameterDefinitionError({ id: 't', name: 'Notes', type: 'string', validation: '>0' })).toBe('Parameter “Notes”: only Number parameters can have a validation.');
   });
+  it('accepts a matrix written as name;column, on anything but a Table', () => {
+    expect(parameterDefinitionError({ id: 'd', name: 'AFP Dilution', type: 'dropdown', matrix: 'matrixA;2' })).toBeNull();
+    expect(parameterDefinitionError({ id: 'd', name: 'AFP Dilution', type: 'dropdown', matrix: ' ' })).toBeNull();
+    for (const bad of ['matrixA', 'matrixA;0', ';2', 'matrixA;x', 7]) {
+      expect(parameterDefinitionError({ id: 'd', name: 'AFP Dilution', type: 'dropdown', matrix: bad })).toBe(
+        'Parameter “AFP Dilution”: write the matrix as name;column, e.g. matrixA;2 (the column is 1 or more).'
+      );
+    }
+    expect(parameterDefinitionError({ id: 'd', name: 'Plate', type: 'table', matrix: 'm;1' })).toBe('Parameter “Plate”: a Table cannot be placed in a matrix.');
+  });
+
+  it('accepts multiselect on a multi-value dropdown only', () => {
+    expect(parameterDefinitionError({ id: 'd', name: 'Assays', type: 'dropdown', allowMultipleValues: true, display: 'multiselect' })).toBeNull();
+    expect(parameterDefinitionError({ id: 'd', name: 'Assays', type: 'dropdown', allowMultipleValues: false, display: 'multiselect' })).toBe(
+      'Parameter “Assays”: “multiselect” needs a dropdown that allows multiple values.'
+    );
+    expect(parameterDefinitionError({ id: 'd', name: 'Assays', type: 'dropdown', allowMultipleValues: true, display: 'slider' })).toBe('Parameter “Assays”: unknown display “slider”.');
+  });
+
   it('accepts checkboxes on a multi-value dropdown only', () => {
     expect(parameterDefinitionError({ id: 'd', name: 'Type', type: 'dropdown', allowMultipleValues: true, display: 'checkboxes' })).toBeNull();
     expect(parameterDefinitionError({ id: 'd', name: 'Type', type: 'dropdown', allowMultipleValues: false, display: 'checkboxes' })).toBe(
