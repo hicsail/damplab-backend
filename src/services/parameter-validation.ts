@@ -88,7 +88,7 @@ export function effectiveValidation(param: unknown): string {
 /** Why a parameter definition may not be saved, or null. Checks only the fields this module owns. */
 export function parameterDefinitionError(param: unknown): string | null {
   if (!param || typeof param !== 'object') return null;
-  const p = param as { id?: unknown; name?: unknown; type?: unknown; validation?: unknown; display?: unknown; allowMultipleValues?: unknown };
+  const p = param as { id?: unknown; name?: unknown; type?: unknown; validation?: unknown; display?: unknown; allowMultipleValues?: unknown; matrix?: unknown };
   const label = typeof p.name === 'string' && p.name.trim() !== '' ? p.name.trim() : String(p.id ?? '');
   // Answers are stored under the parameter's id, and a file is uploaded only for a parameter that has one.
   if ((p.type === 'file' || p.type === 'table' || p.type === 'sampleSheet') && (typeof p.id !== 'string' || p.id.trim() === '')) {
@@ -101,8 +101,15 @@ export function parameterDefinitionError(param: unknown): string | null {
     if ('error' in parsed) return `Parameter “${label}”: ${parsed.error}`;
   }
   if (p.display !== undefined && p.display !== null) {
-    if (p.display !== 'checkboxes') return `Parameter “${label}”: unknown display “${String(p.display)}”.`;
-    if (p.type !== 'dropdown' || p.allowMultipleValues !== true) return `Parameter “${label}”: “checkboxes” needs a dropdown that allows multiple values.`;
+    // Both are a multi-value dropdown: tick-boxes, or one list in which several options are chosen.
+    if (p.display !== 'checkboxes' && p.display !== 'multiselect') return `Parameter “${label}”: unknown display “${String(p.display)}”.`;
+    if (p.type !== 'dropdown' || p.allowMultipleValues !== true) return `Parameter “${label}”: “${p.display}” needs a dropdown that allows multiple values.`;
+  }
+  // "Matrix": `<name>;<column>`, laid out in a grid on the order form. Mirrors damplab-ui/src/utils/parameterMatrix.ts.
+  if (p.matrix !== undefined && p.matrix !== null && !(typeof p.matrix === 'string' && p.matrix.trim() === '')) {
+    const match = typeof p.matrix === 'string' ? /^([^;]+);\s*(\d+)$/.exec(p.matrix.trim()) : null;
+    if (!match || !match[1].trim() || Number(match[2]) < 1) return `Parameter “${label}”: write the matrix as name;column, e.g. matrixA;2 (the column is 1 or more).`;
+    if (p.type === 'table' || p.type === 'sampleSheet') return `Parameter “${label}”: a Table cannot be placed in a matrix.`;
   }
   return null;
 }
