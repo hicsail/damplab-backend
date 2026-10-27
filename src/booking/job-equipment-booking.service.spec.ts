@@ -132,7 +132,7 @@ describe('JobEquipmentBookingService.view', () => {
   it('tells a stranger nothing at all', async () => {
     const view = await build({ sowStatus: 'SIGNED' }).view('job-1', user({ sub: 'nobody', email: 'nobody@bu.edu' }));
     expect(view).toEqual({
-      access: { status: JobBookingAccessStatus.HIDDEN, canBook: false, canBlock: false, reason: undefined },
+      access: { status: JobBookingAccessStatus.HIDDEN, canBook: false, canBlock: false, reason: undefined, requiresApproval: true },
       operations: [],
       bookings: []
     });
@@ -209,7 +209,7 @@ describe('membership is the only way to book (behaviours 5, 6, 8)', () => {
   it('hides the view from someone the stored list names but who is not on the job', async () => {
     const view = await build({ sowStatus: 'FINAL' }).view('job-1', listedStranger());
     expect(view).toEqual({
-      access: { status: JobBookingAccessStatus.HIDDEN, canBook: false, canBlock: false, reason: undefined },
+      access: { status: JobBookingAccessStatus.HIDDEN, canBook: false, canBlock: false, reason: undefined, requiresApproval: true },
       operations: [],
       bookings: []
     });
@@ -445,7 +445,7 @@ describe('client bookings wait on the lab (tentative)', () => {
   const sow = { _id: 'sow-1', status: 'FINAL', resources: { projectManager: '', projectLead: '' } };
   const versionInputs = { projectManagerId: 'pm-sub', projectLeadId: 'lead-sub' };
   const buildWith = (
-    overrides: { sow?: any; bookings?: any; dispatch?: jest.Mock; current?: any; active?: any } = {}
+    overrides: { sow?: any; bookings?: any; dispatch?: jest.Mock; current?: any; active?: any; trusted?: string[] } = {}
   ): { svc: JobEquipmentBookingService; createForJob: jest.Mock; updateForJob: jest.Mock; dispatch: jest.Mock } => {
     const createForJob = jest.fn(async (p: any) => ({
       _id: 'bk-new',
@@ -476,7 +476,8 @@ describe('client bookings wait on the lab (tentative)', () => {
       {
         getCurrentVersion: async (): Promise<any> => ('current' in overrides ? overrides.current : { inputs: versionInputs }),
         getActiveVersion: async (): Promise<any> => overrides.active ?? null
-      } as any
+      } as any,
+      { canBookWithoutApproval: jest.fn(async (sub?: string) => !!sub && (overrides.trusted ?? []).includes(sub)) } as any
     );
     return { svc, createForJob, updateForJob, dispatch };
   };
@@ -513,10 +514,48 @@ describe('client bookings wait on the lab (tentative)', () => {
     expect(dispatch.mock.calls[0][0].title).toMatch(/change/i);
   });
 
-  it('lets lab staff book without approval', () => {
-    expect(JobEquipmentBookingService.requiresApproval(user({ realm_access: { roles: ['technician'] } }))).toBe(false);
-    expect(JobEquipmentBookingService.requiresApproval(user({ realm_access: { roles: ['damplab-staff'] } }))).toBe(false);
-    expect(JobEquipmentBookingService.requiresApproval(bookerUser())).toBe(true);
+  it('lets lab staff book without approval, flag or not (rule 1)', async () => {
+    const { svc } = buildWith();
+    expect(await svc.requiresApproval(user({ realm_access: { roles: ['technician'] } }))).toBe(false);
+    expect(await svc.requiresApproval(user({ realm_access: { roles: ['damplab-staff'] } }))).toBe(false);
+    expect(await svc.requiresApproval(bookerUser())).toBe(true);
+  });
+
+  it('lets a client whose profile says so book without approval (rule 2), reading the caller’s flag (rule 5)', async () => {
+    const { svc } = buildWith({ trusted: ['trusted-sub'] });
+    expect(await svc.requiresApproval(bookerUser({ sub: 'trusted-sub' }))).toBe(false);
+    // The job's creator is 'creator-sub'; their (absent) flag is not what counts.
+    expect(await svc.requiresApproval(bookerUser({ sub: 'creator-sub' }))).toBe(true);
+  });
+
+  it('creates a flagged client’s booking RESERVED and sends no approval request', async () => {
+    const { svc, createForJob, dispatch } = buildWith({ trusted: ['creator-sub'] });
+    const created: any = await svc.create(input, bookerUser());
+    expect(createForJob.mock.calls[0][0].requiresApproval).toBe(false);
+    expect(created.status).toBe('RESERVED');
+    expect(dispatch.mock.calls.map((c) => c[0].eventType)).not.toContain('EQUIPMENT_BOOKING_REQUESTED');
+  });
+
+  it('keeps a flagged client’s change confirmed (rule 3): no approval, so no usage refusal and no status write', async () => {
+    const { svc, updateForJob, dispatch } = buildWith({ trusted: ['creator-sub'] });
+    await svc.update('bk-1', { ...slot, reason: 'Sample late' } as any, bookerUser());
+    expect(updateForJob.mock.calls[0][3]).toBe(false);
+    expect(dispatch.mock.calls.map((c) => c[0].eventType)).not.toContain('EQUIPMENT_BOOKING_REQUESTED');
+  });
+
+  it('treats a client with no profile service, no profile or the flag off as today (rule 4)', async () => {
+    const { svc, createForJob } = buildWith({ trusted: [] });
+    await svc.create(input, bookerUser());
+    expect(createForJob.mock.calls[0][0].requiresApproval).toBe(true);
+    // Built without the 10th argument, as Nest would if the module were missing.
+    expect(await build().requiresApproval(bookerUser())).toBe(true);
+  });
+
+  it('reports on the view whether the caller’s bookings need approval (rule 8)', async () => {
+    const memberJobView = async (trusted: string[], who: any): Promise<boolean> => (await buildWith({ trusted }).svc.view('job-1', who)).access.requiresApproval;
+    expect(await memberJobView([], bookerUser())).toBe(true);
+    expect(await memberJobView(['creator-sub'], bookerUser())).toBe(false);
+    expect(await memberJobView([], user({ realm_access: { roles: ['damplab-staff'] } }))).toBe(false);
   });
 
   it('tells the client the answer either way, with the reason on a decline', async () => {

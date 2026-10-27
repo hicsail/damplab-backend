@@ -1,3 +1,4 @@
+import { CustomerProfileService } from '../customer-profile/customer-profile.service';
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { JobService } from '../job/job.service';
 import { SOWService } from '../sow/sow.service';
@@ -63,7 +64,8 @@ export class JobEquipmentBookingService {
     private readonly inventory: InventoryService,
     private readonly bookings: BookingService,
     @Inject(forwardRef(() => NotificationDispatchService)) private readonly notifications?: NotificationDispatchService,
-    @Inject(forwardRef(() => SowVersionService)) private readonly sowVersions?: SowVersionService
+    @Inject(forwardRef(() => SowVersionService)) private readonly sowVersions?: SowVersionService,
+    private readonly customerProfiles?: CustomerProfileService
   ) {}
 
   /**
@@ -85,11 +87,16 @@ export class JobEquipmentBookingService {
 
   /**
    * Whether this caller's booking waits on the lab. Lab staff (`jobs:view-all`)
-   * book confirmed; a client's booking, or a client's change to one, holds the
-   * slot as TENTATIVE until an administrator approves it.
+   * book confirmed. So does a client whose Customer Management profile has
+   * `canBookWithoutApproval` — the booker's own flag, read live on every call, so
+   * turning it on or off applies to their next booking with no re-login and never
+   * touches bookings already made. Anyone else's booking, or change to one, holds
+   * the slot as TENTATIVE until an administrator approves it.
    */
-  static requiresApproval(user?: User): boolean {
-    return !hasPermission(user, Permission.JobsViewAll);
+  async requiresApproval(user?: User): Promise<boolean> {
+    if (hasPermission(user, Permission.JobsViewAll)) return false;
+    if (!user?.sub || !this.customerProfiles) return true;
+    return !(await this.customerProfiles.canBookWithoutApproval(user.sub));
   }
 
   private actorIdentity(user?: User): { sub?: string; email?: string; name?: string } {
@@ -263,7 +270,7 @@ export class JobEquipmentBookingService {
     const full = await this.inventory.find(item.id);
     if (!full) throw new NotFoundException('Inventory item not found.');
 
-    const requiresApproval = JobEquipmentBookingService.requiresApproval(user);
+    const requiresApproval = await this.requiresApproval(user);
     const created = await this.bookings.createForJob({
       job,
       nodeId: operation.nodeId,
@@ -285,7 +292,7 @@ export class JobEquipmentBookingService {
     if (!existing) throw new NotFoundException('Booking not found.');
     if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
     const { job } = await this.authorize(String(existing.jobId), String(existing.nodeId), user);
-    const requiresApproval = JobEquipmentBookingService.requiresApproval(user);
+    const requiresApproval = await this.requiresApproval(user);
     const updated = await this.bookings.updateForJob(id, { startTime: input.startTime, endTime: input.endTime, notes: input.notes, reason: input.reason }, this.actorIdentity(user), requiresApproval);
     if (requiresApproval) await this.notifyRequested(updated, job, user, true);
     return updated;
@@ -297,7 +304,7 @@ export class JobEquipmentBookingService {
 
     const operations = await this.loadOperations(job);
     const verdict = await this.verdict(job, user, operations);
-    const access = { status: verdict.status, canBook: verdict.canBook, canBlock: verdict.canBlock, reason: verdict.reason };
+    const access = { status: verdict.status, canBook: verdict.canBook, canBlock: verdict.canBlock, reason: verdict.reason, requiresApproval: await this.requiresApproval(user) };
 
     // A stranger gets the status and nothing else. Anyone on the job — paused,
     // waiting on the SOW, or without the booking permission — still sees the
