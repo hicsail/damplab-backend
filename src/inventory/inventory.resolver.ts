@@ -1,10 +1,12 @@
-import { UseGuards } from '@nestjs/common';
+import { UseGuards, Logger } from '@nestjs/common';
 import { Args, ID, Int, Mutation, Parent, Query, ResolveField, Resolver } from '@nestjs/graphql';
 import { InventoryItem } from './inventory.model';
 import { InventoryService } from './inventory.service';
 import { InventoryItemPipe } from './inventory.pipe';
 import { CreateInventoryItem } from './dtos/create.dto';
 import { InventoryItemChange } from './dtos/update.dto';
+import { InventoryImageService } from './inventory-image.service';
+import { InventoryImageUpload, InventoryImageUploadRequest } from './inventory-image.dto';
 
 import { AuthRolesGuard } from '../auth/auth.guard';
 import { Public } from '../auth/roles/roles.decorator';
@@ -19,7 +21,12 @@ import { visiblePricing } from '../pricing/pricing-visibility';
 @Resolver(() => InventoryItem)
 @UseGuards(AuthRolesGuard)
 export class InventoryResolver {
-  constructor(private readonly inventoryService: InventoryService) {}
+  private readonly logger = new Logger(InventoryResolver.name);
+
+  constructor(
+    private readonly inventoryService: InventoryService,
+    private readonly inventoryImageService: InventoryImageService
+  ) {}
 
   /** Everything, including soft-deleted items (for the admin catalog). */
   @Query(() => [InventoryItem], { description: 'All inventory items including soft-deleted ones (admin view). Requires inventory:read.' })
@@ -127,5 +134,26 @@ export class InventoryResolver {
   @ResolveField(() => Pricing, { nullable: true })
   pricing(@Parent() item: InventoryItem, @CurrentUser() user: User): Pricing | undefined {
     return visiblePricing(item.pricing, user);
+  }
+
+  @Mutation(() => InventoryImageUpload, { description: 'Create a presigned S3 URL to upload an image for an inventory item.' })
+  @RequirePermission(Permission.InventoryWrite)
+  async createInventoryImageUploadUrl(
+    @Args('itemId', { type: () => ID }) itemId: string,
+    @Args('file', { type: () => InventoryImageUploadRequest }) file: InventoryImageUploadRequest
+  ): Promise<InventoryImageUpload> {
+    this.logger.log(`createInventoryImageUploadUrl called for itemId=${itemId}, file=${file.filename}`);
+    return this.inventoryImageService.createPresignedUpload({
+      itemId,
+      filename: file.filename,
+      contentType: file.contentType,
+      size: file.size
+    });
+  }
+
+  @ResolveField(() => String, { nullable: true, description: 'Temporary pre-signed download URL for the equipment image.' })
+  async imageUrl(@Parent() item: InventoryItem): Promise<string | null> {
+    if (!item.imageKey) return null;
+    return this.inventoryImageService.createPresignedDownload(item.imageKey);
   }
 }
