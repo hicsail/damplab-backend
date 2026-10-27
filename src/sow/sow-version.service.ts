@@ -90,11 +90,16 @@ export class SowVersionService {
    * Start. A period is stored as a start and a day count, so "ends before it
    * starts" is a count under one. Legacy 0-day periods are normalised to 1 by the
    * editor on load, so re-saving an old draft still passes.
+   *
+   * The refusal names the period by its 1-based position, and by its label too
+   * when it has one: seeded Equipment Use periods often share a label, so the
+   * label alone would not say which one.
    */
   static assertPeriodsValid(periods: ReadonlyArray<{ durationDays: number; label?: string | null }>): void {
     periods.forEach((p, i) => {
       if (!(Number(p.durationDays) >= 1)) {
-        const name = (p.label ?? '').trim() || `Period ${i + 1}`;
+        const label = (p.label ?? '').trim();
+        const name = label ? `Period ${i + 1} (${label})` : `Period ${i + 1}`;
         throw new BadRequestException(`${name} ends before it starts.`);
       }
     });

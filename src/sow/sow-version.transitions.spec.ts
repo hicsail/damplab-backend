@@ -444,12 +444,12 @@ describe('saveVersion', () => {
     expect(sow.currentVersionNumber).toBe(1);
   });
 
-  it('names a labelled period by its label', async () => {
+  it('names a labelled period by its position and label', async () => {
     const { service } = makeHarness();
     const input = saveInput(1);
     input.inputs.periods = [{ startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: -3, label: 'Confocal' }];
 
-    await expect(service.saveVersion(SOW_ID, input, staff)).rejects.toThrow('Confocal ends before it starts.');
+    await expect(service.saveVersion(SOW_ID, input, staff)).rejects.toThrow('Period 1 (Confocal) ends before it starts.');
   });
 
   it('accepts a one-day period', async () => {
