@@ -50,8 +50,8 @@ describe('toICalendar', () => {
   });
 
   it('escapes backslash, semicolon, comma and newlines', () => {
-    expect(escapeText('a\\b;c,d\ne\r\nf')).toBe('a\\\\b;c\\,d\\ne\\nf');
-    expect(unfold(toICalendar([ev({ summary: 'PCR; rack 2, left' })]))).toContain('SUMMARY:PCR; rack 2\\, left\r\n');
+    expect(escapeText('a\\b;c,d\ne\r\nf')).toBe('a\\\\b\\;c\\,d\\ne\\nf');
+    expect(unfold(toICalendar([ev({ summary: 'PCR; rack 2, left' })]))).toContain('SUMMARY:PCR\\; rack 2\\, left\r\n');
   });
 });
 
