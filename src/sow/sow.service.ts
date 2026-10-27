@@ -10,7 +10,8 @@ import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCostBreakdown, equipmentLineDescription, extractRunCount, splitContractedLines, sumLineCosts, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
 import { SowVersionInputs, SowPeriod } from './sow-version.model';
-import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-field-calculator';
+import { labCalendarDay, adjustmentAmount, adjustmentMultiplier, periodOfPerformanceSpan } from './sow-field-calculator';
+import { equipmentSeedPeriods } from './sow-equipment-seed';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
 
@@ -501,9 +502,6 @@ export class SOWService {
     await this.sowModel.findByIdAndUpdate(sowId, { $set }).exec();
   }
 
-  /** Default project length when nothing better is known; staff edit it in the editor. */
-  private static readonly DEFAULT_DURATION_DAYS = 14;
-
   /**
    * Opening scope-of-work lines: one per distinct service on the job.
    *
@@ -557,7 +555,8 @@ export class SOWService {
    *
    * Idempotent: a job that already has a SOW gets that SOW back rather than an
    * error, so a double click cannot produce a failure the staff member has to
-   * interpret.
+   * interpret. The first draft's periods come from the job's Equipment Use dates
+   * (`equipmentSeedPeriods`); an existing SOW is returned untouched.
    *
    * `services` comes from the caller because walking the job's workflows down to
    * their nodes belongs to the workflow layer, not here. Each entry must carry the
@@ -577,12 +576,14 @@ export class SOWService {
       throw new BadRequestException('This job has no services yet, so there is nothing to put in a Statement of Work. Add a workflow to the job first.');
     }
 
-    // A calendar day, not the moment of creation: this seeds period 1, and a
-    // raw instant would put a SOW created in the Boston evening on tomorrow's
-    // date in its own Period of Performance.
-    const startDate = labCalendarDay();
-    const endDate = new Date(startDate);
-    endDate.setUTCDate(endDate.getUTCDate() + SOWService.DEFAULT_DURATION_DAYS);
+    // The opening Period of Performance: the client's own Equipment Use dates
+    // when the job has any, otherwise today for 14 days. `today` is a calendar
+    // day, not the moment of creation — a raw instant would put a SOW created in
+    // the Boston evening on tomorrow's date.
+    const periods = equipmentSeedPeriods(services, labCalendarDay());
+    // Never null: equipmentSeedPeriods always returns at least one period. The
+    // span is inclusive, so the end date is the last day of work (F1).
+    const span = periodOfPerformanceSpan(periods)!;
 
     const input: CreateSOWInput = {
       jobId,
@@ -603,7 +604,7 @@ export class SOWService {
       scopeOfWork: SOWService.buildScopeOfWork(services),
       deliverables: await this.buildDeliverables(services),
       services,
-      timeline: { startDate, endDate, duration: `${SOWService.DEFAULT_DURATION_DAYS} days` },
+      timeline: { startDate: span.start, endDate: span.end, duration: `${span.days} days` },
       resources: { projectManager: '', projectLead: '' },
       // baseCost and totalCost are left out on purpose: `create` computes both from
       // the service records and only validates figures the caller actually supplied.
@@ -614,7 +615,7 @@ export class SOWService {
     };
 
     try {
-      return await this.create(input);
+      return await this.create(input, { periods });
     } catch (error) {
       // Two clicks on Generate race the `findOne` at the top of this method:
       // both see no SOW, both build one, and the unique index on jobId lets
