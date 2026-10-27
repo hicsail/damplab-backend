@@ -1,6 +1,7 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { CustomerCategory } from '../../job/job.model';
 import { AccessTier } from '../../auth/roles/access-tiers';
+import { CustomerProfile } from '../../customer-profile/customer-profile.model';
 
 @ObjectType({
   description:
@@ -47,4 +48,12 @@ export class KeycloakUserCustomerManagement {
       'False when the access group was written but the realm role it is meant to map to is absent from the user. The guard reads realm roles, not groups, so an unmapped group grants nothing — this reports that rather than letting the change look successful. Only populated on the row returned by setUserKeycloakAccessTier; null elsewhere, because checking it per row would double the Admin API calls a list page makes.'
   })
   accessRoleMapped?: boolean;
+
+  /**
+   * Pre-attached by the list and search queries (one `$in` lookup per page). Exposed in
+   * GraphQL by `CustomerProfileResolver.profile`, which looks it up when absent, so the
+   * set-category / set-tier mutation rows carry it too. No `@Field` here, so the field is
+   * declared once.
+   */
+  profile?: CustomerProfile;
 }
