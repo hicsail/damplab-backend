@@ -32,6 +32,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { AgentModule } from './agent/agent.module';
 import { ProtocolsModule } from './protocols/protocols.module';
 import { BookingModule } from './booking/booking.module';
+import { CalendarFeedModule } from './calendar-feed/calendar-feed.module';
 import { UsageBillingModule } from './usage-billing/usage-billing.module';
 import { ApiKeyModule } from './api-key/api-key.module';
 import { StationModule } from './station/station.module';
@@ -93,6 +94,7 @@ import { AclidModule } from './aclid/aclid.module';
     AgentModule,
     ProtocolsModule,
     BookingModule,
+    CalendarFeedModule,
     UsageBillingModule,
     ApiKeyModule,
     StationModule,

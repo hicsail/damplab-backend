@@ -115,6 +115,8 @@ export default (): any => ({
     logOnly: process.env.NOTIFICATION_LOG_ONLY || 'false',
     appBaseUrl: process.env.APP_BASE_URL || 'https://damplab-canvas.sail.codes'
   },
+  /** The public origin calendar apps fetch the booking feed from. Unset → taken from the request (x-forwarded-proto/host, then Host). */
+  calendar: { feedBaseUrl: process.env.CALENDAR_FEED_BASE_URL },
   /** Agents: backend proxies chat to n8n webhooks. One entry per agent. */
   agent: {
     /** Canvas workflow-builder agent (catalog injected). */

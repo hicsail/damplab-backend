@@ -16,6 +16,7 @@ import { WorkflowNodeResolver } from '../../workflow/resolvers/node.resolver';
 import { SampleSheetResolver } from '../../workflow/resolvers/sample-sheet.resolver';
 import { InventoryResolver } from '../../inventory/inventory.resolver';
 import { BookingResolver } from '../../booking/booking.resolver';
+import { CalendarFeedResolver } from '../../calendar-feed/calendar-feed.resolver';
 import { DampLabServicesResolver } from '../../services/damplab-services.resolver';
 import { BundlesResolver } from '../../bundles/bundles.resolver';
 import { CategoryResolver } from '../../categories/categories.resolver';
@@ -152,6 +153,10 @@ const GATES: Row[] = [
   [WorkflowNodeResolver, 'inventoryAvailability', Permission.InventoryRead],
   [InventoryResolver, 'inventoryItems', Permission.InventoryRead],
   [BookingResolver, 'bookings', Permission.InventoryRead],
+  // The calendar subscription link (booking-calendar). The link itself is the
+  // feed's only gate; minting one is the page's permission.
+  [CalendarFeedResolver, 'calendarFeed', Permission.InventorySchedule],
+  [CalendarFeedResolver, 'resetCalendarFeed', Permission.InventorySchedule],
   [InventoryResolver, 'createInventoryItem', Permission.InventoryWrite],
   [InventoryResolver, 'updateInventoryItem', Permission.InventoryWrite],
   [InventoryResolver, 'deleteInventoryItem', Permission.InventoryWrite],
