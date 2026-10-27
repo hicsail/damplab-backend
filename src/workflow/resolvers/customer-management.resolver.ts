@@ -104,6 +104,12 @@ export class CustomerManagementResolver {
 
     const safeOffset = Math.max(offset ?? 0, 0);
     const safeLimit = Math.min(Math.max(limit, 1), 100);
+    if (category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT) {
+      // The default-external filter runs after Keycloak's paging, so a Keycloak-side page comes back
+      // short. Collect the whole filtered category and slice it, so pages are full and hasNextPage exact.
+      const all = await this.fetchAll(category);
+      return { items: await this.withProfiles(all.slice(safeOffset, safeOffset + safeLimit)), hasNextPage: safeOffset + safeLimit < all.length };
+    }
     // Fetch one extra row to determine hasNextPage.
     const rows = this.narrow(category, await this.fetchPage(category, safeOffset, safeLimit + 1));
     return { items: await this.withProfiles(rows.slice(0, safeLimit)), hasNextPage: rows.length > safeLimit };

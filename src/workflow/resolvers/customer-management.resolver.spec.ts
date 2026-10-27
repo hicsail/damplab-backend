@@ -58,6 +58,21 @@ describe('listKeycloakUsersForCustomerManagement', () => {
     expect(out.hasNextPage).toBe(true);
     expect(out.items[0].profile).toBeDefined();
   });
+
+  it('pages the default-external category from the filtered whole, so pages are full and hasNextPage is exact', async () => {
+    // 300 members, every other one a default external: 150 qualify.
+    const { resolver } = build(rowsOf(300, (i) => ({ isDefaultExternalCustomer: i % 2 === 0 })));
+    const cat = CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT;
+    const first = await resolver.listKeycloakUsersForCustomerManagement(cat, 0, 100);
+    expect(first.items).toHaveLength(100);
+    expect(first.hasNextPage).toBe(true);
+    const last = await resolver.listKeycloakUsersForCustomerManagement(cat, 100, 100);
+    expect(last.items).toHaveLength(50);
+    expect(last.hasNextPage).toBe(false);
+    const exact = await resolver.listKeycloakUsersForCustomerManagement(cat, 50, 100);
+    expect(exact.items).toHaveLength(100);
+    expect(exact.hasNextPage).toBe(false);
+  });
 });
 
 describe('searchKeycloakUsersForCustomerManagement', () => {
