@@ -56,4 +56,42 @@ describe('log-only notifications (local testing)', () => {
     expect(lines).toContain('[notifications] EQUIPMENT_BOOKING_REQUESTED: no email for lead-sub — no address known');
     expect(emailService.send).not.toHaveBeenCalled();
   });
+
+  it('lists each add-to-calendar link in a logged email, and nothing extra without them', () => {
+    const links = [
+      { label: 'Add to Google Calendar', url: 'https://g.test/x' },
+      { label: 'Add to Outlook', url: 'https://o.test/y' }
+    ];
+    expect(formatEmailForLog({ to: 'c@bu.edu', subject: 's', message: 'm', linkUrl: 'http://l', calendarLinks: links })).toBe(
+      [
+        '[notifications] email (not sent — log-only) to=c@bu.edu',
+        '  subject: s',
+        '  link:    http://l',
+        '  body:    m',
+        '  calendar: Add to Google Calendar — https://g.test/x',
+        '  calendar: Add to Outlook — https://o.test/y'
+      ].join('\n')
+    );
+    expect(formatEmailForLog({ to: 'c@bu.edu', subject: 's', message: 'm', linkUrl: 'http://l', calendarLinks: [] })).toBe(
+      formatEmailForLog({ to: 'c@bu.edu', subject: 's', message: 'm', linkUrl: 'http://l' })
+    );
+  });
+
+  it('logs the calendar links of an email it does not send', () => {
+    const svc = new NotificationEmailService(config({ 'notifications.logOnly': 'true', 'notifications.appBaseUrl': 'http://localhost:5173' }) as any);
+    const log = jest.spyOn((svc as any).logger, 'log').mockImplementation(() => undefined);
+    svc.send({
+      to: 'c@bu.edu',
+      subject: 's',
+      title: 't',
+      message: 'm',
+      link: '/client_view/job-1',
+      calendarLinks: [
+        { label: 'Add to Google Calendar', url: 'https://g.test/x' },
+        { label: 'Add to Outlook', url: 'https://o.test/y' }
+      ]
+    });
+    expect(log.mock.calls[0][0]).toContain('https://g.test/x');
+    expect(log.mock.calls[0][0]).toContain('https://o.test/y');
+  });
 });
