@@ -428,6 +428,40 @@ describe('saveVersion', () => {
     await expect(service.saveVersion(SOW_ID, saveInput(1, '   '), staff)).rejects.toThrow(BadRequestException);
   });
 
+  it('refuses a period that ends before it starts, naming it, and writes nothing', async () => {
+    // The server twin of the editor's End picker, which cannot pick an End
+    // before Start. Checked before any billing write, so nothing is left behind.
+    const { service, versions, sow } = makeHarness();
+    const before = versions.length;
+    const input = saveInput(1);
+    input.inputs.periods = [
+      { startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: 14 },
+      { startDate: new Date('2026-11-20T00:00:00.000Z'), durationDays: 0 }
+    ];
+
+    await expect(service.saveVersion(SOW_ID, input, staff)).rejects.toThrow(new BadRequestException('Period 2 ends before it starts.'));
+    expect(versions).toHaveLength(before);
+    expect(sow.currentVersionNumber).toBe(1);
+  });
+
+  it('names a labelled period by its label', async () => {
+    const { service } = makeHarness();
+    const input = saveInput(1);
+    input.inputs.periods = [{ startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: -3, label: 'Confocal' }];
+
+    await expect(service.saveVersion(SOW_ID, input, staff)).rejects.toThrow('Confocal ends before it starts.');
+  });
+
+  it('accepts a one-day period', async () => {
+    const { service } = makeHarness();
+    const input = saveInput(1);
+    input.inputs.periods = [{ startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: 1 }];
+
+    const saved = await service.saveVersion(SOW_ID, input, staff);
+
+    expect(saved.inputs.periods[0].durationDays).toBe(1);
+  });
+
   it('still lets the canned event versions through without an author note', async () => {
     // sendToCustomer/sign/finalize write via appendVersion, not the save input,
     // so requiring a note on saves must not reach them.

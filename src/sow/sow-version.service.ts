@@ -86,6 +86,21 @@ export class SowVersionService {
   }
 
   /**
+   * The server twin of the editor's End picker, which cannot pick an End before
+   * Start. A period is stored as a start and a day count, so "ends before it
+   * starts" is a count under one. Legacy 0-day periods are normalised to 1 by the
+   * editor on load, so re-saving an old draft still passes.
+   */
+  static assertPeriodsValid(periods: ReadonlyArray<{ durationDays: number; label?: string | null }>): void {
+    periods.forEach((p, i) => {
+      if (!(Number(p.durationDays) >= 1)) {
+        const name = (p.label ?? '').trim() || `Period ${i + 1}`;
+        throw new BadRequestException(`${name} ends before it starts.`);
+      }
+    });
+  }
+
+  /**
    * The structured drivers behind a SOW's document, read off the SOW itself.
    * Used to seed version 1 and, on later saves, as the baseline the editor loads.
    *
@@ -722,6 +737,8 @@ export class SowVersionService {
     // whitespace-only one, which would satisfy the type and tell a reader nothing.
     const note = input.note?.trim();
     if (!note) throw new BadRequestException('Describe what you changed before saving.');
+    // Before any write below: a refused save must not leave billing edits behind.
+    SowVersionService.assertPeriodsValid(input.inputs.periods ?? []);
 
     // Adjustments first: the fee schedule text is generated from the billing
     // core, so they have to be written before the document is composed or the
