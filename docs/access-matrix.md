@@ -179,3 +179,19 @@ the homepage button, `AppBreadcrumbs`' `STATIC` map, and the page's own heading.
 | `createJob` | refuses a node whose operation is hidden from clients unless the caller holds `catalog-editor:read` |
 | `createJob` | refuses, for every caller, a number that breaks its parameter's validation and an "Other" answer with blank text (op-catalog-enhances) |
 | `saveJobWorkflows` | when the caller writes as a customer (no `damplab-staff` role): refuses a number that save changes to a value breaking its parameter's validation, and an "Other" answer that save leaves with blank text. Unchanged answers are not checked; staff saves and `restoreJobVersion` are not checked (op-catalog-enhances) |
+
+## Calendar feed (booking-calendar)
+
+| Operation | Gate | Admits |
+|---|---|---|
+| `calendarFeed` | `inventory:schedule` | Administrator, Technician, Equipment User |
+| `resetCalendarFeed` | `inventory:schedule` | Administrator, Technician, Equipment User |
+| `GET /api/calendar/bookings/:token.ics` | `@Public()`; a live token is the gate | whoever holds a URL |
+
+**The one booking read outside the guard.** Calendar apps fetch the feed without a
+session, so the only gate is the per-user secret token in the URL (32 random bytes,
+reset from the Inventory Schedule dialog). What it can expose is limited to **item
+name and time**: the feed carries `UID`, `DTSTAMP`, `DTSTART`, `DTEND`, `SUMMARY`
+(item name), `STATUS` and `TRANSP`, and never an owner, job, note, institution or
+price. Both GraphQL operations act only on the caller's own token. A token keeps
+working after its owner loses `inventory:schedule`; there is no administrator revoke yet.

@@ -88,3 +88,8 @@ delete process.env.DISABLE_AUTH;
 process.env.KEYCLOAK_SERVER_URL = '';
 process.env.KEYCLOAK_CLIENT_ID = '';
 process.env.KEYCLOAK_CLIENT_SECRET = '';
+
+// The feed URL's origin comes from the request Host, and supertest binds every request to a fresh
+// ephemeral port, so two calls would return different origins for the same token. Pin it (assigned,
+// not deleted, so a developer's .env cannot put its own back).
+process.env.CALENDAR_FEED_BASE_URL = 'http://feed.test';
