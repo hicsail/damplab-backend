@@ -12,4 +12,8 @@ describe('notificationLink', () => {
     expect(notificationLink('UNKNOWN', 'job-1')).toBe('/client_view/job-1');
     expect(notificationLink('JOB_SUBMITTED')).toBeUndefined();
   });
+
+  it('links the approval-free booking notice to the staff job page, since only staff receive it', () => {
+    expect(notificationLink('EQUIPMENT_BOOKING_BOOKED', 'job-1')).toBe('/technician_view/job-1');
+  });
 });

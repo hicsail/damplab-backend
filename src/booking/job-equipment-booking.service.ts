@@ -1,4 +1,3 @@
-import { CustomerProfileService } from '../customer-profile/customer-profile.service';
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException, forwardRef } from '@nestjs/common';
 import { JobService } from '../job/job.service';
 import { SOWService } from '../sow/sow.service';
@@ -18,6 +17,7 @@ import { Booking } from './booking.model';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
 import { isJobMember } from '../job/job-membership';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
+import { CustomerProfileService } from '../customer-profile/customer-profile.service';
 
 /** One equipment-use operation of a job, with everything the panel and the mutations need. */
 export interface LoadedOperation {
@@ -128,6 +128,32 @@ export class JobEquipmentBookingService {
       actorDisplayName: who,
       staffSubs
     });
+  }
+
+  /**
+   * Tell the job's Project Manager and Project Lead (all staff when neither is named)
+   * that a client booked without approval. Nothing to answer; in-app only.
+   */
+  private async notifyBooked(booking: any, job: any, user: User, changed: boolean): Promise<void> {
+    if (!this.notifications) return;
+    const sow: any = await this.sowService.findByJobId(String(job._id)).catch(() => null);
+    const staffSubs = await this.projectStaffSubs(sow);
+    const who = user?.preferred_username || user?.email || 'A client';
+    this.notifications.dispatch({
+      eventType: 'EQUIPMENT_BOOKING_BOOKED',
+      title: changed ? `Booking changed: ${job.name ?? 'job'}` : `Equipment booked: ${job.name ?? 'job'}`,
+      message: `${who} ${changed ? 'moved a booking' : 'booked'} ${this.describe(booking)}.`,
+      jobId: String(job._id),
+      actorSub: user?.sub,
+      actorDisplayName: who,
+      staffSubs
+    });
+  }
+
+  /** Who hears about a create or change: a request for approval, an approval-free notice, or — for staff — nobody. */
+  private async notifyAfterWrite(booking: any, job: any, user: User, requiresApproval: boolean, changed: boolean): Promise<void> {
+    if (requiresApproval) return this.notifyRequested(booking, job, user, changed);
+    if (!hasPermission(user, Permission.JobsViewAll)) return this.notifyBooked(booking, job, user, changed);
   }
 
   /** Approve a tentative booking: it becomes RESERVED, and the client is told. Administrators only (resolver gate). */
@@ -283,7 +309,7 @@ export class JobEquipmentBookingService {
       actor: this.actorIdentity(user),
       requiresApproval
     });
-    if (requiresApproval) await this.notifyRequested(created, job, user, false);
+    await this.notifyAfterWrite(created, job, user, requiresApproval, false);
     return created;
   }
 
@@ -294,7 +320,7 @@ export class JobEquipmentBookingService {
     const { job } = await this.authorize(String(existing.jobId), String(existing.nodeId), user);
     const requiresApproval = await this.requiresApproval(user);
     const updated = await this.bookings.updateForJob(id, { startTime: input.startTime, endTime: input.endTime, notes: input.notes, reason: input.reason }, this.actorIdentity(user), requiresApproval);
-    if (requiresApproval) await this.notifyRequested(updated, job, user, true);
+    await this.notifyAfterWrite(updated, job, user, requiresApproval, true);
     return updated;
   }
 

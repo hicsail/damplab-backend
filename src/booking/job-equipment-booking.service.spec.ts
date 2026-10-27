@@ -514,6 +514,31 @@ describe('client bookings wait on the lab (tentative)', () => {
     expect(dispatch.mock.calls[0][0].title).toMatch(/change/i);
   });
 
+  it('tells the job’s PM and PL that a flagged client booked, with nothing to approve (rule 7)', async () => {
+    const { svc, dispatch } = buildWith({ trusted: ['creator-sub'] });
+    await svc.create(input, bookerUser());
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(dispatch.mock.calls[0][0]).toMatchObject({ eventType: 'EQUIPMENT_BOOKING_BOOKED', jobId: 'job-1', actorSub: 'creator-sub', staffSubs: ['pm-sub', 'lead-sub'] });
+    expect(dispatch.mock.calls[0][0].message).toContain('booked Bioanalyzer · Jan 6, 10:00 AM – Jan 6, 12:00 PM');
+    expect(dispatch.mock.calls[0][0].message).not.toMatch(/approv/i);
+  });
+
+  it('says it was a move when a flagged client changes a booking', async () => {
+    const { svc, dispatch } = buildWith({ trusted: ['creator-sub'] });
+    await svc.update('bk-1', { ...slot, reason: 'Sample late' } as any, bookerUser());
+    expect(dispatch.mock.calls[0][0]).toMatchObject({ eventType: 'EQUIPMENT_BOOKING_BOOKED' });
+    expect(dispatch.mock.calls[0][0].message).toContain('moved a booking');
+  });
+
+  it('sends nothing for a staff booking (rule 1)', async () => {
+    const dispatch = jest.fn();
+    const { svc } = buildWith({ dispatch });
+    // A staff caller takes the read-only STAFF verdict branch and cannot pass authorize()
+    // in this fixture, so pin the branch on the helper create() and update() both call.
+    await (svc as any).notifyAfterWrite({ inventoryName: 'Bioanalyzer' }, { _id: 'job-1', name: 'J' }, user({ sub: 'staff-sub', realm_access: { roles: ['damplab-staff'] } }), false, false);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('lets lab staff book without approval, flag or not (rule 1)', async () => {
     const { svc } = buildWith();
     expect(await svc.requiresApproval(user({ realm_access: { roles: ['technician'] } }))).toBe(false);
