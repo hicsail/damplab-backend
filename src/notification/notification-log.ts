@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { CalendarLink } from './calendar-links';
 
 /**
  * Log-only notifications, for testing locally.
@@ -21,6 +22,8 @@ export function notificationLogOnly(config?: Pick<ConfigService, 'get'> | null):
 }
 
 /** An email as it would have been sent, as one readable log entry. */
-export function formatEmailForLog(input: { to: string; subject: string; message: string; linkUrl: string }): string {
-  return [`${NOTIFICATION_LOG_TAG} email (not sent — log-only) to=${input.to}`, `  subject: ${input.subject}`, `  link:    ${input.linkUrl}`, `  body:    ${input.message}`].join('\n');
+export function formatEmailForLog(input: { to: string; subject: string; message: string; linkUrl: string; calendarLinks?: CalendarLink[] }): string {
+  const lines = [`${NOTIFICATION_LOG_TAG} email (not sent — log-only) to=${input.to}`, `  subject: ${input.subject}`, `  link:    ${input.linkUrl}`, `  body:    ${input.message}`];
+  if (input.calendarLinks?.length) for (const l of input.calendarLinks) lines.push(`  calendar: ${l.label} — ${l.url}`);
+  return lines.join('\n');
 }

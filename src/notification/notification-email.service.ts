@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { CalendarLink } from './calendar-links';
 import { formatEmailForLog, notificationLogOnly } from './notification-log';
 
 export interface SendEmailInput {
@@ -8,6 +9,7 @@ export interface SendEmailInput {
   title: string;
   message: string;
   link?: string;
+  calendarLinks?: CalendarLink[];
 }
 
 @Injectable()
@@ -36,7 +38,7 @@ export class NotificationEmailService {
     // Ahead of the enabled check: locally email is off, and the point is to see
     // what would have gone out.
     if (this.logOnly) {
-      this.logger.log(formatEmailForLog({ to: input.to, subject: input.subject, message: input.message, linkUrl: this.linkUrl(input.link) }));
+      this.logger.log(formatEmailForLog({ to: input.to, subject: input.subject, message: input.message, linkUrl: this.linkUrl(input.link), calendarLinks: input.calendarLinks }));
       return;
     }
     if (!this.enabled) return;
@@ -87,6 +89,11 @@ export class NotificationEmailService {
 
   private buildHtml(input: SendEmailInput): string {
     const linkUrl = this.linkUrl(input.link);
+    const calendarBlock = input.calendarLinks?.length
+      ? `\n  <p style="margin: 0 0 24px; line-height: 1.6;">${input.calendarLinks
+          .map((l) => `<a href="${this.escapeHtml(l.url)}" style="color: #1565c0;">${this.escapeHtml(l.label)}</a>`)
+          .join('&nbsp;·&nbsp;')}</p>`
+      : '';
     return `
 <!DOCTYPE html>
 <html>
@@ -96,7 +103,7 @@ export class NotificationEmailService {
     <h2 style="margin: 0; color: #1565c0;">DampLab</h2>
   </div>
   <h3 style="margin: 0 0 8px;">${this.escapeHtml(input.title)}</h3>
-  <p style="margin: 0 0 24px; line-height: 1.6;">${this.escapeHtml(input.message)}</p>
+  <p style="margin: 0 0 24px; line-height: 1.6;">${this.escapeHtml(input.message)}</p>${calendarBlock}
   <a href="${this.escapeHtml(
     linkUrl
   )}" style="display: inline-block; padding: 12px 24px; background: #1565c0; color: #fff; text-decoration: none; border-radius: 4px; font-weight: 500;">View in DampLab</a>

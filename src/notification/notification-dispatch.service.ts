@@ -1,6 +1,7 @@
 import { Injectable, Logger, Inject, Optional, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NOTIFICATION_LOG_TAG, notificationLogOnly } from './notification-log';
+import { CalendarEventInput, calendarLinks } from './calendar-links';
 import { NotificationService } from './notification.service';
 import { NotificationEmailService } from './notification-email.service';
 import { NotificationEntity } from './notification.model';
@@ -21,6 +22,8 @@ export interface DispatchInput {
   operationId?: string;
   /** Keycloak subs for RecipientRole.NAMED_STAFF. Empty or absent → every staff member. */
   staffSubs?: string[];
+  /** Email only: adds Add to Google Calendar / Add to Outlook links. In-app notifications ignore it. */
+  calendarEvent?: CalendarEventInput;
 }
 
 interface Recipient {
@@ -141,7 +144,8 @@ export class NotificationDispatchService {
                   subject: `[DampLab] ${input.title}`,
                   title: input.title,
                   message: input.message,
-                  link
+                  link,
+                  ...(input.calendarEvent ? { calendarLinks: calendarLinks(input.calendarEvent) } : {})
                 });
                 // Mark the notification doc as email-sent.
                 if (notificationDoc?._id) {
