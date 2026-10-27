@@ -530,11 +530,33 @@ describe('client bookings wait on the lab (tentative)', () => {
     expect(dispatch.mock.calls[0][0].message).toContain('moved a booking');
   });
 
+  it('asks for approval, not "Booking changed", when a flagged client moves a still-TENTATIVE booking', async () => {
+    const dispatch = jest.fn();
+    const updateForJob = jest.fn(async (_id: string, c: any): Promise<any> => ({ _id: 'bk-1', jobId: 'job-1', inventoryName: 'Bioanalyzer', ...c, status: 'TENTATIVE' }));
+    const bookings = { updateForJob, findById: async (): Promise<any> => ({ _id: 'bk-1', jobId: 'job-1', nodeId: 'node-a' }), findByJob: async (): Promise<any[]> => [] };
+    const { svc } = buildWith({ trusted: ['creator-sub'], dispatch, bookings });
+    await svc.update('bk-1', { ...slot, reason: 'Sample late' } as any, bookerUser());
+    const types = dispatch.mock.calls.map((c) => c[0].eventType);
+    expect(types).toEqual(['EQUIPMENT_BOOKING_REQUESTED']);
+    expect(dispatch.mock.calls[0][0].title).toMatch(/awaiting approval/i);
+  });
+
+  it('refuses a staff caller on create and update, and sends nothing (rule 1)', async () => {
+    const dispatch = jest.fn();
+    const { svc, createForJob, updateForJob } = buildWith({ dispatch });
+    const staff = user({ sub: 'staff-sub', realm_access: { roles: ['damplab-staff'] } });
+    await expect(svc.create(input, staff)).rejects.toThrow();
+    await expect(svc.update('bk-1', { ...slot, reason: 'x' } as any, staff)).rejects.toThrow();
+    expect(createForJob).not.toHaveBeenCalled();
+    expect(updateForJob).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it('sends nothing for a staff booking (rule 1)', async () => {
     const dispatch = jest.fn();
     const { svc } = buildWith({ dispatch });
-    // A staff caller takes the read-only STAFF verdict branch and cannot pass authorize()
-    // in this fixture, so pin the branch on the helper create() and update() both call.
+    // No staff caller can pass authorize() (jobs:view-all gets canBook false, so create/update
+    // 403 first; see the public-path test above). This pins the helper's own staff branch.
     await (svc as any).notifyAfterWrite({ inventoryName: 'Bioanalyzer' }, { _id: 'job-1', name: 'J' }, user({ sub: 'staff-sub', realm_access: { roles: ['damplab-staff'] } }), false, false);
     expect(dispatch).not.toHaveBeenCalled();
   });

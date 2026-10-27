@@ -13,7 +13,7 @@ import { User } from '../auth/user.interface';
 import { EquipmentWindow, readEquipmentHoursPerWeek, readEquipmentWindow } from './equipment-window';
 import { AccessActor, JobBookingAccessStatus, JobBookingAccessVerdict, resolveJobEquipmentBookingAccess } from './job-equipment-booking-access';
 import { JobBookingItem, JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
-import { Booking } from './booking.model';
+import { Booking, BookingStatus } from './booking.model';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
 import { isJobMember } from '../job/job-membership';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
@@ -320,7 +320,9 @@ export class JobEquipmentBookingService {
     const { job } = await this.authorize(String(existing.jobId), String(existing.nodeId), user);
     const requiresApproval = await this.requiresApproval(user);
     const updated = await this.bookings.updateForJob(id, { startTime: input.startTime, endTime: input.endTime, notes: input.notes, reason: input.reason }, this.actorIdentity(user), requiresApproval);
-    await this.notifyAfterWrite(updated, job, user, requiresApproval, true);
+    // A move of a still-TENTATIVE booking is still waiting on the lab, whoever moved it: ask, don't announce.
+    if ((updated as any)?.status === BookingStatus.TENTATIVE) await this.notifyRequested(updated, job, user, true);
+    else await this.notifyAfterWrite(updated, job, user, requiresApproval, true);
     return updated;
   }
 
