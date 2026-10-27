@@ -394,13 +394,16 @@ export class SowVersionService {
     sow: SOW,
     job: { customerCategory?: string; jobId?: string; name?: string } | null,
     createdBy: string,
-    opts: { fields?: SowField[]; status?: SOWStatus; visibleToCustomer?: boolean; note?: string } = {}
+    opts: { fields?: SowField[]; status?: SOWStatus; visibleToCustomer?: boolean; note?: string; periods?: SowPeriod[] } = {}
   ): Promise<SowVersionDocument> {
     const sowId = String((sow as any)._id);
     const existing = await this.getCurrentVersion(sowId);
     if (existing) return existing;
 
-    const inputs = SowVersionService.deriveInputs(sow, job);
+    const derived = SowVersionService.deriveInputs(sow, job);
+    // createForJob seeds the first draft's periods from the job's Equipment Use
+    // dates. Everything else still comes from the SOW itself.
+    const inputs: SowVersionInputs = opts.periods ? { ...derived, periods: opts.periods } : derived;
     const ctx = await this.contextWithPresets(sow, job);
     const fields = opts.fields ?? buildCalculatedFields(inputs, ctx);
     const status = opts.status ?? SOWStatus.DRAFT;

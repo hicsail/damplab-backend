@@ -333,6 +333,33 @@ describe('saveVersion', () => {
     expect((created as any).sourceJobVersionNumber).toBeUndefined();
   });
 
+  it('writes the periods it is given into the first version and its prose', async () => {
+    // createForJob seeds these from the job's Equipment Use dates; the prose has
+    // to describe them, not the single timeline-derived period.
+    const { service, sow, versions, job } = makeHarness();
+    versions.splice(0);
+    const periods = [
+      { startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: 5, label: 'Confocal' },
+      { startDate: new Date('2026-11-20T00:00:00.000Z'), durationDays: 5, label: 'Flow cytometer' }
+    ];
+
+    const created: any = await service.createInitialVersion(sow, job, staff.sub, { periods });
+
+    expect(created.inputs.periods).toEqual(periods);
+    const prose = created.fields.find((f: any) => f.key === 'periodOfPerformance').value;
+    expect(prose).toContain('Confocal: 5 days, from November 2, 2026 through November 6, 2026');
+    expect(prose).toContain('Flow cytometer: 5 days, from November 20, 2026 through November 24, 2026');
+  });
+
+  it('still derives one period from the timeline when given none', async () => {
+    const { service, sow, versions, job } = makeHarness();
+    versions.splice(0);
+
+    const created: any = await service.createInitialVersion(sow, job, staff.sub);
+
+    expect(created.inputs.periods).toEqual([{ startDate: new Date('2026-03-03T00:00:00.000Z'), durationDays: 14, label: undefined }]);
+  });
+
   it('appends a draft and advances the staff pointer only', async () => {
     const { service, sow } = makeHarness();
     const v = await service.saveVersion(SOW_ID, saveInput(1, 'first pass'), staff);

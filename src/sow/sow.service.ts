@@ -9,7 +9,7 @@ import { Job } from '../job/job.model';
 import { DampLabServices } from '../services/damplab-services.services';
 import { calculateServiceCostBreakdown, equipmentLineDescription, extractRunCount, splitContractedLines, sumLineCosts, CustomerCategory } from '../pricing/service-pricing.util';
 import { SowVersionService } from './sow-version.service';
-import { SowVersionInputs } from './sow-version.model';
+import { SowVersionInputs, SowPeriod } from './sow-version.model';
 import { labCalendarDay, adjustmentAmount, adjustmentMultiplier } from './sow-field-calculator';
 import { WorkflowService } from '../workflow/workflow.service';
 import { WorkflowNodeService } from '../workflow/services/node.service';
@@ -630,7 +630,7 @@ export class SOWService {
   /**
    * Create a new SOW
    */
-  async create(createSOWInput: CreateSOWInput): Promise<SOW> {
+  async create(createSOWInput: CreateSOWInput, opts: { periods?: SowPeriod[] } = {}): Promise<SOW> {
     // Validate job exists
     const job = await this.jobService.findById(createSOWInput.jobId);
     if (!job) {
@@ -722,7 +722,7 @@ export class SOWService {
     // customer view never have to cope with a SOW that has no version. Nothing
     // above this line writes anything, so a create that lost either race leaves
     // no half-built SOW behind.
-    await this.sowVersionService.createInitialVersion(sow, job as any, createSOWInput.createdBy);
+    await this.sowVersionService.createInitialVersion(sow, job as any, createSOWInput.createdBy, { periods: opts.periods });
     // Re-read: creating the version sets the version pointers with a separate
     // update, so the document created above still reports currentVersionNumber 0.
     return (await this.sowModel.findById(sow._id).exec()) ?? sow;
