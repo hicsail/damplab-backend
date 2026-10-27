@@ -529,6 +529,42 @@ describe('client bookings wait on the lab (tentative)', () => {
     expect(dispatch.mock.calls.map((c) => c[0].eventType)).toEqual(['EQUIPMENT_BOOKING_APPROVED', 'EQUIPMENT_BOOKING_DECLINED']);
     expect(dispatch.mock.calls[1][0].message).toContain('Instrument down for service');
   });
+
+  describe('the approval email’s calendar slot', () => {
+    const s = new Date('2026-01-06T15:00:00Z');
+    const e = new Date('2026-01-06T17:00:00Z');
+    const admin = user({ sub: 'admin-sub', realm_access: { roles: ['damplab-staff'] } });
+    const answered = (over: any): jest.Mock => jest.fn(async () => ({ _id: 'bk-1', jobId: 'job-1', kind: 'TIMED', inventoryName: 'Bioanalyzer', startTime: s, endTime: e, ...over }));
+
+    it('hands a timed approval its item and slot, and a decline nothing', async () => {
+      const { svc, dispatch } = buildWith({ bookings: { approve: answered({ status: 'RESERVED' }), decline: answered({ status: 'CANCELLED' }) } });
+      await svc.approve('bk-1', admin);
+      await svc.decline('bk-1', 'Instrument down', admin);
+      expect(dispatch.mock.calls[0][0]).toMatchObject({ eventType: 'EQUIPMENT_BOOKING_APPROVED', calendarEvent: { title: 'Bioanalyzer', start: s, end: e } });
+      expect(dispatch.mock.calls[1][0]).not.toHaveProperty('calendarEvent');
+    });
+
+    it('says Equipment when the booking has no item name', async () => {
+      const { svc, dispatch } = buildWith({ bookings: { approve: answered({ status: 'RESERVED', inventoryName: undefined }) } });
+      await svc.approve('bk-1', admin);
+      expect(dispatch.mock.calls[0][0].calendarEvent.title).toBe('Equipment');
+    });
+
+    it('gives a consumable approval, or one with no slot, no calendar event', async () => {
+      const qty = buildWith({ bookings: { approve: answered({ status: 'RESERVED', kind: 'QUANTITY', startTime: undefined, endTime: undefined }) } });
+      await qty.svc.approve('bk-1', admin);
+      expect(qty.dispatch.mock.calls[0][0]).not.toHaveProperty('calendarEvent');
+      const noSlot = buildWith({ bookings: { approve: answered({ status: 'RESERVED', endTime: undefined }) } });
+      await noSlot.svc.approve('bk-1', admin);
+      expect(noSlot.dispatch.mock.calls[0][0]).not.toHaveProperty('calendarEvent');
+    });
+
+    it('leaves the booking-requested notification without one', async () => {
+      const { svc, dispatch } = buildWith();
+      await svc.create(input, bookerUser());
+      expect(dispatch.mock.calls[0][0]).not.toHaveProperty('calendarEvent');
+    });
+  });
 });
 
 describe('BookingService approval', () => {

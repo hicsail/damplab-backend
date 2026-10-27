@@ -13,7 +13,7 @@ import { User } from '../auth/user.interface';
 import { EquipmentWindow, readEquipmentHoursPerWeek, readEquipmentWindow } from './equipment-window';
 import { AccessActor, JobBookingAccessStatus, JobBookingAccessVerdict, resolveJobEquipmentBookingAccess } from './job-equipment-booking-access';
 import { JobBookingItem, JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
-import { Booking } from './booking.model';
+import { Booking, BookingKind } from './booking.model';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
 import { isJobMember } from '../job/job-membership';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
@@ -132,7 +132,10 @@ export class JobEquipmentBookingService {
       message: `Your booking of ${this.describe(approved)} is approved.`,
       jobId: approved.jobId ? String(approved.jobId) : undefined,
       actorSub: user?.sub,
-      actorDisplayName: this.actorIdentity(user).name
+      actorDisplayName: this.actorIdentity(user).name,
+      ...(approved.kind === BookingKind.TIMED && approved.startTime && approved.endTime
+        ? { calendarEvent: { title: approved.inventoryName || 'Equipment', start: new Date(approved.startTime), end: new Date(approved.endTime) } }
+        : {})
     });
     return approved;
   }
