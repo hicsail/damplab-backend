@@ -1,6 +1,7 @@
 import { Field, ID, ObjectType } from '@nestjs/graphql';
 import { CustomerCategory } from '../../job/job.model';
 import { AccessTier } from '../../auth/roles/access-tiers';
+import { CustomerProfile } from '../../customer-profile/customer-profile.model';
 
 @ObjectType({
   description:
@@ -52,4 +53,12 @@ export class KeycloakUserCustomerManagement {
     description: 'Whether this account sees the Biosecurity block. True when the Keycloak attribute is absent. False only when an admin has hidden it.'
   })
   showBiosecurity: boolean;
+
+  /**
+   * Pre-attached by the list and search queries (one `$in` lookup per page). Exposed in
+   * GraphQL by `CustomerProfileResolver.profile`, which looks it up when absent, so the
+   * set-category / set-tier mutation rows carry it too. No `@Field` here, so the field is
+   * declared once.
+   */
+  profile?: CustomerProfile;
 }

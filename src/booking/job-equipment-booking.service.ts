@@ -13,10 +13,11 @@ import { User } from '../auth/user.interface';
 import { EquipmentWindow, readEquipmentHoursPerWeek, readEquipmentWindow } from './equipment-window';
 import { AccessActor, JobBookingAccessStatus, JobBookingAccessVerdict, resolveJobEquipmentBookingAccess } from './job-equipment-booking-access';
 import { JobBookingItem, JobEquipmentBookingView } from './dtos/job-equipment-booking.types';
-import { Booking } from './booking.model';
+import { Booking, BookingStatus } from './booking.model';
 import { CreateJobEquipmentBookingInput, UpdateJobEquipmentBookingInput } from './dtos/job-equipment-booking.input';
 import { isJobMember } from '../job/job-membership';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
+import { CustomerProfileService } from '../customer-profile/customer-profile.service';
 
 /** One equipment-use operation of a job, with everything the panel and the mutations need. */
 export interface LoadedOperation {
@@ -63,7 +64,8 @@ export class JobEquipmentBookingService {
     private readonly inventory: InventoryService,
     private readonly bookings: BookingService,
     @Inject(forwardRef(() => NotificationDispatchService)) private readonly notifications?: NotificationDispatchService,
-    @Inject(forwardRef(() => SowVersionService)) private readonly sowVersions?: SowVersionService
+    @Inject(forwardRef(() => SowVersionService)) private readonly sowVersions?: SowVersionService,
+    private readonly customerProfiles?: CustomerProfileService
   ) {}
 
   /**
@@ -85,11 +87,16 @@ export class JobEquipmentBookingService {
 
   /**
    * Whether this caller's booking waits on the lab. Lab staff (`jobs:view-all`)
-   * book confirmed; a client's booking, or a client's change to one, holds the
-   * slot as TENTATIVE until an administrator approves it.
+   * book confirmed. So does a client whose Customer Management profile has
+   * `canBookWithoutApproval` — the booker's own flag, read live on every call, so
+   * turning it on or off applies to their next booking with no re-login and never
+   * touches bookings already made. Anyone else's booking, or change to one, holds
+   * the slot as TENTATIVE until an administrator approves it.
    */
-  static requiresApproval(user?: User): boolean {
-    return !hasPermission(user, Permission.JobsViewAll);
+  async requiresApproval(user?: User): Promise<boolean> {
+    if (hasPermission(user, Permission.JobsViewAll)) return false;
+    if (!user?.sub || !this.customerProfiles) return true;
+    return !(await this.customerProfiles.canBookWithoutApproval(user.sub));
   }
 
   private actorIdentity(user?: User): { sub?: string; email?: string; name?: string } {
@@ -121,6 +128,32 @@ export class JobEquipmentBookingService {
       actorDisplayName: who,
       staffSubs
     });
+  }
+
+  /**
+   * Tell the job's Project Manager and Project Lead (all staff when neither is named)
+   * that a client booked without approval. Nothing to answer; in-app only.
+   */
+  private async notifyBooked(booking: any, job: any, user: User, changed: boolean): Promise<void> {
+    if (!this.notifications) return;
+    const sow: any = await this.sowService.findByJobId(String(job._id)).catch(() => null);
+    const staffSubs = await this.projectStaffSubs(sow);
+    const who = user?.preferred_username || user?.email || 'A client';
+    this.notifications.dispatch({
+      eventType: 'EQUIPMENT_BOOKING_BOOKED',
+      title: changed ? `Booking changed: ${job.name ?? 'job'}` : `Equipment booked: ${job.name ?? 'job'}`,
+      message: `${who} ${changed ? 'moved a booking' : 'booked'} ${this.describe(booking)}.`,
+      jobId: String(job._id),
+      actorSub: user?.sub,
+      actorDisplayName: who,
+      staffSubs
+    });
+  }
+
+  /** Who hears about a create or change: a request for approval, an approval-free notice, or — for staff — nobody. */
+  private async notifyAfterWrite(booking: any, job: any, user: User, requiresApproval: boolean, changed: boolean): Promise<void> {
+    if (requiresApproval) return this.notifyRequested(booking, job, user, changed);
+    if (!hasPermission(user, Permission.JobsViewAll)) return this.notifyBooked(booking, job, user, changed);
   }
 
   /** Approve a tentative booking: it becomes RESERVED, and the client is told. Administrators only (resolver gate). */
@@ -263,7 +296,7 @@ export class JobEquipmentBookingService {
     const full = await this.inventory.find(item.id);
     if (!full) throw new NotFoundException('Inventory item not found.');
 
-    const requiresApproval = JobEquipmentBookingService.requiresApproval(user);
+    const requiresApproval = await this.requiresApproval(user);
     const created = await this.bookings.createForJob({
       job,
       nodeId: operation.nodeId,
@@ -276,7 +309,7 @@ export class JobEquipmentBookingService {
       actor: this.actorIdentity(user),
       requiresApproval
     });
-    if (requiresApproval) await this.notifyRequested(created, job, user, false);
+    await this.notifyAfterWrite(created, job, user, requiresApproval, false);
     return created;
   }
 
@@ -285,9 +318,11 @@ export class JobEquipmentBookingService {
     if (!existing) throw new NotFoundException('Booking not found.');
     if (!existing.jobId) throw new BadRequestException('That booking is not attached to a job.');
     const { job } = await this.authorize(String(existing.jobId), String(existing.nodeId), user);
-    const requiresApproval = JobEquipmentBookingService.requiresApproval(user);
+    const requiresApproval = await this.requiresApproval(user);
     const updated = await this.bookings.updateForJob(id, { startTime: input.startTime, endTime: input.endTime, notes: input.notes, reason: input.reason }, this.actorIdentity(user), requiresApproval);
-    if (requiresApproval) await this.notifyRequested(updated, job, user, true);
+    // A move of a still-TENTATIVE booking is still waiting on the lab, whoever moved it: ask, don't announce.
+    if ((updated as any)?.status === BookingStatus.TENTATIVE) await this.notifyRequested(updated, job, user, true);
+    else await this.notifyAfterWrite(updated, job, user, requiresApproval, true);
     return updated;
   }
 
@@ -297,7 +332,7 @@ export class JobEquipmentBookingService {
 
     const operations = await this.loadOperations(job);
     const verdict = await this.verdict(job, user, operations);
-    const access = { status: verdict.status, canBook: verdict.canBook, canBlock: verdict.canBlock, reason: verdict.reason };
+    const access = { status: verdict.status, canBook: verdict.canBook, canBlock: verdict.canBlock, reason: verdict.reason, requiresApproval: await this.requiresApproval(user) };
 
     // A stranger gets the status and nothing else. Anyone on the job — paused,
     // waiting on the SOW, or without the booking permission — still sees the

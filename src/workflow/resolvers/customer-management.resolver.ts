@@ -10,6 +10,7 @@ import { KeycloakService } from '../../keycloak/keycloak.service';
 import { CustomerCategory } from '../../job/job.model';
 import { KeycloakUserCustomerManagement } from '../dtos/keycloak-customer-user.dto';
 import { KeycloakUserCustomerManagementPage } from '../dtos/keycloak-customer-user-page.dto';
+import { CustomerProfileService, toCustomerProfile } from '../../customer-profile/customer-profile.service';
 import { CATEGORY_PRIMARY_GROUP, PricingGroup } from '../../pricing/pricing-groups';
 
 export enum CustomerManagementUserListCategory {
@@ -35,49 +36,83 @@ const LIST_CATEGORY_TO_CUSTOMER_CATEGORY: Record<
   [CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_NO_SALARY]: CustomerCategory.EXTERNAL_CUSTOMER_NO_SALARY
 };
 
+/** Keycloak's page size while fetching a whole category. */
+export const WHOLE_LIST_PAGE_SIZE = 100;
+/** A runaway guard: 5,000 users is far past the lab's hundreds. */
+export const WHOLE_LIST_MAX_PAGES = 50;
+
 @Resolver()
 export class CustomerManagementResolver {
-  constructor(private readonly keycloakService: KeycloakService) {}
+  constructor(private readonly keycloakService: KeycloakService, private readonly profiles: CustomerProfileService) {}
 
-  @Query(() => KeycloakUserCustomerManagementPage, {
-    description: 'Staff: list Keycloak users by staff/customer category group membership, paginated. Intended for customer management UI browsing (default STAFF).'
-  })
-  @UseGuards(AuthRolesGuard)
-  @RequirePermission(Permission.CustomersManage)
-  async listKeycloakUsersForCustomerManagement(
-    @Args('category', { type: () => CustomerManagementUserListCategory }) category: CustomerManagementUserListCategory,
-    @Args('offset', { type: () => Int, nullable: true, defaultValue: 0 }) offset: number,
-    @Args('limit', { type: () => Int, nullable: true, defaultValue: 25 }) limit: number
-  ): Promise<KeycloakUserCustomerManagementPage> {
-    if (!this.keycloakService.isConfigured()) {
-      throw new BadRequestException('Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).');
-    }
-    const safeOffset = Math.max(offset ?? 0, 0);
-    const safeLimit = Math.min(Math.max(limit ?? 25, 1), 100);
-
-    // Fetch one extra row to determine hasNextPage.
-    const first = safeOffset;
-    const max = safeLimit + 1;
-
+  /** One raw Keycloak page for a category, before the default-external filter. */
+  private async fetchPage(category: CustomerManagementUserListCategory, first: number, max: number): Promise<KeycloakUserCustomerManagement[]> {
     let rows;
     if (category === CustomerManagementUserListCategory.ALL) {
       rows = await this.keycloakService.listAllUsersWithCustomerCategory(first, max);
     } else if (category === CustomerManagementUserListCategory.STAFF) {
       rows = await this.keycloakService.listLabStaffWithCustomerCategory(first, max);
     } else if (category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT) {
-      const raw = await this.keycloakService.listUsersInGroupWithCustomerCategory(PricingGroup.ExternalCustomers, first, max);
-      rows = raw.filter((r) => r.isDefaultExternalCustomer === true);
+      rows = await this.keycloakService.listUsersInGroupWithCustomerCategory(PricingGroup.ExternalCustomers, first, max);
     } else {
       // The remaining filter values name a CustomerCategory directly, so reuse the
       // one category -> group table rather than keeping an inverted copy here.
       rows = await this.keycloakService.listUsersInGroupWithCustomerCategory(CATEGORY_PRIMARY_GROUP[LIST_CATEGORY_TO_CUSTOMER_CATEGORY[category]], first, max);
     }
+    return rows as unknown as KeycloakUserCustomerManagement[];
+  }
 
-    const items = rows.slice(0, safeLimit) as unknown as KeycloakUserCustomerManagement[];
-    return {
-      items,
-      hasNextPage: rows.length > safeLimit
-    };
+  private narrow(category: CustomerManagementUserListCategory, rows: KeycloakUserCustomerManagement[]): KeycloakUserCustomerManagement[] {
+    return category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT ? rows.filter((r) => r.isDefaultExternalCustomer === true) : rows;
+  }
+
+  /** Every row of the category. The loop ends on a short RAW page, so the default-external filter cannot end it early. */
+  private async fetchAll(category: CustomerManagementUserListCategory): Promise<KeycloakUserCustomerManagement[]> {
+    const all: KeycloakUserCustomerManagement[] = [];
+    for (let page = 0; page < WHOLE_LIST_MAX_PAGES; page++) {
+      const raw = await this.fetchPage(category, page * WHOLE_LIST_PAGE_SIZE, WHOLE_LIST_PAGE_SIZE);
+      all.push(...this.narrow(category, raw));
+      if (raw.length < WHOLE_LIST_PAGE_SIZE) break;
+    }
+    return all;
+  }
+
+  /** Attach each row's stored profile with one `$in` lookup; a user with no record gets the defaults. */
+  private async withProfiles(rows: KeycloakUserCustomerManagement[]): Promise<KeycloakUserCustomerManagement[]> {
+    const bySub = await this.profiles.findBySubs(rows.map((r) => r.id));
+    return rows.map((r) => ({ ...r, profile: toCustomerProfile(r.id, bySub.get(r.id)) }));
+  }
+
+  @Query(() => KeycloakUserCustomerManagementPage, {
+    description:
+      'Staff: list Keycloak users by staff/customer category group membership, each with their stored profile. Omit `limit` for the whole category in one response (hasNextPage false); an explicit `limit` pages as before.'
+  })
+  @UseGuards(AuthRolesGuard)
+  @RequirePermission(Permission.CustomersManage)
+  async listKeycloakUsersForCustomerManagement(
+    @Args('category', { type: () => CustomerManagementUserListCategory }) category: CustomerManagementUserListCategory,
+    @Args('offset', { type: () => Int, nullable: true, defaultValue: 0 }) offset: number,
+    // No defaultValue: an omitted limit must arrive as null to mean "the whole category".
+    @Args('limit', { type: () => Int, nullable: true }) limit?: number | null
+  ): Promise<KeycloakUserCustomerManagementPage> {
+    if (!this.keycloakService.isConfigured()) {
+      throw new BadRequestException('Keycloak Admin API is not configured (KEYCLOAK_SERVER_URL, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET).');
+    }
+    if (limit == null) {
+      return { items: await this.withProfiles(await this.fetchAll(category)), hasNextPage: false };
+    }
+
+    const safeOffset = Math.max(offset ?? 0, 0);
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    if (category === CustomerManagementUserListCategory.EXTERNAL_CUSTOMER_DEFAULT) {
+      // The default-external filter runs after Keycloak's paging, so a Keycloak-side page comes back
+      // short. Collect the whole filtered category and slice it, so pages are full and hasNextPage exact.
+      const all = await this.fetchAll(category);
+      return { items: await this.withProfiles(all.slice(safeOffset, safeOffset + safeLimit)), hasNextPage: safeOffset + safeLimit < all.length };
+    }
+    // Fetch one extra row to determine hasNextPage.
+    const rows = this.narrow(category, await this.fetchPage(category, safeOffset, safeLimit + 1));
+    return { items: await this.withProfiles(rows.slice(0, safeLimit)), hasNextPage: rows.length > safeLimit };
   }
 
   @Query(() => [KeycloakUserCustomerManagement], {
@@ -97,7 +132,8 @@ export class CustomerManagementResolver {
       return [];
     }
     const cap = Math.min(Math.max(max ?? 25, 1), 100);
-    return this.keycloakService.searchUsersWithCustomerCategory(trimmed, cap);
+    const rows = (await this.keycloakService.searchUsersWithCustomerCategory(trimmed, cap)) as unknown as KeycloakUserCustomerManagement[];
+    return this.withProfiles(rows);
   }
 
   @Mutation(() => KeycloakUserCustomerManagement, {
