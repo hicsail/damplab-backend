@@ -1,6 +1,7 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { SOWService } from './sow.service';
 import { CreateSOWInput } from './dto/create-sow.input';
+import { SowPeriod } from './sow-version.model';
 
 /**
  * Generating the first SOW for a job.
@@ -14,10 +15,12 @@ import { CreateSOWInput } from './dto/create-sow.input';
 interface Harness {
   service: SOWService;
   created: CreateSOWInput[];
+  createdOpts: Array<{ periods?: SowPeriod[] } | undefined>;
 }
 
 function harness(opts: { existingSow?: unknown; job?: unknown; deliverablesById?: Record<string, string[]> } = {}): Harness {
   const created: CreateSOWInput[] = [];
+  const createdOpts: Array<{ periods?: SowPeriod[] } | undefined> = [];
 
   const sowModel: any = {
     findOne: () => ({ exec: async () => opts.existingSow ?? null })
@@ -33,12 +36,13 @@ function harness(opts: { existingSow?: unknown; job?: unknown; deliverablesById?
 
   const service = new SOWService(sowModel, dampLabServices, jobService, {} as any, {} as any, {} as any);
   // `create` is covered by its own tests; here we only care what it is handed.
-  (service as any).create = async (input: CreateSOWInput): Promise<unknown> => {
+  (service as any).create = async (input: CreateSOWInput, opts?: { periods?: SowPeriod[] }): Promise<unknown> => {
     created.push(input);
+    createdOpts.push(opts);
     return { _id: 'sow1', ...input };
   };
 
-  return { service, created };
+  return { service, created, createdOpts };
 }
 
 function serviceInput(over: Partial<CreateSOWInput['services'][number]> = {}): CreateSOWInput['services'][number] {
@@ -175,16 +179,57 @@ describe('createForJob', () => {
     expect(created[0].deliverables.length).toBeGreaterThan(0);
   });
 
-  it('opens as a draft over a two-week timeline', async () => {
-    const { service, created } = harness();
+  it('opens as a draft over a two-week timeline whose end date is the period’s last day (F1)', async () => {
+    const { service, created, createdOpts } = harness();
 
     await service.createForJob('job1', [serviceInput()], 'tech@bu.edu');
 
     const { startDate, endDate, duration } = created[0].timeline;
     const days = Math.round((new Date(endDate).getTime() - new Date(startDate).getTime()) / 86400000);
-    expect(days).toBe(14);
+    // 14 days inclusive: the last day is start + 13. It used to be start + 14,
+    // one day past the period the timeline was meant to describe.
+    expect(days).toBe(13);
     expect(duration).toBe('14 days');
+    expect(createdOpts[0]?.periods).toEqual([{ startDate: new Date(startDate), durationDays: 14, label: undefined }]);
     expect(created[0].status).toBe('DRAFT');
+  });
+
+  const equipmentUse = (name: string, start: string, end: string): CreateSOWInput['services'][number] =>
+    serviceInput({
+      id: `svc-${name}`,
+      name,
+      formData: [
+        { id: '__equipStart', value: start },
+        { id: '__equipEnd', value: end }
+      ]
+    });
+  const utc = (iso: string): Date => new Date(`${iso}T00:00:00.000Z`);
+
+  it('seeds the first draft from the Equipment Use dates, even beside ordinary services (behaviours 9, 10, 12)', async () => {
+    const { service, created, createdOpts } = harness();
+
+    await service.createForJob('job1', [serviceInput({ name: 'PCR' }), equipmentUse('Confocal', '2026-11-02', '2026-11-15')], 'tech@bu.edu');
+
+    expect(createdOpts[0]?.periods).toEqual([{ startDate: utc('2026-11-02'), durationDays: 14, label: 'Confocal' }]);
+    expect(created[0].timeline).toEqual({ startDate: utc('2026-11-02'), endDate: utc('2026-11-15'), duration: '14 days' });
+  });
+
+  it('spans the timeline from the earliest start to the latest inclusive end (behaviour 14)', async () => {
+    const { service, created, createdOpts } = harness();
+
+    await service.createForJob('job1', [equipmentUse('Flow cytometer', '2026-11-20', '2026-11-24'), equipmentUse('Confocal', '2026-11-02', '2026-11-06')], 'tech@bu.edu');
+
+    expect(createdOpts[0]?.periods?.map((p) => p.label)).toEqual(['Confocal', 'Flow cytometer']);
+    expect(created[0].timeline).toEqual({ startDate: utc('2026-11-02'), endDate: utc('2026-11-24'), duration: '23 days' });
+  });
+
+  it('leaves a SOW that already exists untouched, whatever the equipment dates now say (behaviour 15)', async () => {
+    const { service, created } = harness({ existingSow: { _id: 'existing', timeline: { duration: '14 days' } } });
+
+    const result = await service.createForJob('job1', [equipmentUse('Confocal', '2026-11-02', '2026-11-15')], 'tech@bu.edu');
+
+    expect((result as any).timeline).toEqual({ duration: '14 days' });
+    expect(created).toHaveLength(0);
   });
 
   it('records who generated it', async () => {

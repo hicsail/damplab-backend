@@ -86,6 +86,26 @@ export class SowVersionService {
   }
 
   /**
+   * The server twin of the editor's End picker, which cannot pick an End before
+   * Start. A period is stored as a start and a day count, so "ends before it
+   * starts" is a count under one. Legacy 0-day periods are normalised to 1 by the
+   * editor on load, so re-saving an old draft still passes.
+   *
+   * The refusal names the period by its 1-based position, and by its label too
+   * when it has one: seeded Equipment Use periods often share a label, so the
+   * label alone would not say which one.
+   */
+  static assertPeriodsValid(periods: ReadonlyArray<{ durationDays: number; label?: string | null }>): void {
+    periods.forEach((p, i) => {
+      if (!(Number(p.durationDays) >= 1)) {
+        const label = (p.label ?? '').trim();
+        const name = label ? `Period ${i + 1} (${label})` : `Period ${i + 1}`;
+        throw new BadRequestException(`${name} ends before it starts.`);
+      }
+    });
+  }
+
+  /**
    * The structured drivers behind a SOW's document, read off the SOW itself.
    * Used to seed version 1 and, on later saves, as the baseline the editor loads.
    *
@@ -394,13 +414,16 @@ export class SowVersionService {
     sow: SOW,
     job: { customerCategory?: string; jobId?: string; name?: string } | null,
     createdBy: string,
-    opts: { fields?: SowField[]; status?: SOWStatus; visibleToCustomer?: boolean; note?: string } = {}
+    opts: { fields?: SowField[]; status?: SOWStatus; visibleToCustomer?: boolean; note?: string; periods?: SowPeriod[] } = {}
   ): Promise<SowVersionDocument> {
     const sowId = String((sow as any)._id);
     const existing = await this.getCurrentVersion(sowId);
     if (existing) return existing;
 
-    const inputs = SowVersionService.deriveInputs(sow, job);
+    const derived = SowVersionService.deriveInputs(sow, job);
+    // createForJob seeds the first draft's periods from the job's Equipment Use
+    // dates. Everything else still comes from the SOW itself.
+    const inputs: SowVersionInputs = opts.periods ? { ...derived, periods: opts.periods } : derived;
     const ctx = await this.contextWithPresets(sow, job);
     const fields = opts.fields ?? buildCalculatedFields(inputs, ctx);
     const status = opts.status ?? SOWStatus.DRAFT;
@@ -719,6 +742,8 @@ export class SowVersionService {
     // whitespace-only one, which would satisfy the type and tell a reader nothing.
     const note = input.note?.trim();
     if (!note) throw new BadRequestException('Describe what you changed before saving.');
+    // Before any write below: a refused save must not leave billing edits behind.
+    SowVersionService.assertPeriodsValid(input.inputs.periods ?? []);
 
     // Adjustments first: the fee schedule text is generated from the billing
     // core, so they have to be written before the document is composed or the

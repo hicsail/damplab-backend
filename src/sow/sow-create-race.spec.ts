@@ -32,12 +32,14 @@ interface Harness {
   inserted: any[];
   /** How many times the initial version document was written. */
   versionsCreated: () => number;
+  versionArgs: any[][];
 }
 
 function harness(opts: { failures?: Error[]; existingNumbers?: string[] } = {}): Harness {
   const failures = [...(opts.failures ?? [])];
   const inserted: any[] = [];
   let createdVersions = 0;
+  const versionArgs: any[][] = [];
 
   // Rows already in the collection, as `find` projections and `findOne` lookups see them.
   const rows: any[] = (opts.existingNumbers ?? []).map((sowNumber) => ({ sowNumber, jobId: `other-${sowNumber}` }));
@@ -61,13 +63,14 @@ function harness(opts: { failures?: Error[]; existingNumbers?: string[] } = {}):
   const dampLabServices: any = { findOne: async () => ({ deliverables: [] }) };
   const jobService: any = { findById: async () => JOB };
   const sowVersionService: any = {
-    createInitialVersion: async (): Promise<void> => {
+    createInitialVersion: async (...args: any[]): Promise<void> => {
       createdVersions += 1;
+      versionArgs.push(args);
     }
   };
 
   const service = new SOWService(sowModel, dampLabServices, jobService, sowVersionService, {} as any, {} as any);
-  return { service, inserted, versionsCreated: () => createdVersions };
+  return { service, inserted, versionsCreated: () => createdVersions, versionArgs };
 }
 
 function input(over: Partial<CreateSOWInput> = {}): CreateSOWInput {
@@ -149,5 +152,25 @@ describe('SOWService.create under a duplicate-key rejection', () => {
     await service.create(input());
 
     expect(versionsCreated()).toBe(1);
+  });
+});
+
+describe('SOWService.create handing periods to the first version', () => {
+  it('passes the periods it was given to createInitialVersion', async () => {
+    const { service, versionArgs } = harness();
+    const periods = [{ startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: 14, label: 'Confocal' }];
+
+    await service.create(input(), { periods });
+
+    expect(versionArgs).toHaveLength(1);
+    expect(versionArgs[0][3]).toEqual({ periods });
+  });
+
+  it('passes no periods when it was given none, so the version derives them from the timeline', async () => {
+    const { service, versionArgs } = harness();
+
+    await service.create(input());
+
+    expect(versionArgs[0][3]?.periods).toBeUndefined();
   });
 });

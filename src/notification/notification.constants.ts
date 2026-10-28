@@ -83,6 +83,13 @@ export const EVENT_RECIPIENT_MAP: Record<string, EventRecipientConfig> = {
     excludeActor: true,
     emailWorthy: true
   },
+  // A client Customer Management lets book without approval booked or moved time.
+  // The same people as a request, with nothing to answer — so in-app only.
+  EQUIPMENT_BOOKING_BOOKED: {
+    recipients: [RecipientRole.NAMED_STAFF],
+    excludeActor: true,
+    emailWorthy: false
+  },
   EQUIPMENT_BOOKING_APPROVED: {
     recipients: [RecipientRole.JOB_OWNER],
     emailWorthy: true

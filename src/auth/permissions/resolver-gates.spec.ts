@@ -26,6 +26,7 @@ import { ProtocolsController } from '../../protocols/protocols.controller';
 import { TrainingResolver } from '../../training/training.resolver';
 import { AnnouncementResolver } from '../../announcements/announcement.resolver';
 import { CustomerManagementResolver } from '../../workflow/resolvers/customer-management.resolver';
+import { CustomerProfileResolver } from '../../customer-profile/customer-profile.resolver';
 import { PermissionsResolver } from './permissions.resolver';
 import { InvoiceResolver } from '../../invoice/invoice.resolver';
 import { JobPaymentResolver } from '../../job-payment/job-payment.resolver';
@@ -263,6 +264,7 @@ const GATES: Row[] = [
   [CustomerManagementResolver, 'setUserKeycloakCustomerCategory', Permission.CustomersManage],
   [CustomerManagementResolver, 'setUserKeycloakAccessTier', Permission.CustomersManage],
   [CustomerManagementResolver, 'setUserShowBiosecurity', Permission.CustomersManage],
+  [CustomerProfileResolver, 'updateCustomerProfile', Permission.CustomersManage],
   [PermissionsResolver, 'rolePreviews', Permission.CustomersManage]
 ];
 

@@ -25,6 +25,7 @@ import { TrainingModule } from './training/training.module';
 import { TemplateModule } from './template/template.module';
 import { BugReportModule } from './bug-report/bug-report.module';
 import { CustomerManagementModule } from './customer-management/customer-management.module';
+import { CustomerProfileModule } from './customer-profile/customer-profile.module';
 import { ActivityModule } from './activity/activity.module';
 import { InvoiceModule } from './invoice/invoice.module';
 import { JobPaymentModule } from './job-payment/job-payment.module';
@@ -86,6 +87,7 @@ import { AclidModule } from './aclid/aclid.module';
     TemplateModule,
     BugReportModule,
     CustomerManagementModule,
+    CustomerProfileModule,
     ActivityModule,
     InvoiceModule,
     JobPaymentModule,

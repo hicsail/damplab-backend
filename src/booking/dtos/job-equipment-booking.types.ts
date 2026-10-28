@@ -13,6 +13,12 @@ export class JobBookingAccess {
   @Field(() => Boolean, { description: 'True when the caller may pause/unpause booking on this job (billing:view).' })
   canBlock: boolean;
 
+  @Field(() => Boolean, {
+    description:
+      "True when the caller's bookings and changes wait on the lab (TENTATIVE). False for lab staff (jobs:view-all) and for a client whose Customer Management profile has canBookWithoutApproval. Read live, so it follows the flag with no re-login."
+  })
+  requiresApproval: boolean;
+
   @Field({ nullable: true, description: "The lab's reason, when status is BLOCKED." })
   reason?: string;
 }
