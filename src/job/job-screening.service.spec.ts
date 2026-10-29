@@ -700,6 +700,17 @@ describe('screening runs (biosecurity-update behaviour 6)', () => {
     expect(screeningRuns.update).not.toHaveBeenCalled();
   });
 
+  it('closes the run UNAVAILABLE and still rethrows when a job-row write rejects', async () => {
+    const setHomologyScreening = jest.fn(async () => {
+      throw new Error('mongo write failed');
+    });
+    const { service, screeningRuns } = harness(gibson, { screenSequences: jest.fn(async () => granted), setHomologyScreening });
+    await expect(service.screenJob('job-1', 'user-1')).rejects.toThrow('mongo write failed');
+    expect(screeningRuns.create).toHaveBeenCalledTimes(1);
+    expect(closing(screeningRuns)).toMatchObject({ status: 'UNAVAILABLE', detail: 'mongo write failed' });
+    expect(closing(screeningRuns).completedAt).toBeInstanceOf(Date);
+  });
+
   it('stores the Aclid report and its per-sequence details once the screen succeeded (behaviour 13)', async () => {
     process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
     const details = { [`${WORKFLOW_ID}_n1_insert`]: { matches: [], findings: null, regulatory_status: 'not_controlled' } };

@@ -191,7 +191,18 @@ export class JobScreeningService {
     }
 
     const runId = await this.openRun(jobId, options);
+    try {
+      return await this.screenWithRun(job, jobId, userSub, runId);
+    } catch (error) {
+      // A job-row write (or anything else) threw: the run must not stay In Progress forever.
+      // Close it, then rethrow so the caller sees exactly what it saw before runs existed.
+      await this.closeRun(runId, { status: HomologyScreeningStatus.UNAVAILABLE, detail: messageOf(error) });
+      throw error;
+    }
+  }
 
+  /** Everything `screenJob` does once the run is open. A throw here is closed by the caller. */
+  private async screenWithRun(job: Job, jobId: string, userSub: string, runId: string | null): Promise<HomologyScreening> {
     let collection: ScreeningCollection;
     try {
       collection = await this.collectScreeningTargets(job);
