@@ -20,6 +20,8 @@ import { JobVersionModule } from '../job-version/job-version.module';
 import { KeycloakModule } from '../keycloak/keycloak.module';
 import { JobReviewService } from './job-review.service';
 import { JobReviewOperation, JobReviewOperationSchema } from './job-review-operation.model';
+import { ScreeningRun, ScreeningRunSchema } from './screening-run.model';
+import { ScreeningRunService } from './screening-run.service';
 import { NotificationModule } from '../notification/notification.module';
 
 @Module({
@@ -28,7 +30,8 @@ import { NotificationModule } from '../notification/notification.module';
       { name: Job.name, schema: JobSchema },
       { name: Comment.name, schema: CommentSchema },
       { name: JobFeedStatusEntity.name, schema: JobFeedStatusEntitySchema },
-      { name: JobReviewOperation.name, schema: JobReviewOperationSchema }
+      { name: JobReviewOperation.name, schema: JobReviewOperationSchema },
+      { name: ScreeningRun.name, schema: ScreeningRunSchema }
     ]),
     forwardRef(() => WorkflowModule),
     forwardRef(() => CommentModule),
@@ -41,7 +44,7 @@ import { NotificationModule } from '../notification/notification.module';
     KeycloakModule,
     forwardRef(() => NotificationModule)
   ],
-  providers: [JobService, JobResolver, JobReviewService, CreateJobPipe, CommentService, JobAttachmentsService, JobScreeningService],
+  providers: [JobService, JobResolver, JobReviewService, CreateJobPipe, CommentService, JobAttachmentsService, JobScreeningService, ScreeningRunService],
   exports: [JobService, JobAttachmentsService]
 })
 export class JobModule {}
