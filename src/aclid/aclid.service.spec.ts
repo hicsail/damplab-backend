@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import { AclidScreenPendingError, AclidService } from './aclid.service';
+import { AclidScreenPendingError, AclidService, mapAclidScreen } from './aclid.service';
 
 const LONG_SEQUENCE = 'A'.repeat(32);
 
@@ -139,5 +139,41 @@ describe('AclidService', () => {
       text: async () => JSON.stringify({ detail: 'nope' })
     });
     await expect(new AclidService().createVerificationUrl({ screenId: 'scr_1' })).rejects.toBeInstanceOf(HttpException);
+  });
+
+  it('mapAclidScreen keeps the report fields the run stores, and the raw body', () => {
+    const body = {
+      id: 'scr_9',
+      status: 'succeeded',
+      regulatory_status: 'controlled',
+      findings: { us_ccl_export_control: { reason_code: 'toxin', regulatory_status: 'controlled', material: 'Ricin' } },
+      match_count: 12,
+      material_count: 1,
+      length: 960,
+      material_summary: { Ricin: { control_type: 'toxin', total_sequences: 2 } },
+      sequences: { a: { matches: [], findings: null, regulatory_status: 'not_controlled' } }
+    };
+    const record = mapAclidScreen(body);
+    expect(record).toMatchObject({ matchCount: 12, materialCount: 1, totalLength: 960, materialSummary: { Ricin: { control_type: 'toxin', total_sequences: 2 } } });
+    expect(record.raw).toBe(body);
+    expect(mapAclidScreen({ id: 'scr_1' })).toMatchObject({ matchCount: null, materialCount: null, totalLength: null, materialSummary: null });
+  });
+
+  it('getScreenDetails asks for 25 matches per region and returns the map', async () => {
+    const details = { seq_a: { matches: [], findings: null, regulatory_status: 'not_controlled' } };
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify(details) });
+    await expect(new AclidService().getScreenDetails('scr_1')).resolves.toEqual(details);
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.aclid.bio/v2/screens/scr_1/details?max_match_count_per_region=25');
+    expect(fetchMock.mock.calls[0][1].method).toBe('GET');
+  });
+
+  it('getScreenDetails returns null while Aclid answers 204 (screen not complete)', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 204, text: async () => '' });
+    await expect(new AclidService().getScreenDetails('scr_1')).resolves.toBeNull();
+  });
+
+  it('getScreenDetails refuses a body that is not an object', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, text: async () => '[]' });
+    await expect(new AclidService().getScreenDetails('scr_1')).rejects.toBeInstanceOf(HttpException);
   });
 });
