@@ -22,6 +22,7 @@ import { JobReviewService } from './job-review.service';
 import { JobReviewOperation, JobReviewOperationSchema } from './job-review-operation.model';
 import { ScreeningRun, ScreeningRunSchema } from './screening-run.model';
 import { ScreeningRunService } from './screening-run.service';
+import { ScreeningRunResolver } from './screening-run.resolver';
 import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
 import { NotificationModule } from '../notification/notification.module';
 
@@ -54,6 +55,7 @@ import { NotificationModule } from '../notification/notification.module';
     JobAttachmentsService,
     JobScreeningService,
     ScreeningRunService,
+    ScreeningRunResolver,
     // Provided here rather than through WorkflowModule, which would close a cycle (see JobVersionModule). Screening reads uploaded Table files.
     WorkflowParameterFilesService
   ],

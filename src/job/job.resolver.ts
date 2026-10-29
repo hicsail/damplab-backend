@@ -43,6 +43,7 @@ import { assertParameterAnswersValid } from './parameter-answer-gate';
 import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
+import { assertShowsBiosecurity, callerShowsBiosecurity } from './biosecurity-gate';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
 import { customerStatusFromAclid, homologyStatusFromAclidScreen } from '../aclid/aclid-status.util';
@@ -524,16 +525,12 @@ export class JobResolver {
    * The Biosecurity block is per account, stored as a Keycloak attribute.
    * A missing method (unit harnesses that never construct Keycloak) is off.
    */
-  private async callerShowsBiosecurity(user: User): Promise<boolean> {
-    const read = this.keycloakService?.userShowsBiosecurity;
-    if (typeof read !== 'function' || !user?.sub) return true;
-    return read.call(this.keycloakService, user.sub);
+  private callerShowsBiosecurity(user: User): Promise<boolean> {
+    return callerShowsBiosecurity(this.keycloakService, user);
   }
 
-  private async assertShowsBiosecurity(user: User): Promise<void> {
-    if (!(await this.callerShowsBiosecurity(user))) {
-      throw new ForbiddenException('Biosecurity is not enabled for this account');
-    }
+  private assertShowsBiosecurity(user: User): Promise<void> {
+    return assertShowsBiosecurity(this.keycloakService, user);
   }
 
   /** Staff with the flag see the full record. Everyone else sees the customer view, or nothing. */
