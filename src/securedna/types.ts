@@ -2,7 +2,7 @@ import { Region } from './region';
 
 /** One sequence handed to SecureDNA, and the slice it becomes on the stored batch. */
 export interface ScreeningInputSequence {
-  /** `<workflowId>_<nodeId>_<fieldId>` — see job-screening-name.util. */
+  /** The job-screening slice name — see job-screening-name.util (text, multi-value and table-cell shapes). */
   name: string;
   seq: string;
 }

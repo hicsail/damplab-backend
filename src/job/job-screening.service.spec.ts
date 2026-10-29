@@ -2,7 +2,24 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { AclidScreenPendingError } from '../aclid/aclid.service';
 import { JobScreeningService } from './job-screening.service';
 import { HomologyScreeningStatus, Job } from './job.model';
-import { GIBSON_ASSEMBLY_SERVICE_NAME, M_CLONING_SERVICE_NAME, ORDERING_DNA_FRAGMENTS_SERVICE_NAME } from './job-screening.constants';
+
+const GIBSON_ASSEMBLY_SERVICE_NAME = 'Gibson Assembly';
+const M_CLONING_SERVICE_NAME = 'Modular Cloning';
+const ORDERING_DNA_FRAGMENTS_SERVICE_NAME = 'Ordering DNA Fragments from third-party';
+
+/** The four parameters the human flags by hand after deploy (design, "Decided with the human"), plus unflagged neighbours. */
+const PARAMETERS_BY_SERVICE: Record<string, any[]> = {
+  [GIBSON_ASSEMBLY_SERVICE_NAME]: [
+    { id: 'insert', name: 'Insert', type: 'string', screening: true },
+    { id: 'vector', name: 'Vector', type: 'string' }
+  ],
+  [M_CLONING_SERVICE_NAME]: [
+    { id: 'vector', name: 'Vector', type: 'string', screening: true },
+    { id: 'insert', name: 'Insert', type: 'string', screening: true }
+  ],
+  [ORDERING_DNA_FRAGMENTS_SERVICE_NAME]: [{ id: 'fragment-sequence', name: 'Fragment sequence', type: 'string', screening: true }],
+  Pooling: [{ id: 'insert', name: 'Insert', type: 'string' }]
+};
 
 const WORKFLOW_ID = '65a1b2c3d4e5f60718293a4b';
 const DNA_A = 'ATGGCGCGTACGTAGCTAGCTAGCATCGATCGATCGTAGCTAGCTAGCTAGCATCGATCGG';
@@ -16,7 +33,7 @@ const DNA_SHORT = 'ATGGCGCGTACGTAGCTAGCTAG';
  * `collectScreeningTargets` reads.
  */
 function harness(
-  nodes: Array<{ id: string; serviceName: string; formData: unknown }>,
+  nodes: Array<{ id: string; serviceName: string; formData: unknown; parameters?: any[] }>,
   overrides: Partial<{
     screenSequences: jest.Mock;
     setHomologyScreening: jest.Mock;
@@ -25,6 +42,8 @@ function harness(
     aclidConfigured: boolean;
     screenInline: jest.Mock;
     job: Partial<Job> | null;
+    readObject: jest.Mock;
+    screeningRuns: any;
   }> = {}
 ): {
   service: JobScreeningService;
@@ -34,6 +53,8 @@ function harness(
   appendScreeningBatchId: jest.Mock;
   screenSequences: jest.Mock;
   screenInline: jest.Mock;
+  files: any;
+  screeningRuns: any;
 } {
   const job = overrides.job === undefined ? ({ _id: 'job-1', workflows: [WORKFLOW_ID] } as unknown as Job) : (overrides.job as Job | null);
 
@@ -51,17 +72,31 @@ function harness(
   const dampLabServices: any = {
     findOne: jest.fn(async (id: string) => {
       const node = nodes.find((n) => `svc-${n.id}` === id);
-      return node ? { name: node.serviceName, parameters: [] } : null;
+      return node ? { name: node.serviceName, parameters: node.parameters ?? PARAMETERS_BY_SERVICE[node.serviceName] ?? [] } : null;
     })
   };
   const screenSequences = overrides.screenSequences ?? jest.fn();
   const secureDnaService: any = { screenSequences };
 
   const screenInline = overrides.screenInline ?? jest.fn();
-  const aclidService: any = { isConfigured: () => overrides.aclidConfigured ?? false, screenInline, getScreen: jest.fn() };
+  const aclidService: any = { isConfigured: () => overrides.aclidConfigured ?? false, screenInline, getScreen: jest.fn(), getScreenDetails: jest.fn(async () => null) };
 
-  const service = new JobScreeningService(jobService, workflowService, workflowNodeService, dampLabServices, secureDnaService, aclidService);
-  return { service, job, setHomologyScreening, setAclidScreening, appendScreeningBatchId, screenSequences, screenInline };
+  const files: any = {
+    readObject:
+      overrides.readObject ??
+      jest.fn(async () => {
+        throw new Error('Workflow parameter file storage is not configured on the server.');
+      })
+  };
+  const screeningRuns: any = overrides.screeningRuns ?? {
+    create: jest.fn(async () => 'run-1'),
+    update: jest.fn(async () => undefined),
+    findByAclidScreenId: jest.fn(async () => null),
+    updateAclidLeg: jest.fn(async () => undefined)
+  };
+
+  const service = new JobScreeningService(jobService, workflowService, workflowNodeService, dampLabServices, secureDnaService, aclidService, files, screeningRuns);
+  return { service, job, setHomologyScreening, setAclidScreening, appendScreeningBatchId, screenSequences, screenInline, files, screeningRuns };
 }
 
 const lastCall = (mock: jest.Mock): any => mock.mock.calls[mock.mock.calls.length - 1][1];
@@ -101,8 +136,8 @@ describe('collectScreeningTargets', () => {
         ]
       }
     ]);
-    const targets = await service.collectScreeningTargets(job!);
-    expect(targets).toEqual([{ name: `${WORKFLOW_ID}_n1_insert`, seq: DNA_A }]);
+    const { targets } = await service.collectScreeningTargets(job!);
+    expect(targets).toEqual([{ name: `${WORKFLOW_ID}_n1_insert`, seq: DNA_A, label: 'Gibson Assembly › Insert' }]);
   });
 
   it('takes the ordered fragment when Gibson’s insert is only a description', async () => {
@@ -118,8 +153,8 @@ describe('collectScreeningTargets', () => {
         formData: [{ id: 'insert', value: 'sfGFP (717 bp) with 25 bp homology arms' }]
       }
     ]);
-    const targets = await service.collectScreeningTargets(job!);
-    expect(targets).toEqual([{ name: `${WORKFLOW_ID}_n1_fragment-sequence`, seq: DNA_A }]);
+    const { targets } = await service.collectScreeningTargets(job!);
+    expect(targets).toEqual([{ name: `${WORKFLOW_ID}_n1_fragment-sequence`, seq: DNA_A, label: 'Ordering DNA Fragments from third-party › Fragment sequence' }]);
   });
 
   it('takes vector then insert from Modular Cloning', async () => {
@@ -133,13 +168,13 @@ describe('collectScreeningTargets', () => {
         ]
       }
     ]);
-    const targets = await service.collectScreeningTargets(job!);
+    const { targets } = await service.collectScreeningTargets(job!);
     expect(targets.map((t) => t.name)).toEqual([`${WORKFLOW_ID}_n1_vector`, `${WORKFLOW_ID}_n1_insert`]);
   });
 
-  it('ignores services that carry no screenable sequence', async () => {
+  it('ignores a service whose parameters are not flagged, whatever its name (behaviour 1)', async () => {
     const { service, job } = harness([{ id: 'n1', serviceName: 'Pooling', formData: [{ id: 'insert', value: DNA_A }] }]);
-    expect(await service.collectScreeningTargets(job!)).toEqual([]);
+    expect((await service.collectScreeningTargets(job!)).targets).toEqual([]);
   });
 
   it('skips a sequence field holding something that is not DNA', async () => {
@@ -153,7 +188,7 @@ describe('collectScreeningTargets', () => {
         ]
       }
     ]);
-    const targets = await service.collectScreeningTargets(job!);
+    const { targets } = await service.collectScreeningTargets(job!);
     expect(targets.map((t) => t.name)).toEqual([`${WORKFLOW_ID}_n1_insert`]);
   });
 
@@ -169,7 +204,7 @@ describe('collectScreeningTargets', () => {
         ]
       }
     ]);
-    expect((await service.collectScreeningTargets(job!)).length).toBe(3);
+    expect((await service.collectScreeningTargets(job!)).targets.length).toBe(3);
   });
 });
 
@@ -492,5 +527,101 @@ describe('screenJob homology mode', () => {
     const aclid = lastCall(setAclidScreening);
     expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
     expect(aclid.detail).toContain('shorter than 30 bp');
+  });
+});
+
+describe('collectScreeningTargets from flags (biosecurity-update)', () => {
+  const PLATE_KEY = 'workflow-parameters/user-1/abc-plate.csv';
+  const plateValue = JSON.stringify({ filename: 'plate.csv', key: PLATE_KEY, sampleCount: 2, countedBy: 'server' });
+  const plateParam = {
+    id: 'plate',
+    name: 'Plate map',
+    type: 'table',
+    screening: true,
+    screeningFields: ['insert', 'Vector'],
+    tableData: { columns: [{ header: 'Well' }, { header: 'Insert' }, { header: 'Vector' }] }
+  };
+
+  it('sends every non-empty cell of each screening column, row by row, with row and column in name and label (behaviour 2)', async () => {
+    const readObject = jest.fn(async () => Buffer.from(`Well,INSERT,Vector\nA1,${DNA_A},${DNA_B}\nA2,,${DNA_A}\n`));
+    const { service, job } = harness([{ id: 'n1', serviceName: 'Plates', parameters: [plateParam], formData: [{ id: 'plate', value: plateValue }] }], { readObject });
+    const { targets, notes, skippedCount } = await service.collectScreeningTargets(job!);
+    expect(readObject).toHaveBeenCalledWith(PLATE_KEY, 10 * 1024 * 1024);
+    expect(targets).toEqual([
+      { name: `${WORKFLOW_ID}_n1_plate_r1_insert`, seq: DNA_A, label: 'Plates › Plate map › row 1 › INSERT' },
+      { name: `${WORKFLOW_ID}_n1_plate_r1_vector`, seq: DNA_B, label: 'Plates › Plate map › row 1 › Vector' },
+      { name: `${WORKFLOW_ID}_n1_plate_r2_vector`, seq: DNA_A, label: 'Plates › Plate map › row 2 › Vector' }
+    ]);
+    expect(notes).toEqual([]);
+    expect(skippedCount).toBe(0);
+  });
+
+  it('reports a screening column the file does not have, and still screens the rest (behaviour 2)', async () => {
+    const readObject = jest.fn(async () => Buffer.from(`Well,Insert\nA1,${DNA_A}\n`));
+    const { service, job } = harness([{ id: 'n1', serviceName: 'Plates', parameters: [plateParam], formData: [{ id: 'plate', value: plateValue }] }], { readObject });
+    const { targets, notes } = await service.collectScreeningTargets(job!);
+    expect(targets.map((t) => t.name)).toEqual([`${WORKFLOW_ID}_n1_plate_r1_insert`]);
+    expect(notes).toEqual(['Plates › Plate map: plate.csv has no column “Vector”']);
+  });
+
+  it('never reads a key outside workflow-parameters/, and notes an unreadable file instead of failing', async () => {
+    const readObject = jest.fn(async () => {
+      throw new Error('Workflow parameter file storage is not configured on the server.');
+    });
+    const foreign = JSON.stringify({ filename: 'x.csv', key: 'sample-sheet-templates/x.csv' });
+    const climbing = JSON.stringify({ filename: 'y.csv', key: 'workflow-parameters/../secrets.csv' });
+    const { service, job } = harness(
+      [
+        { id: 'n1', serviceName: 'Plates', parameters: [plateParam], formData: [{ id: 'plate', value: foreign }] },
+        { id: 'n2', serviceName: 'Plates', parameters: [plateParam], formData: [{ id: 'plate', value: climbing }] },
+        { id: 'n3', serviceName: 'Plates', parameters: [plateParam], formData: [{ id: 'plate', value: plateValue }] }
+      ],
+      { readObject }
+    );
+    const { targets, notes } = await service.collectScreeningTargets(job!);
+    expect(readObject).toHaveBeenCalledTimes(1);
+    expect(targets).toEqual([]);
+    expect(notes).toEqual([
+      'Plates › Plate map: x.csv was not uploaded, so it was not screened',
+      'Plates › Plate map: y.csv was not uploaded, so it was not screened',
+      'Plates › Plate map: could not read plate.csv (Workflow parameter file storage is not configured on the server.)'
+    ]);
+  });
+
+  it('screens every value of a multi-value Text, each under its own name (behaviour 1)', async () => {
+    const params = [{ id: 'inserts', name: 'Inserts', type: 'string', allowMultipleValues: true, screening: true }];
+    const { service, job } = harness([{ id: 'n1', serviceName: 'Cloning', parameters: params, formData: [{ id: 'inserts', value: [DNA_A, ' ', DNA_B] }] }]);
+    const { targets } = await service.collectScreeningTargets(job!);
+    expect(targets).toEqual([
+      { name: `${WORKFLOW_ID}_n1_inserts_v1`, seq: DNA_A, label: 'Cloning › Inserts › value 1' },
+      { name: `${WORKFLOW_ID}_n1_inserts_v2`, seq: DNA_B, label: 'Cloning › Inserts › value 2' }
+    ]);
+  });
+
+  it('counts the values it did not send because they are not DNA (behaviour 3)', async () => {
+    const readObject = jest.fn(async () => Buffer.from(`Insert,Vector\nTBD,${DNA_A}\nsee email,\n`));
+    const { service, job } = harness(
+      [
+        {
+          id: 'n1',
+          serviceName: M_CLONING_SERVICE_NAME,
+          formData: [
+            { id: 'vector', value: 'will email this separately' },
+            { id: 'insert', value: DNA_A }
+          ]
+        },
+        { id: 'n2', serviceName: 'Plates', parameters: [plateParam], formData: [{ id: 'plate', value: plateValue }] }
+      ],
+      { readObject }
+    );
+    const { targets, skippedCount } = await service.collectScreeningTargets(job!);
+    expect(targets.map((t) => t.name)).toEqual([`${WORKFLOW_ID}_n1_insert`, `${WORKFLOW_ID}_n2_plate_r1_vector`]);
+    expect(skippedCount).toBe(3);
+  });
+
+  it('reads the flag from parameter-set parameters too — they arrive in the effective list', async () => {
+    const params = [{ id: 'seq', name: 'Sequence', type: 'string', screening: true, fromParameterSetId: 'set1', fromParameterSetName: 'DNA' }];
+    const { service, job } = harness([{ id: 'n1', serviceName: 'Anything', parameters: params, formData: [{ id: 'seq', value: DNA_A }] }]);
+    expect((await service.collectScreeningTargets(job!)).targets.map((t) => t.name)).toEqual([`${WORKFLOW_ID}_n1_seq`]);
   });
 });

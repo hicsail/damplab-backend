@@ -22,6 +22,7 @@ import { JobReviewService } from './job-review.service';
 import { JobReviewOperation, JobReviewOperationSchema } from './job-review-operation.model';
 import { ScreeningRun, ScreeningRunSchema } from './screening-run.model';
 import { ScreeningRunService } from './screening-run.service';
+import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
 import { NotificationModule } from '../notification/notification.module';
 
 @Module({
@@ -44,7 +45,18 @@ import { NotificationModule } from '../notification/notification.module';
     KeycloakModule,
     forwardRef(() => NotificationModule)
   ],
-  providers: [JobService, JobResolver, JobReviewService, CreateJobPipe, CommentService, JobAttachmentsService, JobScreeningService, ScreeningRunService],
+  providers: [
+    JobService,
+    JobResolver,
+    JobReviewService,
+    CreateJobPipe,
+    CommentService,
+    JobAttachmentsService,
+    JobScreeningService,
+    ScreeningRunService,
+    // Provided here rather than through WorkflowModule, which would close a cycle (see JobVersionModule). Screening reads uploaded Table files.
+    WorkflowParameterFilesService
+  ],
   exports: [JobService, JobAttachmentsService]
 })
 export class JobModule {}

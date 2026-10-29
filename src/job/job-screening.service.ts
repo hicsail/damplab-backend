@@ -11,9 +11,13 @@ import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
 import { AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
 import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidScreen, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
-import { SCREENED_FIELDS_BY_SERVICE } from './job-screening.constants';
-import { getFormStringFromEntries, looksLikeNucleotideSequence, normalizeFormDataToArray, ScreeningTarget } from './job-screening.util';
-import { screeningSliceName } from './job-screening-name.util';
+import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
+import { ScreeningRunService } from './screening-run.service';
+import { headerFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
+import { TABLE_UPLOAD_KEY_PREFIX } from '../workflow/utils/table-answers';
+import { fileRecord, flattenValues, hasParentSegment, isTableType, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
+import { isScreenedParameter, looksLikeNucleotideSequence, normalizeFormDataToArray, ScreeningCollection, ScreeningTarget, screeningStringsFromValue } from './job-screening.util';
+import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceName } from './job-screening-name.util';
 
 /**
  * Biosecurity screening is paused: submission and resubmission no longer start
@@ -48,18 +52,28 @@ export class JobScreeningService {
     private readonly workflowNodeService: WorkflowNodeService,
     private readonly dampLabServices: DampLabServices,
     private readonly secureDnaService: SecureDnaService,
-    private readonly aclidService: AclidService
+    private readonly aclidService: AclidService,
+    private readonly files: WorkflowParameterFilesService,
+    private readonly screeningRuns: ScreeningRunService
   ) {}
 
   /**
-   * Every screenable sequence on a job, in workflow then node then field order.
-   *
-   * A field whose content does not look like DNA is skipped rather than sent —
-   * see `looksLikeNucleotideSequence`.
+   * Every screenable sequence on a job, in workflow, node, then parameter order: the value of
+   * each Text parameter flagged `screening: true`, and every non-empty cell of each
+   * `screeningFields` column of a flagged Table's uploaded file (row by row). The flags are read
+   * from the live effective parameters — set parameters included — never from the node's
+   * snapshot, which predates them. A value that does not look like DNA is counted, not sent.
    */
-  async collectScreeningTargets(job: Job): Promise<ScreeningTarget[]> {
+  async collectScreeningTargets(job: Job): Promise<ScreeningCollection> {
     const workflows = await this.workflowService.findByIds((job.workflows ?? []) as mongoose.Types.ObjectId[]);
-    const targets: ScreeningTarget[] = [];
+    const collection: ScreeningCollection = { targets: [], skippedCount: 0, notes: [] };
+    const push = (name: string, seq: string, label: string): void => {
+      if (!looksLikeNucleotideSequence(seq)) {
+        collection.skippedCount++;
+        return;
+      }
+      collection.targets.push({ name, seq, label });
+    };
 
     for (const workflow of workflows) {
       const workflowId = String(workflow._id);
@@ -72,20 +86,73 @@ export class JobScreeningService {
         if (!node?.service) continue;
         const service = await this.dampLabServices.findOne(String(node.service));
         if (!service) continue;
+        const parameters: unknown[] = Array.isArray(service.parameters) ? service.parameters : [];
+        const entries = normalizeFormDataToArray(node.formData, getMultiValueParamIds(parameters));
 
-        const fields = SCREENED_FIELDS_BY_SERVICE.get(service.name);
-        if (!fields) continue;
-
-        const entries = normalizeFormDataToArray(node.formData, getMultiValueParamIds(service.parameters));
-        for (const field of fields) {
-          const seq = getFormStringFromEntries(entries, field);
-          if (!seq || !looksLikeNucleotideSequence(seq)) continue;
-          targets.push({ name: screeningSliceName(workflowId, node.id, field), seq });
+        for (const param of parameters) {
+          if (!isScreenedParameter(param)) continue;
+          const paramName = typeof param.name === 'string' && param.name.trim() !== '' ? param.name.trim() : param.id;
+          const paramLabel = `${service.name} › ${paramName}`;
+          const value = entries.find((entry) => entry.id === param.id)?.value;
+          if (param.type === 'string') {
+            const values = screeningStringsFromValue(value);
+            const multi = param.allowMultipleValues === true;
+            values.forEach((seq, i) =>
+              push(multi ? multiValueSliceName(workflowId, node.id, param.id, i + 1) : screeningSliceName(workflowId, node.id, param.id), seq, multi ? `${paramLabel} › value ${i + 1}` : paramLabel)
+            );
+          } else if (isTableType(param.type)) {
+            await this.collectTableTargets(collection, push, { workflowId, nodeId: node.id, param, paramLabel, value });
+          }
         }
       }
     }
+    return collection;
+  }
 
-    return targets;
+  /**
+   * A flagged Table's uploaded file(s). Reads only keys under `workflow-parameters/` with no
+   * `..` segment — the guard `countNewTableAnswers` applies — because `readObject` reads
+   * whatever it is given. A file that is not uploaded or cannot be read, and a screening column
+   * the file lacks, are noted on the run and do not fail it (behaviour 2).
+   */
+  private async collectTableTargets(
+    collection: ScreeningCollection,
+    push: (name: string, seq: string, label: string) => void,
+    args: { workflowId: string; nodeId: string; param: { id: string; screeningFields?: unknown }; paramLabel: string; value: unknown }
+  ): Promise<void> {
+    const fields = Array.isArray(args.param.screeningFields) ? args.param.screeningFields.filter((f): f is string => typeof f === 'string' && f.trim() !== '') : [];
+    const files = flattenValues(args.value).filter((v) => v !== null && v !== undefined && v !== '');
+    for (let f = 0; f < files.length; f++) {
+      const record = fileRecord(files[f]);
+      const filename = typeof record?.filename === 'string' && record.filename !== '' ? record.filename : 'the uploaded file';
+      const fieldId = files.length > 1 ? `${args.param.id}_f${f + 1}` : args.param.id;
+      const label = files.length > 1 ? `${args.paramLabel} › file ${f + 1}` : args.paramLabel;
+      const key = sampleSheetKeyOf(files[f]);
+      if (!key || !key.startsWith(TABLE_UPLOAD_KEY_PREFIX) || hasParentSegment(key)) {
+        collection.notes.push(`${label}: ${filename} was not uploaded, so it was not screened`);
+        continue;
+      }
+      let table: TableRecords;
+      try {
+        table = await readTableRecords(await this.files.readObject(key, TABLE_FILE_MAX_BYTES));
+      } catch (error) {
+        collection.notes.push(`${label}: could not read ${filename} (${messageOf(error)})`);
+        continue;
+      }
+      const present: Array<{ header: string }> = [];
+      for (const field of fields) {
+        const header = headerFor(table.header, field);
+        if (header === undefined) collection.notes.push(`${label}: ${filename} has no column “${field}”`);
+        else present.push({ header });
+      }
+      const slugs = columnSlugs(present.map((column) => column.header));
+      table.rows.forEach((row, index) => {
+        present.forEach((column, c) => {
+          const cell = (row[column.header] ?? '').trim();
+          if (cell !== '') push(tableCellSliceName(args.workflowId, args.nodeId, fieldId, index + 1, slugs[c]), cell, `${label} › row ${index + 1} › ${column.header}`);
+        });
+      });
+    }
   }
 
   /**
@@ -107,7 +174,7 @@ export class JobScreeningService {
 
     let targets: ScreeningTarget[];
     try {
-      targets = await this.collectScreeningTargets(job);
+      targets = (await this.collectScreeningTargets(job)).targets;
     } catch (error) {
       return this.unavailable(jobId, 0, `Could not read the job's sequences: ${messageOf(error)}`);
     }
@@ -285,7 +352,7 @@ export class JobScreeningService {
   private async runSecureDna(jobId: string, userSub: string, targets: ScreeningTarget[], startedAt: Date): Promise<HomologyScreening> {
     try {
       const batch = await this.secureDnaService.screenSequences({
-        sequences: targets,
+        sequences: targets.map(({ name, seq }) => ({ name, seq })),
         region: Region.ALL,
         providerReference: `damplab-job-${jobId}`,
         jobId,

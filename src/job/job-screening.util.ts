@@ -1,10 +1,34 @@
 import { FormDataEntry, normalizeFormDataToArray } from '../workflow/utils/form-data.util';
 
 export interface ScreeningTarget {
-  /** Screening slice name: `<workflowMongoId>_<nodeGraphId>_<fieldId>` */
+  /** Slice name sent to the provider; see job-screening-name.util. */
   name: string;
   seq: string;
+  /** For people: `<service> › <parameter>[ › value <n> | › row <n> › <column>]`. */
+  label: string;
 }
+
+export interface ScreeningCollection {
+  targets: ScreeningTarget[];
+  /** Non-empty values not sent because they do not look like DNA. */
+  skippedCount: number;
+  /** What staff should know about the collection: a missing column, a file that could not be read. */
+  notes: string[];
+}
+
+/** Every non-blank string a stored answer holds, trimmed, in order: a multi-value answer gives each value. */
+export function screeningStringsFromValue(value: unknown): string[] {
+  if (typeof value === 'string') {
+    const t = value.trim();
+    return t ? [t] : [];
+  }
+  if (Array.isArray(value)) return value.flatMap((item) => (typeof item === 'string' && item.trim() !== '' ? [item.trim()] : []));
+  return [];
+}
+
+/** A parameter the catalog marked `screening: true` (biosecurity-update). No key reads as false. */
+export const isScreenedParameter = (param: unknown): param is { id: string; type: string; name?: string; allowMultipleValues?: boolean; screeningFields?: unknown } =>
+  !!param && typeof param === 'object' && (param as { screening?: unknown }).screening === true && typeof (param as { id?: unknown }).id === 'string';
 
 /** Comparison form: what makes two sequences the same sequence. */
 export function normalizeSequenceString(s: string): string {
