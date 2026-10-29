@@ -7,7 +7,9 @@ import {
   checkTableFile,
   missingColumns,
   missingColumnsMessage,
+  headerFor,
   readTableFile,
+  readTableRecords,
   readTableRows,
   TABLE_FILE_MAX_BYTES,
   TABLE_FILE_MAX_INFLATED_BYTES,
@@ -338,5 +340,55 @@ describe('checkTableFile', () => {
       'over-inflation-cap.xlsx': '4de5d8bc255713bae604f57c630712e89c32b715fee1b83c815019a05726c2e2'
     };
     for (const [name, hash] of Object.entries(expected)) expect(createHash('sha256').update(fixture(name)).digest('hex')).toBe(hash);
+  });
+});
+
+describe('readTableRecords (biosecurity-update behaviour 2)', () => {
+  const SEQ = 'ATGGCGCGTACGTAGCTAGCTAGCATCGATCGATCG';
+
+  it('keys each cell by the header above it, not by its position among non-blank cells', async () => {
+    const buffer = await xlsxBuffer((workbook) => {
+      const sheet = workbook.addWorksheet('Plate');
+      sheet.getCell('A1').value = 'Well';
+      sheet.getCell('B1').value = 'Notes';
+      sheet.getCell('C1').value = 'Insert';
+      // Row 2: A and B blank, sequence in C.
+      sheet.getCell('C2').value = SEQ;
+      sheet.getCell('A3').value = 'A2';
+      sheet.getCell('C3').value = 'TTTT';
+    });
+    expect(await readTableRecords(buffer)).toEqual({
+      header: ['Well', 'Notes', 'Insert'],
+      rows: [{ Insert: SEQ }, { Well: 'A2', Insert: 'TTTT' }]
+    });
+  });
+
+  it('reads CSV, trims cells, drops a BOM, skips empty rows and ignores cells under a blank header', async () => {
+    const csv = Buffer.from(`\uFEFFWell, Insert ,\nA1, ${SEQ} ,extra\n,,\nA2,,\n`);
+    expect(await readTableRecords(csv)).toEqual({ header: ['Well', 'Insert'], rows: [{ Well: 'A1', Insert: SEQ }, { Well: 'A2' }] });
+  });
+
+  it('keeps a row that has content only under a blank header, as the row count does', async () => {
+    const csv = Buffer.from('Well,Insert,\n,,stray\n');
+    const records = await readTableRecords(csv);
+    expect(records.rows).toEqual([{}]);
+    expect((await readTableFile(csv)).rowCount).toBe(1);
+  });
+
+  it('returns no header and no rows for an empty sheet', async () => {
+    const empty = await xlsxBuffer((workbook) => {
+      workbook.addWorksheet('Empty');
+    });
+    expect(await readTableRecords(empty)).toEqual({ header: [], rows: [] });
+  });
+
+  it('refuses what readTableFile refuses, with the same messages', async () => {
+    await expect(readTableRecords(Buffer.alloc(TABLE_FILE_MAX_BYTES + 1))).rejects.toThrow(TABLE_FILE_TOO_LARGE_MESSAGE);
+    await expect(readTableRecords(Buffer.from([0x41, 0x00, 0x42]))).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
+  });
+
+  it('headerFor matches trimmed and case-insensitively, first match wins', () => {
+    expect(headerFor(['Well', 'INSERT', 'insert'], ' insert ')).toBe('INSERT');
+    expect(headerFor(['Well'], 'Insert')).toBeUndefined();
   });
 });
