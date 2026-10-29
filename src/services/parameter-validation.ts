@@ -111,5 +111,43 @@ export function parameterDefinitionError(param: unknown): string | null {
     if (!match || !match[1].trim() || Number(match[2]) < 1) return `Parameter “${label}”: write the matrix as name;column, e.g. matrixA;2 (the column is 1 or more).`;
     if (p.type === 'table' || p.type === 'sampleSheet') return `Parameter “${label}”: a Table cannot be placed in a matrix.`;
   }
+  const screening = screeningRuleViolation(param);
+  if (screening) return `Parameter “${label}”: ${screening}`;
   return null;
+}
+
+const isTableTypeName = (type: unknown): boolean => type === 'table' || type === 'sampleSheet';
+
+/** A Table's column headers, trimmed, blanks dropped: the same rule as sample-sheet.util's `expectedColumns`. */
+const expectedColumns = (param: unknown): string[] => {
+  const columns = (param as { tableData?: { columns?: unknown } | null } | null)?.tableData?.columns;
+  if (!Array.isArray(columns)) return [];
+  return columns.map((c) => (c && typeof c === 'object' && typeof (c as { header?: unknown }).header === 'string' ? (c as { header: string }).header.trim() : '')).filter((h) => h !== '');
+};
+
+/**
+ * The screening flag's rules (biosecurity-update). `screening: true` marks a Text whose value
+ * is a sequence, or a Table whose `screeningFields` columns hold sequences. A Table defined
+ * only by a staff template has no columns here: `DampLabServices.assertScreeningTemplatesMatch`
+ * checks it against the template's header instead.
+ *
+ * Mirrored in damplab-ui/src/utils/parameterValidation.ts (same sentences). Keep the two in step.
+ */
+export function screeningRuleViolation(param: unknown): string | null {
+  if (!param || typeof param !== 'object') return null;
+  const p = param as { type?: unknown; screening?: unknown; screeningFields?: unknown };
+  const isTable = isTableTypeName(p.type);
+  if (p.screening !== undefined && p.screening !== null && typeof p.screening !== 'boolean') return '“Requires screening” must be true or false.';
+  if (p.screening === true && p.type !== 'string' && !isTable) return 'Only Text and Table parameters can require screening.';
+  const hasFields = p.screeningFields !== undefined && p.screeningFields !== null;
+  if (hasFields && !isTable) return 'Only a Table has screening columns.';
+  if (hasFields && (!Array.isArray(p.screeningFields) || p.screeningFields.some((field) => typeof field !== 'string'))) return 'Screening columns must be a list of column names.';
+  if (p.screening !== true || !isTable) return null;
+  const fields = ((p.screeningFields as string[] | undefined) ?? []).map((field) => field.trim()).filter((field) => field !== '');
+  if (fields.length === 0) return 'A Table that requires screening needs at least one screening column.';
+  const columns = expectedColumns(param);
+  if (columns.length === 0) return null;
+  const known = new Set(columns.map((column) => column.toLowerCase()));
+  const unknown = fields.find((field) => !known.has(field.toLowerCase()));
+  return unknown ? `Screening column “${unknown}” is not one of this Table's columns.` : null;
 }
