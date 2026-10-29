@@ -42,7 +42,7 @@ export class ScreeningRunSequence {
 }
 export const ScreeningRunSequenceSchema = SchemaFactory.createForClass(ScreeningRunSequence);
 
-@Schema({ _id: false })
+@Schema({ _id: false, minimize: false })
 @ObjectType({ description: 'What Aclid said in one screening run' })
 export class ScreeningRunAclidLeg {
   @Prop({ type: String, default: null })
@@ -99,7 +99,7 @@ export class ScreeningRunAclidLeg {
 }
 export const ScreeningRunAclidLegSchema = SchemaFactory.createForClass(ScreeningRunAclidLeg);
 
-@Schema({ _id: false })
+@Schema({ _id: false, minimize: false })
 @ObjectType({ description: 'What SecureDNA said in one screening run; the batch holds the hits' })
 export class ScreeningRunSecureDnaLeg {
   @Prop({ type: String, default: null })
@@ -116,7 +116,7 @@ export class ScreeningRunSecureDnaLeg {
 }
 export const ScreeningRunSecureDnaLegSchema = SchemaFactory.createForClass(ScreeningRunSecureDnaLeg);
 
-@Schema({ collection: 'screening_runs', timestamps: true })
+@Schema({ collection: 'screening_runs', timestamps: true, minimize: false })
 @ObjectType({ description: 'One biosecurity screening of a job, both providers. Staff with showBiosecurity only.' })
 export class ScreeningRun {
   @Field(() => ID, { name: 'id' })
