@@ -291,7 +291,7 @@ describe('JobResolver.rerunJobHomologyScreening', () => {
 
     const result = await resolver.rerunJobHomologyScreening('job-1', staff);
 
-    expect(screenJob).toHaveBeenCalledWith('job-1', 'staff-1');
+    expect(screenJob).toHaveBeenCalledWith('job-1', staff.sub, { trigger: 'RERUN', triggeredBy: staff.email || staff.preferred_username || null });
     expect(screenJobInBackground).not.toHaveBeenCalled();
     expect(result).toBe(screened);
   });
@@ -318,6 +318,7 @@ function kycHarness(job: any): {
   setHomologyScreening: jest.Mock;
   screenJob: jest.Mock;
   screenJobInBackground: jest.Mock;
+  recordAclidRefresh: jest.Mock;
 } {
   const findById = jest.fn(async () => job);
   const setAclidScreening = jest.fn(async (_id: string, aclidScreening: any) => ({ ...job, aclidScreening }));
@@ -328,10 +329,11 @@ function kycHarness(job: any): {
   const aclidService: any = { createVerificationUrl, getScreen };
   const screenJob = jest.fn();
   const screenJobInBackground = jest.fn();
-  const jobScreeningService: any = { screenJob, screenJobInBackground };
+  const recordAclidRefresh = jest.fn(async () => undefined);
+  const jobScreeningService: any = { screenJob, screenJobInBackground, recordAclidRefresh };
   const keycloakService: any = { userShowsBiosecurity: jest.fn(async () => true) };
   const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, keycloakService, {} as any, jobScreeningService, aclidService);
-  return { resolver, createVerificationUrl, getScreen, setAclidScreening, setHomologyScreening, screenJob, screenJobInBackground };
+  return { resolver, createVerificationUrl, getScreen, setAclidScreening, setHomologyScreening, screenJob, screenJobInBackground, recordAclidRefresh };
 }
 
 const screenedJob = (): any => ({
@@ -452,6 +454,14 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     verificationCompletedAt: '2026-09-02T10:00:00.000Z',
     findings: null
   };
+
+  it('hands the screen it read to the screening-run history (biosecurity-update behaviour 6)', async () => {
+    const harness = kycHarness(screenedJob());
+    const screen = { id: 'scr_123', status: 'succeeded', regulatoryStatus: 'not_controlled', verificationStatus: 'verified', decisionStatus: null, verificationCompletedAt: null, findings: null };
+    harness.getScreen.mockResolvedValueOnce(screen);
+    await harness.resolver.refreshJobAclidScreening('job-1', owner);
+    expect(harness.recordAclidRefresh).toHaveBeenCalledWith(screen);
+  });
 
   it('re-reads the screen and rewrites the KYC fields, homology and customer status', async () => {
     const { resolver, getScreen, setAclidScreening, screenJob, screenJobInBackground } = kycHarness(screenedJob());

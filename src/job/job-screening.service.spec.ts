@@ -2,6 +2,7 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { AclidScreenPendingError } from '../aclid/aclid.service';
 import { JobScreeningService } from './job-screening.service';
 import { HomologyScreeningStatus, Job } from './job.model';
+import { ScreeningRunTrigger } from './screening-run.model';
 
 const GIBSON_ASSEMBLY_SERVICE_NAME = 'Gibson Assembly';
 const M_CLONING_SERVICE_NAME = 'Modular Cloning';
@@ -92,7 +93,7 @@ function harness(
     create: jest.fn(async () => 'run-1'),
     update: jest.fn(async () => undefined),
     findByAclidScreenId: jest.fn(async () => null),
-    updateAclidLeg: jest.fn(async () => undefined)
+    updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
   };
 
   const service = new JobScreeningService(jobService, workflowService, workflowNodeService, dampLabServices, secureDnaService, aclidService, files, screeningRuns);
@@ -623,5 +624,172 @@ describe('collectScreeningTargets from flags (biosecurity-update)', () => {
     const params = [{ id: 'seq', name: 'Sequence', type: 'string', screening: true, fromParameterSetId: 'set1', fromParameterSetName: 'DNA' }];
     const { service, job } = harness([{ id: 'n1', serviceName: 'Anything', parameters: params, formData: [{ id: 'seq', value: DNA_A }] }]);
     expect((await service.collectScreeningTargets(job!)).targets.map((t) => t.name)).toEqual([`${WORKFLOW_ID}_n1_seq`]);
+  });
+});
+
+describe('screening runs (biosecurity-update behaviour 6)', () => {
+  const gibson = [{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_A }] }];
+  const originalMode = process.env.BIOSECURITY_HOMOLOGY_MODE;
+  afterEach(() => {
+    if (originalMode === undefined) delete process.env.BIOSECURITY_HOMOLOGY_MODE;
+    else process.env.BIOSECURITY_HOMOLOGY_MODE = originalMode;
+  });
+  const closing = (runs: any): any => runs.update.mock.calls[runs.update.mock.calls.length - 1][1];
+
+  it('opens one run with the trigger, records the sequences, then closes it with the job row’s verdict', async () => {
+    const screenSequences = jest.fn(async () => granted);
+    const { service, screeningRuns, setHomologyScreening } = harness(gibson, { screenSequences });
+    await service.screenJob('job-1', 'user-1', { trigger: ScreeningRunTrigger.RERUN, triggeredBy: 'staff@bu.edu' });
+
+    expect(screeningRuns.create).toHaveBeenCalledTimes(1);
+    expect(screeningRuns.create.mock.calls[0][0]).toMatchObject({ jobId: 'job-1', trigger: 'RERUN', triggeredBy: 'staff@bu.edu', status: 'IN_PROGRESS' });
+    expect(screeningRuns.update.mock.calls[0][1]).toEqual({
+      sequences: [{ name: `${WORKFLOW_ID}_n1_insert`, label: 'Gibson Assembly › Insert', length: DNA_A.length, aclidEligible: true }],
+      sequenceCount: 1,
+      skippedCount: 0
+    });
+    const closed = closing(screeningRuns);
+    expect(closed.status).toBe(lastStatus(setHomologyScreening).status);
+    expect(closed.completedAt).toBeInstanceOf(Date);
+    expect(closed.secureDna).toEqual({ batchId: granted.id, status: 'PASSED', detail: null });
+    expect(closed.aclid).toBeNull();
+  });
+
+  it('defaults to SUBMISSION with no one named', async () => {
+    const { service, screeningRuns } = harness(gibson, { screenSequences: jest.fn(async () => granted) });
+    await service.screenJob('job-1', 'user-1');
+    expect(screeningRuns.create.mock.calls[0][0]).toMatchObject({ trigger: 'SUBMISSION', triggeredBy: null });
+  });
+
+  it('closes the run UNAVAILABLE with the skipped count when nothing is screenable (behaviours 3, 11)', async () => {
+    const { service, screeningRuns } = harness([{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: 'TBD later' }] }]);
+    const result = await service.screenJob('job-1', 'user-1');
+    expect(result.detail).toBe('No screenable DNA sequences on this job');
+    expect(screeningRuns.create).toHaveBeenCalledTimes(1);
+    expect(screeningRuns.update.mock.calls[0][1]).toMatchObject({ sequenceCount: 0, skippedCount: 1 });
+    expect(closing(screeningRuns)).toMatchObject({ status: 'UNAVAILABLE', detail: 'No screenable DNA sequences on this job; 1 value skipped: not DNA' });
+  });
+
+  it('closes the run when collection itself fails', async () => {
+    const { service, screeningRuns } = harness(gibson);
+    jest.spyOn(service, 'collectScreeningTargets').mockRejectedValueOnce(new Error('mongo down'));
+    await service.screenJob('job-1', 'user-1');
+    expect(screeningRuns.create).toHaveBeenCalledTimes(1);
+    expect(closing(screeningRuns)).toMatchObject({ status: 'UNAVAILABLE', detail: "Could not read the job's sequences: mongo down" });
+  });
+
+  it('writes no run for a job that does not exist', async () => {
+    const { service, screeningRuns } = harness(gibson, { job: null });
+    await service.screenJob('missing', 'user-1');
+    expect(screeningRuns.create).not.toHaveBeenCalled();
+  });
+
+  it('a run that cannot be written never stops the screen or changes the job row', async () => {
+    const screeningRuns = {
+      create: jest.fn(async () => {
+        throw new Error('write refused');
+      }),
+      update: jest.fn(),
+      findByAclidScreenId: jest.fn(),
+      updateAclidLeg: jest.fn()
+    };
+    const { service, setHomologyScreening } = harness(gibson, { screenSequences: jest.fn(async () => granted), screeningRuns });
+    const result = await service.screenJob('job-1', 'user-1');
+    expect(result.status).toBe(HomologyScreeningStatus.PASSED);
+    expect(lastStatus(setHomologyScreening).status).toBe(HomologyScreeningStatus.PASSED);
+    expect(screeningRuns.update).not.toHaveBeenCalled();
+  });
+
+  it('stores the Aclid report and its per-sequence details once the screen succeeded (behaviour 13)', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const details = { [`${WORKFLOW_ID}_n1_insert`]: { matches: [], findings: null, regulatory_status: 'not_controlled' } };
+    const screenInline = jest.fn(async () => aclidScreen({ matchCount: 3, materialCount: 0, materialSummary: {}, raw: { id: 'scr_1', status: 'succeeded' } }));
+    const { service, screeningRuns } = harness(gibson, { aclidConfigured: true, screenInline });
+    (service as any).aclidService.getScreenDetails = jest.fn(async () => details);
+    await service.screenJob('job-1', 'user-1');
+    expect(closing(screeningRuns).aclid).toEqual({
+      screenId: 'scr_1',
+      homologyStatus: 'PASSED',
+      status: 'succeeded',
+      regulatoryStatus: 'not_controlled',
+      verificationStatus: 'pending',
+      decisionStatus: null,
+      matchCount: 3,
+      materialCount: 0,
+      findings: null,
+      materialSummary: {},
+      raw: { id: 'scr_1', status: 'succeeded' },
+      details,
+      detail: null
+    });
+  });
+
+  it('keeps the verdict and notes it when the details call fails; a 204 stores no details (behaviour 13)', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const { service, screeningRuns, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline: jest.fn(async () => aclidScreen()) });
+    (service as any).aclidService.getScreenDetails = jest.fn(async () => {
+      throw new Error('Aclid returned 500');
+    });
+    await service.screenJob('job-1', 'user-1');
+    expect(closing(screeningRuns).aclid).toMatchObject({ homologyStatus: 'PASSED', details: null, detail: 'Aclid details unavailable: Aclid returned 500' });
+    expect(lastCall(setAclidScreening).homologyStatus).toBe(HomologyScreeningStatus.PASSED);
+  });
+
+  it('records a pending Aclid screen on the run so a refresh can finish it', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const pending = aclidScreen({ id: 'scr_p', status: 'running', regulatoryStatus: null, raw: { id: 'scr_p' } }) as any;
+    const screenInline = jest.fn(async () => {
+      throw new AclidScreenPendingError(pending, 'did not finish');
+    });
+    const { service, screeningRuns } = harness(gibson, { aclidConfigured: true, screenInline, screenSequences: jest.fn(async () => granted) });
+    await service.screenJob('job-1', 'user-1');
+    expect(closing(screeningRuns).aclid).toMatchObject({ screenId: 'scr_p', homologyStatus: 'IN_PROGRESS', status: 'running', detail: 'Aclid screen still running' });
+    expect(closing(screeningRuns).secureDna).toMatchObject({ status: 'PASSED' });
+  });
+});
+
+describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
+  const run = (aclid: any): Record<string, unknown> => ({ _id: 'run-1', status: 'UNAVAILABLE', aclid });
+
+  it('updates the run carrying the screen, fetching details once it succeeded', async () => {
+    const details = { a: { matches: [], findings: null, regulatory_status: 'controlled' } };
+    const screeningRuns = {
+      create: jest.fn(),
+      update: jest.fn(),
+      findByAclidScreenId: jest.fn(async () => run({ screenId: 'scr_1', details: null })),
+      updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
+    };
+    const { service } = harness([], { screeningRuns });
+    (service as any).aclidService.getScreenDetails = jest.fn(async () => details);
+    await service.recordAclidRefresh(aclidScreen({ regulatoryStatus: 'controlled', raw: { id: 'scr_1' } }) as any);
+    expect(screeningRuns.findByAclidScreenId).toHaveBeenCalledWith('scr_1');
+    const [id, leg, patch] = screeningRuns.updateAclidLeg.mock.calls[0];
+    expect(id).toBe('run-1');
+    expect(leg).toMatchObject({ homologyStatus: 'FAILED', regulatoryStatus: 'controlled', status: 'succeeded', details, detail: null, raw: { id: 'scr_1' } });
+    expect(patch).toMatchObject({ status: 'FAILED' });
+    expect(screeningRuns.create).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch details again when the run already has them, and leaves the run status unless it now fails', async () => {
+    const screeningRuns = {
+      create: jest.fn(),
+      update: jest.fn(),
+      findByAclidScreenId: jest.fn(async () => run({ screenId: 'scr_1', details: { a: {} } })),
+      updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
+    };
+    const { service } = harness([], { screeningRuns });
+    const getScreenDetails = jest.fn();
+    (service as any).aclidService.getScreenDetails = getScreenDetails;
+    await service.recordAclidRefresh(aclidScreen() as any);
+    expect(getScreenDetails).not.toHaveBeenCalled();
+    expect(screeningRuns.updateAclidLeg.mock.calls[0][1]).not.toHaveProperty('details');
+    expect(screeningRuns.updateAclidLeg.mock.calls[0][2]).toEqual({});
+  });
+
+  it('is a no-op for a screen no run carries (jobs screened before this change)', async () => {
+    const screeningRuns = { create: jest.fn(), update: jest.fn(), findByAclidScreenId: jest.fn(async () => null), updateAclidLeg: jest.fn() };
+    const { service } = harness([], { screeningRuns });
+    await service.recordAclidRefresh(aclidScreen() as any);
+    expect(screeningRuns.updateAclidLeg).not.toHaveBeenCalled();
   });
 });

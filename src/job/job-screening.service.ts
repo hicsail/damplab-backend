@@ -12,11 +12,21 @@ import { AclidScreenPendingError, AclidScreenRecord, AclidService } from '../acl
 import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidScreen, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
-import { ScreeningRunService } from './screening-run.service';
+import { ScreeningRunPatch, ScreeningRunService } from './screening-run.service';
+import { ScreeningRunAclidLeg, ScreeningRunTrigger } from './screening-run.model';
+import { fitAclidLeg } from './screening-run.util';
 import { headerFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
 import { TABLE_UPLOAD_KEY_PREFIX } from '../workflow/utils/table-answers';
 import { fileRecord, flattenValues, hasParentSegment, isTableType, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
-import { isScreenedParameter, looksLikeNucleotideSequence, normalizeFormDataToArray, ScreeningCollection, ScreeningTarget, screeningStringsFromValue } from './job-screening.util';
+import {
+  isScreenedParameter,
+  looksLikeNucleotideSequence,
+  normalizeFormDataToArray,
+  normalizeSequenceString,
+  ScreeningCollection,
+  ScreeningTarget,
+  screeningStringsFromValue
+} from './job-screening.util';
 import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceName } from './job-screening-name.util';
 
 /**
@@ -25,6 +35,12 @@ import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceNam
  * true when the feature is finished.
  */
 export const AUTO_SCREENING_ENABLED = false;
+
+export interface ScreenJobOptions {
+  trigger?: ScreeningRunTrigger;
+  /** Display name of whoever asked; null for a screen nobody asked for by name. */
+  triggeredBy?: string | null;
+}
 
 /**
  * Homology screening for a job: find the customer-supplied sequences, send them
@@ -156,10 +172,12 @@ export class JobScreeningService {
   }
 
   /**
-   * Screen a job and record the outcome. Safe to call without awaiting: it
-   * resolves rather than rejects, having written a terminal status either way.
+   * Screen a job and record the outcome. Safe to call without awaiting: it resolves rather
+   * than rejects, having written a terminal status either way. Writes exactly one screening
+   * run once the job is found (behaviour 6); the job's own rows are written exactly as before
+   * (behaviour 7). Run writes are best-effort and never change the outcome.
    */
-  async screenJob(jobId: string, userSub: string): Promise<HomologyScreening> {
+  async screenJob(jobId: string, userSub: string, options: ScreenJobOptions = {}): Promise<HomologyScreening> {
     const job = await this.jobService.findById(jobId);
     if (!job) {
       this.logger.warn(`Screening skipped: job ${jobId} not found`);
@@ -172,14 +190,25 @@ export class JobScreeningService {
       });
     }
 
-    let targets: ScreeningTarget[];
+    const runId = await this.openRun(jobId, options);
+
+    let collection: ScreeningCollection;
     try {
-      targets = (await this.collectScreeningTargets(job)).targets;
+      collection = await this.collectScreeningTargets(job);
     } catch (error) {
-      return this.unavailable(jobId, 0, `Could not read the job's sequences: ${messageOf(error)}`);
+      const recorded = await this.unavailable(jobId, 0, `Could not read the job's sequences: ${messageOf(error)}`);
+      await this.closeRun(runId, { status: recorded.status, detail: recorded.detail ?? null });
+      return recorded;
     }
+    const { targets } = collection;
+    await this.updateRun(runId, {
+      sequences: targets.map((t) => ({ name: t.name, label: t.label, length: normalizeSequenceString(t.seq).length, aclidEligible: isAclidLengthEligible(t.seq) })),
+      sequenceCount: targets.length,
+      skippedCount: collection.skippedCount
+    });
 
     if (targets.length === 0) {
+      let aclidRun: ScreeningRunAclidLeg | null = null;
       if (this.aclidService.isConfigured()) {
         await this.recordAclid(jobId, {
           screenId: null,
@@ -189,17 +218,22 @@ export class JobScreeningService {
           completedAt: new Date(),
           detail: 'No screenable sequences'
         });
+        aclidRun = { screenId: null, homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail: 'No screenable sequences' };
       }
-      return this.record(jobId, {
+      const recorded = await this.record(jobId, {
         status: HomologyScreeningStatus.UNAVAILABLE,
         startedAt: new Date(),
         completedAt: new Date(),
         sequenceCount: 0,
         detail: 'No screenable DNA sequences on this job'
       });
+      await this.closeRun(runId, { status: recorded.status, detail: runDetail(recorded.detail, collection), aclid: aclidRun });
+      return recorded;
     }
     if (targets.length > MAX_SECUREDNA_SEQUENCE_BATCH) {
-      return this.unavailable(jobId, targets.length, `Too many sequences for one batch (max ${MAX_SECUREDNA_SEQUENCE_BATCH})`);
+      const recorded = await this.unavailable(jobId, targets.length, `Too many sequences for one batch (max ${MAX_SECUREDNA_SEQUENCE_BATCH})`);
+      await this.closeRun(runId, { status: recorded.status, detail: runDetail(recorded.detail, collection) });
+      return recorded;
     }
 
     const startedAt = new Date();
@@ -240,7 +274,7 @@ export class JobScreeningService {
     }
     if (secureDna?.detail) details.push(secureDna.detail);
 
-    return this.record(jobId, {
+    const recorded = await this.record(jobId, {
       status: rollupHomologyStatuses(statuses),
       startedAt,
       completedAt: new Date(),
@@ -248,6 +282,15 @@ export class JobScreeningService {
       sequenceCount: secureDna?.sequenceCount ?? aclidLeg?.sequenceCount ?? targets.length,
       detail: details.length ? details.join('; ') : null
     });
+    await this.closeRun(runId, {
+      status: recorded.status,
+      detail: runDetail(recorded.detail, collection),
+      // The run keeps Aclid's leg whenever Aclid screened, even in `securedna` mode where the
+      // Homology row ignores it: the screen exists, and KYC hangs off it.
+      aclid: aclid ? fitAclidLeg(aclid.run) : null,
+      secureDna: secureDna ? { batchId: secureDna.batchId ?? null, status: secureDna.status, detail: secureDna.detail ?? null } : null
+    });
+    return recorded;
   }
 
   /**
@@ -271,7 +314,8 @@ export class JobScreeningService {
         homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
         detail: `Aclid skipped: ${detail.toLowerCase()}`,
         error: null,
-        sequenceCount: 0
+        sequenceCount: 0,
+        run: { screenId: null, homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail }
       };
     }
 
@@ -310,7 +354,17 @@ export class JobScreeningService {
         homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
         detail,
         error: reason,
-        sequenceCount: aclidTargets.length
+        sequenceCount: aclidTargets.length,
+        run: {
+          screenId: pending?.id ?? null,
+          homologyStatus: pending ? HomologyScreeningStatus.IN_PROGRESS : HomologyScreeningStatus.UNAVAILABLE,
+          status: pending?.status ?? null,
+          regulatoryStatus: pending?.regulatoryStatus ?? null,
+          verificationStatus: pending?.verificationStatus ?? null,
+          decisionStatus: pending?.decisionStatus ?? null,
+          raw: pending?.raw ?? null,
+          detail
+        }
       };
     }
 
@@ -336,12 +390,19 @@ export class JobScreeningService {
       detail: answered ? null : verdictLine
     });
 
+    const { details, error: detailsError } = await this.aclidDetails(screen);
+
     return {
       outcome: answered ? 'verdict' : 'error',
       homologyStatus,
       detail: verdictLine,
       error: answered ? null : reason,
-      sequenceCount: aclidTargets.length
+      sequenceCount: aclidTargets.length,
+      run: {
+        ...aclidLegFields(screen, homologyStatus),
+        details,
+        detail: [answered ? null : verdictLine, detailsError].filter((part): part is string => !!part).join('; ') || null
+      }
     };
   }
 
@@ -400,6 +461,81 @@ export class JobScreeningService {
     }
   }
 
+  /**
+   * Aclid's per-sequence details for a screen that succeeded. Null while Aclid answers 204 —
+   * the next refresh tries again. A failed call keeps the verdict and says why (behaviour 13).
+   */
+  private async aclidDetails(screen: AclidScreenRecord): Promise<{ details: Record<string, unknown> | null; error: string | null }> {
+    if (screen.status !== 'succeeded') return { details: null, error: null };
+    try {
+      return { details: await this.aclidService.getScreenDetails(screen.id), error: null };
+    } catch (error) {
+      return { details: null, error: `Aclid details unavailable: ${messageOf(error)}` };
+    }
+  }
+
+  /**
+   * `refreshJobAclidScreening` read the job's screen again: bring the run that sent it up to
+   * date — the verdict fields, the raw report, and the details once the screen has succeeded
+   * and the run has none yet. Updates that run, never a new one; a screen no run carries (a
+   * job screened before runs existed) is left alone. Best-effort, like every run write.
+   */
+  async recordAclidRefresh(screen: AclidScreenRecord): Promise<void> {
+    try {
+      const run = await this.screeningRuns.findByAclidScreenId(screen.id);
+      if (!run) return;
+      const homologyStatus = homologyStatusFromAclidScreen(screen);
+      const leg: Partial<ScreeningRunAclidLeg> = {
+        ...aclidLegFields(screen, homologyStatus),
+        detail: homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null
+      };
+      if (screen.status === 'succeeded' && !run.aclid?.details) {
+        const { details, error } = await this.aclidDetails(screen);
+        leg.details = details;
+        if (error) leg.detail = leg.detail ? `${leg.detail}; ${error}` : error;
+      }
+      const fitted = fitAclidLeg({ ...(run.aclid ?? {}), ...leg } as ScreeningRunAclidLeg);
+      const write: Partial<ScreeningRunAclidLeg> = { ...leg, raw: fitted.raw, detail: fitted.detail };
+      if ('details' in leg) write.details = fitted.details;
+      // Same one-directional rule as the job's Homology row: only a new FAILED moves the run's verdict.
+      const patch: ScreeningRunPatch = homologyStatus === HomologyScreeningStatus.FAILED ? { status: HomologyScreeningStatus.FAILED } : {};
+      await this.screeningRuns.updateAclidLeg(String((run as { _id?: unknown })._id), write, patch);
+    } catch (error) {
+      this.logger.error(`Could not update the screening run for Aclid screen ${screen.id}: ${messageOf(error)}`);
+    }
+  }
+
+  private async openRun(jobId: string, options: ScreenJobOptions): Promise<string | null> {
+    try {
+      return await this.screeningRuns.create({
+        jobId,
+        trigger: options.trigger ?? ScreeningRunTrigger.SUBMISSION,
+        triggeredBy: options.triggeredBy ?? null,
+        status: HomologyScreeningStatus.IN_PROGRESS,
+        startedAt: new Date(),
+        sequenceCount: 0,
+        skippedCount: 0,
+        sequences: []
+      });
+    } catch (error) {
+      this.logger.error(`Could not open a screening run for job ${jobId}: ${messageOf(error)}`);
+      return null;
+    }
+  }
+
+  private async updateRun(runId: string | null, patch: ScreeningRunPatch): Promise<void> {
+    if (!runId) return;
+    try {
+      await this.screeningRuns.update(runId, patch);
+    } catch (error) {
+      this.logger.error(`Could not update screening run ${runId}: ${messageOf(error)}`);
+    }
+  }
+
+  private closeRun(runId: string | null, patch: ScreeningRunPatch): Promise<void> {
+    return this.updateRun(runId, { ...patch, completedAt: new Date() });
+  }
+
   /** Dispatch without blocking the caller. Errors are recorded, never thrown. */
   screenJobInBackground(jobId: string, userSub: string): void {
     if (!AUTO_SCREENING_ENABLED) return;
@@ -446,11 +582,37 @@ interface AclidLeg {
   /** Why there is no verdict, when the reason is a failure rather than a skip. */
   error: string | null;
   sequenceCount: number;
+  /** What the screening run stores for this leg. */
+  run: ScreeningRunAclidLeg;
 }
 
 /** Homology-row wording for a SecureDNA run that stood in for Aclid. */
 function backupLine(aclid: AclidLeg): string {
   return aclid.outcome === 'error' ? `SecureDNA backup after Aclid error: ${aclid.error}` : 'SecureDNA (no Aclid-eligible sequences)';
+}
+
+/** The verdict fields of an Aclid leg, from a screen record. */
+function aclidLegFields(screen: AclidScreenRecord, homologyStatus: HomologyScreeningStatus): ScreeningRunAclidLeg {
+  return {
+    screenId: screen.id,
+    homologyStatus,
+    status: screen.status,
+    regulatoryStatus: screen.regulatoryStatus,
+    verificationStatus: screen.verificationStatus,
+    decisionStatus: screen.decisionStatus,
+    matchCount: screen.matchCount ?? null,
+    materialCount: screen.materialCount ?? null,
+    findings: screen.findings,
+    materialSummary: screen.materialSummary ?? null,
+    raw: screen.raw ?? null
+  };
+}
+
+/** A run's detail line: the job row's detail, then what collection skipped or could not read. */
+function runDetail(recorded: string | null | undefined, collection: ScreeningCollection): string | null {
+  const parts = [recorded ?? null, collection.skippedCount ? `${collection.skippedCount} value${collection.skippedCount === 1 ? '' : 's'} skipped: not DNA` : null, ...collection.notes];
+  const line = parts.filter((part): part is string => !!part).join('; ');
+  return line || null;
 }
 
 function parseTimestamp(raw: string | null): Date | null {

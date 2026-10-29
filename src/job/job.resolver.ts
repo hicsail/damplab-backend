@@ -1,3 +1,4 @@
+import { ScreeningRunTrigger } from './screening-run.model';
 import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
@@ -394,7 +395,7 @@ export class JobResolver {
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
-    await this.jobScreeningService.screenJob(jobId, user.sub);
+    await this.jobScreeningService.screenJob(jobId, user.sub, { trigger: ScreeningRunTrigger.RERUN, triggeredBy: user.email || user.preferred_username || null });
     return (await this.jobService.findById(jobId)) ?? job;
   }
 
@@ -475,6 +476,8 @@ export class JobResolver {
   async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const { job, screening: existing, screenId } = await this.jobForCustomerVerification(jobId, user);
     const screen = await this.aclidService.getScreen(screenId);
+    // The run that sent this screen catches up too (biosecurity-update): verdict, raw report, details.
+    await this.jobScreeningService.recordAclidRefresh(screen);
 
     const homologyStatus = homologyStatusFromAclidScreen(screen);
     const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
