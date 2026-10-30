@@ -23,10 +23,7 @@ import { visiblePricing } from '../pricing/pricing-visibility';
 export class InventoryResolver {
   private readonly logger = new Logger(InventoryResolver.name);
 
-  constructor(
-    private readonly inventoryService: InventoryService,
-    private readonly inventoryImageService: InventoryImageService
-  ) {}
+  constructor(private readonly inventoryService: InventoryService, private readonly inventoryImageService: InventoryImageService) {}
 
   /** Everything, including soft-deleted items (for the admin catalog). */
   @Query(() => [InventoryItem], { description: 'All inventory items including soft-deleted ones (admin view). Requires inventory:read.' })
