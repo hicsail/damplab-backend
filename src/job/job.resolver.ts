@@ -396,7 +396,7 @@ export class JobResolver {
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
-    await this.jobScreeningService.screenJob(jobId, user.sub, { trigger: ScreeningRunTrigger.RERUN, triggeredBy: user.email || user.preferred_username || null });
+    await this.jobScreeningService.screenJob(jobId, user.sub, { trigger: ScreeningRunTrigger.RERUN, triggeredBy: user.name || user.email || user.preferred_username || null });
     return (await this.jobService.findById(jobId)) ?? job;
   }
 
@@ -477,9 +477,6 @@ export class JobResolver {
   async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const { job, screening: existing, screenId } = await this.jobForCustomerVerification(jobId, user);
     const screen = await this.aclidService.getScreen(screenId);
-    // The run that sent this screen catches up too (biosecurity-update): verdict, raw report, details.
-    await this.jobScreeningService.recordAclidRefresh(screen);
-
     const homologyStatus = homologyStatusFromAclidScreen(screen);
     const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
     const updated = await this.jobService.setAclidScreening(jobId, {
@@ -499,6 +496,10 @@ export class JobResolver {
         screenHomologyStatus: homologyStatus
       })
     });
+
+    // The run that sent this screen catches up too (biosecurity-update): verdict, raw report, details.
+    // After the customer's own row, so a slow details fetch never delays it; it never rejects.
+    await this.jobScreeningService.recordAclidRefresh(screen);
 
     // The Homology row is a stored rollup, and SecureDNA's leg cannot be read
     // back out of it. So this is one-directional: a screen that had no verdict
@@ -523,7 +524,7 @@ export class JobResolver {
 
   /**
    * The Biosecurity block is per account, stored as a Keycloak attribute.
-   * A missing method (unit harnesses that never construct Keycloak) is off.
+   * A missing method (unit harnesses that never construct Keycloak) reads as shown.
    */
   private callerShowsBiosecurity(user: User): Promise<boolean> {
     return callerShowsBiosecurity(this.keycloakService, user);

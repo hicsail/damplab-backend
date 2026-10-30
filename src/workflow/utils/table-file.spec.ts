@@ -8,6 +8,7 @@ import {
   missingColumns,
   missingColumnsMessage,
   headerFor,
+  headerIndexesFor,
   readTableFile,
   readTableRecords,
   readTableRows,
@@ -359,13 +360,24 @@ describe('readTableRecords (biosecurity-update behaviour 2)', () => {
     });
     expect(await readTableRecords(buffer)).toEqual({
       header: ['Well', 'Notes', 'Insert'],
-      rows: [{ Insert: SEQ }, { Well: 'A2', Insert: 'TTTT' }]
+      rows: [{ Insert: SEQ }, { Well: 'A2', Insert: 'TTTT' }],
+      grid: [
+        ['', '', SEQ],
+        ['A2', '', 'TTTT']
+      ]
     });
   });
 
   it('reads CSV, trims cells, drops a BOM, skips empty rows and ignores cells under a blank header', async () => {
     const csv = Buffer.from(`\uFEFFWell, Insert ,\nA1, ${SEQ} ,extra\n,,\nA2,,\n`);
-    expect(await readTableRecords(csv)).toEqual({ header: ['Well', 'Insert'], rows: [{ Well: 'A1', Insert: SEQ }, { Well: 'A2' }] });
+    expect(await readTableRecords(csv)).toEqual({
+      header: ['Well', 'Insert'],
+      rows: [{ Well: 'A1', Insert: SEQ }, { Well: 'A2' }],
+      grid: [
+        ['A1', SEQ],
+        ['A2', '']
+      ]
+    });
   });
 
   it('keeps a row that has content only under a blank header, as the row count does', async () => {
@@ -379,12 +391,29 @@ describe('readTableRecords (biosecurity-update behaviour 2)', () => {
     const empty = await xlsxBuffer((workbook) => {
       workbook.addWorksheet('Empty');
     });
-    expect(await readTableRecords(empty)).toEqual({ header: [], rows: [] });
+    expect(await readTableRecords(empty)).toEqual({ header: [], rows: [], grid: [] });
   });
 
   it('refuses what readTableFile refuses, with the same messages', async () => {
     await expect(readTableRecords(Buffer.alloc(TABLE_FILE_MAX_BYTES + 1))).rejects.toThrow(TABLE_FILE_TOO_LARGE_MESSAGE);
     await expect(readTableRecords(Buffer.from([0x41, 0x00, 0x42]))).rejects.toThrow(TABLE_FILE_UNREADABLE_MESSAGE);
+  });
+
+  it('keeps both cells when two columns share a header, exactly or by case', async () => {
+    const csv = Buffer.from(`Well,Insert,INSERT,Insert\nA1,AAAA,CCCC,GGGG\n`);
+    const records = await readTableRecords(csv);
+    expect(records.header).toEqual(['Well', 'Insert', 'INSERT', 'Insert']);
+    expect(records.grid).toEqual([['A1', 'AAAA', 'CCCC', 'GGGG']]);
+    expect(headerIndexesFor(records.header, 'insert')).toEqual([1, 2, 3]);
+  });
+
+  it('reads cells under headers named like Object.prototype members', async () => {
+    const csv = Buffer.from('constructor,toString,__proto__,hasOwnProperty\nA,B,C,D\n');
+    const records = await readTableRecords(csv);
+    expect(records.grid).toEqual([['A', 'B', 'C', 'D']]);
+    expect(records.rows[0]['constructor']).toBe('A');
+    expect(records.rows[0]['toString']).toBe('B');
+    expect(records.rows[0]['hasOwnProperty']).toBe('D');
   });
 
   it('headerFor matches trimmed and case-insensitively, first match wins', () => {

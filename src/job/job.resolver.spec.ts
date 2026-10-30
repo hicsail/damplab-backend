@@ -279,6 +279,7 @@ describe('JobResolver.rerunJobHomologyScreening', () => {
     sub: 'staff-1',
     email: 'staff@example.org',
     preferred_username: 'Staff',
+    name: 'Sam Staff',
     realm_access: { roles: [Role.DamplabStaff] }
   };
 
@@ -291,7 +292,7 @@ describe('JobResolver.rerunJobHomologyScreening', () => {
 
     const result = await resolver.rerunJobHomologyScreening('job-1', staff);
 
-    expect(screenJob).toHaveBeenCalledWith('job-1', staff.sub, { trigger: 'RERUN', triggeredBy: staff.email || staff.preferred_username || null });
+    expect(screenJob).toHaveBeenCalledWith('job-1', staff.sub, { trigger: 'RERUN', triggeredBy: 'Sam Staff' });
     expect(screenJobInBackground).not.toHaveBeenCalled();
     expect(result).toBe(screened);
   });
@@ -461,6 +462,29 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     harness.getScreen.mockResolvedValueOnce(screen);
     await harness.resolver.refreshJobAclidScreening('job-1', owner);
     expect(harness.recordAclidRefresh).toHaveBeenCalledWith(screen);
+  });
+
+  it("writes the job row before the run (the run write never rejects, but must not delay the customer's row)", async () => {
+    const harness = kycHarness(screenedJob());
+    const order: string[] = [];
+    harness.getScreen.mockResolvedValueOnce({
+      id: 'scr_123',
+      status: 'succeeded',
+      regulatoryStatus: 'not_controlled',
+      verificationStatus: 'verified',
+      decisionStatus: null,
+      verificationCompletedAt: null,
+      findings: null
+    });
+    harness.setAclidScreening.mockImplementationOnce(async (_id: string, aclidScreening: any) => {
+      order.push('row');
+      return { ...screenedJob(), aclidScreening };
+    });
+    harness.recordAclidRefresh.mockImplementationOnce(async () => {
+      order.push('run');
+    });
+    await harness.resolver.refreshJobAclidScreening('job-1', owner);
+    expect(order).toEqual(['row', 'run']);
   });
 
   it('re-reads the screen and rewrites the KYC fields, homology and customer status', async () => {

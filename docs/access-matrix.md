@@ -191,5 +191,6 @@ mirrors it with `userProps.showBiosecurity` on the job page's Biosecurity card.
 |---|---|
 | `jobScreeningRuns(jobId)`, `screeningRun(id)` | `jobs:view-all` + `showBiosecurity` (new, 2026-10-29) |
 | `screeningBatch(id)`, `screeningBatches` | `jobs:view-all` + `showBiosecurity` — the second check added 2026-10-29 (F2). `/screener` lists `screeningBatches`, so it is refused to staff with the flag off. |
+| `createSequencesBatch`, `screenSequencesBatch` | `jobs:view-all` + `showBiosecurity` (added 2026-10-30; `/screener` is hidden to staff with the flag off, this is its server twin) |
 | `rerunJobHomologyScreening` | `jobs:view-all` + `showBiosecurity` (unchanged) |
 | Saving `screening` / `screeningFields` on a parameter | the existing catalog-edit gates of `updateService` / `createService` and the parameter-set mutations; no new gate |

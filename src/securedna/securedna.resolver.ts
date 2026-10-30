@@ -43,12 +43,14 @@ export class SecureDnaResolver {
   @Mutation(() => [Sequence])
   @RequirePermission(Permission.JobsViewAll)
   async createSequencesBatch(@Args('input') input: BatchCreateSequencesInput, @CurrentUser() user: User): Promise<Sequence[]> {
+    await assertShowsBiosecurity(this.keycloakService, user);
     return this.secureDnaService.createSequencesBatch(input.sequences, user.sub);
   }
 
   @Mutation(() => ScreeningBatch)
   @RequirePermission(Permission.JobsViewAll)
   async screenSequencesBatch(@Args('input') input: BatchScreeningInput, @CurrentUser() user: User): Promise<ScreeningBatch> {
+    await assertShowsBiosecurity(this.keycloakService, user);
     const batch = await this.secureDnaService.screenSequencesBatch(input, user.sub);
     return normalizeScreeningBatchForGraphql(batch as unknown as Record<string, unknown>);
   }

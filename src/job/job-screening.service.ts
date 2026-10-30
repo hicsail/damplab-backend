@@ -15,7 +15,7 @@ import { WorkflowParameterFilesService } from '../workflow/services/workflow-par
 import { ScreeningRunPatch, ScreeningRunService } from './screening-run.service';
 import { ScreeningRunAclidLeg, ScreeningRunTrigger } from './screening-run.model';
 import { fitAclidLeg } from './screening-run.util';
-import { headerFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
+import { headerIndexesFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
 import { TABLE_UPLOAD_KEY_PREFIX } from '../workflow/utils/table-answers';
 import { fileRecord, flattenValues, hasParentSegment, isTableType, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
 import {
@@ -35,6 +35,9 @@ import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceNam
  * true when the feature is finished.
  */
 export const AUTO_SCREENING_ENABLED = false;
+
+/** Aclid screen statuses that will not change again. Anything else is still running. */
+const ACLID_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'deleted', 'archived']);
 
 export interface ScreenJobOptions {
   trigger?: ScreeningRunTrigger;
@@ -155,17 +158,20 @@ export class JobScreeningService {
         collection.notes.push(`${label}: could not read ${filename} (${messageOf(error)})`);
         continue;
       }
-      const present: Array<{ header: string }> = [];
+      // Every column whose header matches a screening field, once each, in column order: two columns
+      // may share a header (exactly or by case) and a sequence in either must be screened.
+      const matched = new Set<number>();
       for (const field of fields) {
-        const header = headerFor(table.header, field);
-        if (header === undefined) collection.notes.push(`${label}: ${filename} has no column “${field}”`);
-        else present.push({ header });
+        const indexes = headerIndexesFor(table.header, field);
+        if (indexes.length === 0) collection.notes.push(`${label}: ${filename} has no column “${field}”`);
+        else indexes.forEach((index) => matched.add(index));
       }
-      const slugs = columnSlugs(present.map((column) => column.header));
-      table.rows.forEach((row, index) => {
-        present.forEach((column, c) => {
-          const cell = (row[column.header] ?? '').trim();
-          if (cell !== '') push(tableCellSliceName(args.workflowId, args.nodeId, fieldId, index + 1, slugs[c]), cell, `${label} › row ${index + 1} › ${column.header}`);
+      const present = [...matched].sort((a, b) => a - b);
+      const slugs = columnSlugs(present.map((index) => table.header[index]));
+      table.grid.forEach((row, rowIndex) => {
+        present.forEach((index, c) => {
+          const cell = (row[index] ?? '').trim();
+          if (cell !== '') push(tableCellSliceName(args.workflowId, args.nodeId, fieldId, rowIndex + 1, slugs[c]), cell, `${label} › row ${rowIndex + 1} › ${table.header[index]}`);
         });
       });
     }
@@ -496,9 +502,11 @@ export class JobScreeningService {
       const run = await this.screeningRuns.findByAclidScreenId(screen.id);
       if (!run) return;
       const homologyStatus = homologyStatusFromAclidScreen(screen);
+      // A screen that has not finished is still running, not "without a regulatory status".
+      const running = homologyStatus === HomologyScreeningStatus.UNAVAILABLE && !ACLID_TERMINAL_STATUSES.has(String(screen.status));
       const leg: Partial<ScreeningRunAclidLeg> = {
-        ...aclidLegFields(screen, homologyStatus),
-        detail: homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null
+        ...aclidLegFields(screen, running ? HomologyScreeningStatus.IN_PROGRESS : homologyStatus),
+        detail: running ? 'Aclid screen still running' : homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null
       };
       if (screen.status === 'succeeded' && !run.aclid?.details) {
         const { details, error } = await this.aclidDetails(screen);

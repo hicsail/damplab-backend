@@ -557,6 +557,26 @@ describe('collectScreeningTargets from flags (biosecurity-update)', () => {
     expect(skippedCount).toBe(0);
   });
 
+  it('screens every column whose header matches a screening field, with distinct names (duplicate headers)', async () => {
+    const param = { ...plateParam, screeningFields: ['Insert'], tableData: { columns: [{ header: 'Well' }, { header: 'Insert' }] } };
+    const readObject = jest.fn(async () => Buffer.from(`Well,Insert,INSERT,Insert\nA1,${DNA_A},${DNA_B},${DNA_A}\n`));
+    const { service, job } = harness([{ id: 'n1', serviceName: 'Plates', parameters: [param], formData: [{ id: 'plate', value: plateValue }] }], { readObject });
+    const { targets } = await service.collectScreeningTargets(job!);
+    expect(targets).toEqual([
+      { name: `${WORKFLOW_ID}_n1_plate_r1_insert`, seq: DNA_A, label: 'Plates › Plate map › row 1 › Insert' },
+      { name: `${WORKFLOW_ID}_n1_plate_r1_insert-2`, seq: DNA_B, label: 'Plates › Plate map › row 1 › INSERT' },
+      { name: `${WORKFLOW_ID}_n1_plate_r1_insert-3`, seq: DNA_A, label: 'Plates › Plate map › row 1 › Insert' }
+    ]);
+  });
+
+  it('reads a screening column whose header is named like an Object.prototype member', async () => {
+    const param = { ...plateParam, screeningFields: ['constructor'] };
+    const readObject = jest.fn(async () => Buffer.from(`Well,constructor\nA1,${DNA_A}\n`));
+    const { service, job } = harness([{ id: 'n1', serviceName: 'Plates', parameters: [param], formData: [{ id: 'plate', value: plateValue }] }], { readObject });
+    const { targets } = await service.collectScreeningTargets(job!);
+    expect(targets.map((t) => t.seq)).toEqual([DNA_A]);
+  });
+
   it('reports a screening column the file does not have, and still screens the rest (behaviour 2)', async () => {
     const readObject = jest.fn(async () => Buffer.from(`Well,Insert\nA1,${DNA_A}\n`));
     const { service, job } = harness([{ id: 'n1', serviceName: 'Plates', parameters: [plateParam], formData: [{ id: 'plate', value: plateValue }] }], { readObject });
@@ -795,6 +815,18 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
     expect(getScreenDetails).not.toHaveBeenCalled();
     expect(screeningRuns.updateAclidLeg.mock.calls[0][1]).not.toHaveProperty('details');
     expect(screeningRuns.updateAclidLeg.mock.calls[0][2]).toEqual({});
+  });
+
+  it("keeps the run's Aclid leg IN_PROGRESS while the screen is still running", async () => {
+    const screeningRuns = {
+      create: jest.fn(),
+      update: jest.fn(),
+      findByAclidScreenId: jest.fn(async () => run({ screenId: 'scr_1', details: null })),
+      updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
+    };
+    const { service } = harness([], { screeningRuns });
+    await service.recordAclidRefresh(aclidScreen({ status: 'running', regulatoryStatus: null }) as any);
+    expect(screeningRuns.updateAclidLeg.mock.calls[0][1]).toMatchObject({ homologyStatus: 'IN_PROGRESS', status: 'running', detail: 'Aclid screen still running' });
   });
 
   it('is a no-op for a screen no run carries (jobs screened before this change)', async () => {
