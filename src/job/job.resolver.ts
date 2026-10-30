@@ -498,8 +498,9 @@ export class JobResolver {
     });
 
     // The run that sent this screen catches up too (biosecurity-update): verdict, raw report, details.
-    // After the customer's own row, so a slow details fetch never delays it; it never rejects.
-    await this.jobScreeningService.recordAclidRefresh(screen);
+    // After the customer's own row, and not awaited: the details call can take up to 30 s and the
+    // customer's click must not wait on it. It never rejects; the catch is belt and braces.
+    void this.jobScreeningService.recordAclidRefresh(screen).catch((err) => this.logger.error(`Aclid refresh run write failed for jobId=${jobId}`, err instanceof Error ? err.stack : err));
 
     // The Homology row is a stored rollup, and SecureDNA's leg cannot be read
     // back out of it. So this is one-directional: a screen that had no verdict

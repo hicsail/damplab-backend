@@ -487,6 +487,15 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     expect(order).toEqual(['row', 'run']);
   });
 
+  it('returns once the job row is written, without waiting on the run write', async () => {
+    const harness = kycHarness(screenedJob());
+    harness.getScreen.mockResolvedValueOnce(approvedScreen);
+    harness.recordAclidRefresh.mockImplementationOnce(() => new Promise(() => undefined));
+    const result = await Promise.race([harness.resolver.refreshJobAclidScreening('job-1', owner), new Promise((resolve) => setTimeout(() => resolve('timed out'), 200))]);
+    expect(result).not.toBe('timed out');
+    expect(harness.recordAclidRefresh).toHaveBeenCalledWith(approvedScreen);
+  });
+
   it('re-reads the screen and rewrites the KYC fields, homology and customer status', async () => {
     const { resolver, getScreen, setAclidScreening, screenJob, screenJobInBackground } = kycHarness(screenedJob());
     getScreen.mockResolvedValue(approvedScreen);

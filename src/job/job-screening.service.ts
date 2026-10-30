@@ -8,7 +8,7 @@ import { DampLabServices } from '../services/damplab-services.services';
 import { SecureDnaService } from '../securedna/securedna.service';
 import { Region } from '../securedna/region';
 import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
-import { AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
+import { ACLID_TERMINAL_STATUSES, AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
 import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidScreen, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
@@ -35,9 +35,6 @@ import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceNam
  * true when the feature is finished.
  */
 export const AUTO_SCREENING_ENABLED = false;
-
-/** Aclid screen statuses that will not change again. Anything else is still running. */
-const ACLID_TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'deleted', 'archived']);
 
 export interface ScreenJobOptions {
   trigger?: ScreeningRunTrigger;
