@@ -338,3 +338,69 @@ describe('AddNodeInputPipe counts a Table file itself (table-upload rules 22, 24
     expect(out.price).toBe(0);
   });
 });
+
+describe('AddNodeInputPipe refuses a required file left out', () => {
+  const service = {
+    _id: 'svc',
+    name: 'Sequencing',
+    price: 10,
+    parameters: [
+      {
+        id: 'kind',
+        name: 'Kind',
+        type: 'dropdown',
+        options: [
+          { id: 'a', name: 'A' },
+          { id: 'b', name: 'B' }
+        ]
+      },
+      { id: 'seqs', name: 'Sequences', type: 'file', required: true, showIf: { parameterId: 'kind', op: 'eq', optionIds: ['a'] } },
+      { id: 'plate', name: 'Plate', type: 'table', required: true, tableData: { columns: [{ header: 'Well', field: 'well' }] } },
+      { id: 'unset', name: 'Unset', type: 'table', required: true },
+      { id: 'notes', name: 'Notes', type: 'file' }
+    ]
+  };
+  const objectExists = jest.fn(async () => true);
+  const stored = (name: string): string => JSON.stringify({ filename: name, key: `workflow-parameters/u1/${name}`, contentType: 'text/plain', size: 1 });
+  const transform = (formData: unknown[]): Promise<any> =>
+    new AddNodeInputPipe({ findOneActive: async () => service } as any, { req: { user: { sub: 'u1' } }, user: { realm_access: { roles: [] } } }, {
+      isConfigured: true,
+      objectExists,
+      readObject: jest.fn(async () => Buffer.from('Well\nA1\n'))
+    } as any).transform({ id: 'n1', label: 'Sequencing', serviceId: 'svc', additionalInstructions: '', formData } as any);
+
+  it.each([[null], [''], [[]]])('refuses a required file answered with %j', async (value) => {
+    await expect(
+      transform([
+        { id: 'kind', value: 'a' },
+        { id: 'seqs', value },
+        { id: 'plate', value: stored('p.csv') }
+      ])
+    ).rejects.toThrow(new BadRequestException('“Sequences” on "Sequencing" requires a file. Upload it and resubmit.'));
+  });
+
+  it('refuses a required file with no answer at all, and a required Table left empty', async () => {
+    await expect(
+      transform([
+        { id: 'kind', value: 'a' },
+        { id: 'plate', value: stored('p.csv') }
+      ])
+    ).rejects.toThrow('“Sequences” on "Sequencing" requires a file.');
+    await expect(
+      transform([
+        { id: 'kind', value: 'b' },
+        { id: 'plate', value: null }
+      ])
+    ).rejects.toThrow('“Plate” on "Sequencing" requires a file.');
+  });
+
+  it('does not ask for a hidden file, a Table that is not set up, or an optional file', async () => {
+    await expect(
+      transform([
+        { id: 'kind', value: 'b' },
+        { id: 'plate', value: stored('p.csv') },
+        { id: 'notes', value: null }
+      ])
+    ).resolves.toBeDefined();
+  });
+});

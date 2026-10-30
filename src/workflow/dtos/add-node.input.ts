@@ -7,7 +7,7 @@ import { getMultiValueParamIds, normalizeFormDataToArray } from '../utils/form-d
 import { calculateServiceCost, CustomerCategory } from '../../pricing/service-pricing.util';
 import { REQUEST } from '@nestjs/core';
 import { deriveCustomerCategory } from '../../pricing/pricing-groups';
-import { foreignFileKey, plainFileAnswers, unuploadedFileName } from '../utils/sample-sheet.util';
+import { foreignFileKey, missingRequiredFile, plainFileAnswers, unuploadedFileName } from '../utils/sample-sheet.util';
 import { WorkflowParameterFilesService } from '../services/workflow-parameter-files.service';
 import { countNewTableAnswers } from '../utils/table-answers';
 import { TABLE_FILE_MAX_BYTES } from '../utils/table-file';
@@ -54,6 +54,11 @@ export class AddNodeInputPipe implements PipeTransform<AddNodeInput, Promise<Add
     const unuploaded = unuploadedFileName(service.parameters, shown);
     if (unuploaded !== null) {
       throw new BadRequestException(`The file “${unuploaded}” on "${operation}" was not uploaded. Pick it again and resubmit.`);
+    }
+    // Every path that creates a node ends here, so a required file cannot be left out by any client.
+    const missingFile = missingRequiredFile(service.parameters, shown);
+    if (missingFile !== null) {
+      throw new BadRequestException(`“${missingFile}” on "${operation}" requires a file. Upload it and resubmit.`);
     }
     // A File Upload answer must name a file that is really stored. Without file storage (local dev) a file is recorded
     // by name only, and that is the one case a keyless answer is accepted. (Table files are read below.)

@@ -1,4 +1,5 @@
 import { Job, JobState } from '../../job/job.model';
+import { hiddenParameterIds } from '../../services/parameter-conditions';
 
 /**
  * A Table is a catalog parameter whose stored type is `table` or `sampleSheet`:
@@ -212,6 +213,24 @@ export function foreignFileKey(parameters: unknown, formData: ReadonlyArray<{ id
       const key = sampleSheetKeyOf(value);
       if (key !== undefined && !keyBelongsToUploader(key, userSub)) return key;
     }
+  }
+  return null;
+}
+
+/**
+ * The name of the first required File Upload or Table parameter with no file, or null when there is none. A parameter
+ * hidden by these answers is not asked for, and a Table that is not set up cannot be answered, so neither counts.
+ */
+export function missingRequiredFile(parameters: unknown, formData: ReadonlyArray<{ id: string; value?: unknown }>): string | null {
+  if (!Array.isArray(parameters)) return null;
+  const hidden = hiddenParameterIds(parameters, formData);
+  for (const param of parameters) {
+    if (!param || typeof param.id !== 'string' || !param.required || hidden.has(param.id)) continue;
+    if (param.type !== 'file' && !(isTableType(param.type) && tableIsSetUp(param))) continue;
+    const answered = (formData ?? []).some(
+      (entry) => entry?.id === param.id && flattenValues(entry.value).some((value) => value !== null && value !== undefined && !(typeof value === 'string' && value.trim() === ''))
+    );
+    if (!answered) return typeof param.name === 'string' && param.name.trim() !== '' ? param.name : param.id;
   }
   return null;
 }
