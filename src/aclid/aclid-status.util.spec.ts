@@ -1,9 +1,12 @@
 import { HomologyScreeningStatus } from '../job/job.model';
+import { CustomerScreeningStatus } from '../job/screening-run.model';
 import {
   parseHomologyMode,
   homologyStatusFromAclidRegulatory,
   homologyStatusFromAclidScreen,
   customerStatusFromAclid,
+  customerScreeningStatus,
+  jobCustomerStatusFromLeg,
   customerVerificationState,
   rollupHomologyStatuses,
   isAclidLengthEligible
@@ -110,5 +113,47 @@ describe('isAclidLengthEligible', () => {
     expect(isAclidLengthEligible('ATGC'.repeat(7))).toBe(false); // 28
     expect(isAclidLengthEligible('ATGC'.repeat(8))).toBe(true); // 32
     expect(isAclidLengthEligible(` ${'A'.repeat(30)} \n`)).toBe(true);
+  });
+});
+
+describe('customerScreeningStatus (behaviour 4)', () => {
+  it.each([
+    ['no_issues_found', 'awaiting', 'PASSED'],
+    ['no_sanctions_matches', 'awaiting', 'PASSED'],
+    ['all_issues_resolved', 'awaiting', 'PASSED'],
+    ['needs_review', 'awaiting', 'NEEDS_REVIEW'],
+    ['running', 'awaiting', 'IN_PROGRESS'],
+    ['not_run', 'awaiting', 'IN_PROGRESS'],
+    ['failed', 'awaiting', 'FAILED'],
+    [null, 'awaiting', 'IN_PROGRESS'],
+    ['something_new', 'awaiting', 'IN_PROGRESS'],
+    ['no_issues_found', 'rejected', 'FAILED'],
+    ['running', 'rejected', 'FAILED'],
+    [null, 'rejected', 'FAILED'],
+    ['needs_review', 'approved', 'PASSED'],
+    ['failed', 'approved', 'PASSED'],
+    [null, 'approved', 'PASSED'],
+    ['running', 'approved', 'IN_PROGRESS'],
+    ['not_run', 'approved', 'IN_PROGRESS'],
+    ['no_issues_found', 'escalated', 'NEEDS_REVIEW'],
+    ['running', 'escalated', 'NEEDS_REVIEW'],
+    [null, 'escalated', 'NEEDS_REVIEW'],
+    ['failed', 'escalated', 'FAILED']
+  ])('verdict %s with decision %s is %s', (verdict, decision, expected) => {
+    expect(customerScreeningStatus(verdict, decision)).toBe(expected);
+  });
+});
+
+describe('jobCustomerStatusFromLeg', () => {
+  it.each([
+    ['PASSED', 'PASSED'],
+    ['FAILED', 'FAILED'],
+    ['IN_PROGRESS', 'IN_PROGRESS'],
+    ['NEEDS_REVIEW', 'IN_PROGRESS'],
+    ['NOT_AVAILABLE', 'UNAVAILABLE'],
+    ['NOT_RUN', 'UNAVAILABLE'],
+    ['UNAVAILABLE', 'UNAVAILABLE']
+  ])('%s stores as %s', (leg, job) => {
+    expect(jobCustomerStatusFromLeg(leg as CustomerScreeningStatus)).toBe(job);
   });
 });

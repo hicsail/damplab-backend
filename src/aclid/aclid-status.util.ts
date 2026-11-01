@@ -1,4 +1,5 @@
 import { HomologyScreeningStatus } from '../job/job.model';
+import { CustomerScreeningStatus } from '../job/screening-run.model';
 import { normalizeSequenceString } from '../job/job-screening.util';
 import { ACLID_MIN_SEQUENCE_LENGTH } from './aclid.constants';
 
@@ -94,6 +95,51 @@ export function customerStatusFromAclid(input: {
   }
 
   return HomologyScreeningStatus.IN_PROGRESS;
+}
+
+/**
+ * The customer leg's status from Aclid's `review.verdict` and `decision_status`.
+ * A staff decision (`rejected`, `approved`, `escalated`) outranks the automated
+ * verdict, except that an approval cannot pass a check that has not finished and
+ * an escalation cannot soften a failed one.
+ */
+export function customerScreeningStatus(verdict: string | null | undefined, decisionStatus: string | null | undefined): CustomerScreeningStatus {
+  const v = verdict?.trim().toLowerCase() ?? '';
+  const decision = decisionStatus?.trim().toLowerCase() ?? '';
+  if (decision === 'rejected') return CustomerScreeningStatus.FAILED;
+  if (decision === 'approved') {
+    return v === 'running' || v === 'not_run' ? CustomerScreeningStatus.IN_PROGRESS : CustomerScreeningStatus.PASSED;
+  }
+  if (decision === 'escalated') {
+    return v === 'failed' ? CustomerScreeningStatus.FAILED : CustomerScreeningStatus.NEEDS_REVIEW;
+  }
+  switch (v) {
+    case 'no_issues_found':
+    case 'no_sanctions_matches':
+    case 'all_issues_resolved':
+      return CustomerScreeningStatus.PASSED;
+    case 'needs_review':
+      return CustomerScreeningStatus.NEEDS_REVIEW;
+    case 'failed':
+      return CustomerScreeningStatus.FAILED;
+    default:
+      return CustomerScreeningStatus.IN_PROGRESS;
+  }
+}
+
+/** The job's Customer row has no NEEDS_REVIEW; a review in flight reads as in progress. */
+export function jobCustomerStatusFromLeg(status: CustomerScreeningStatus): HomologyScreeningStatus {
+  switch (status) {
+    case CustomerScreeningStatus.PASSED:
+      return HomologyScreeningStatus.PASSED;
+    case CustomerScreeningStatus.FAILED:
+      return HomologyScreeningStatus.FAILED;
+    case CustomerScreeningStatus.IN_PROGRESS:
+    case CustomerScreeningStatus.NEEDS_REVIEW:
+      return HomologyScreeningStatus.IN_PROGRESS;
+    default:
+      return HomologyScreeningStatus.UNAVAILABLE;
+  }
 }
 
 export function rollupHomologyStatuses(statuses: HomologyScreeningStatus[]): HomologyScreeningStatus {

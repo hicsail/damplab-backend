@@ -21,6 +21,18 @@ export enum ScreeningRunTrigger {
 }
 registerEnumType(ScreeningRunTrigger, { name: 'ScreeningRunTrigger' });
 
+/** The customer-screening (Aclid `/v2/customers`) leg of a run. NOT_AVAILABLE and NOT_RUN are set by the service, never by Aclid. */
+export enum CustomerScreeningStatus {
+  PASSED = 'PASSED',
+  NEEDS_REVIEW = 'NEEDS_REVIEW',
+  FAILED = 'FAILED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  NOT_AVAILABLE = 'NOT_AVAILABLE',
+  NOT_RUN = 'NOT_RUN',
+  UNAVAILABLE = 'UNAVAILABLE'
+}
+registerEnumType(CustomerScreeningStatus, { name: 'CustomerScreeningStatus' });
+
 @Schema({ _id: false })
 @ObjectType({ description: 'One sequence a screening run sent to the providers' })
 export class ScreeningRunSequence {
