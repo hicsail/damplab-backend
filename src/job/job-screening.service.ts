@@ -13,8 +13,9 @@ import { ACLID_MIN_SEQUENCE_LENGTH, homologyStatusFromAclidScreen, isAclidLength
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
 import { ScreeningRunPatch, ScreeningRunService } from './screening-run.service';
-import { CustomerScreeningStatus, ScreeningRunAclidLeg, ScreeningRunCustomerLeg, ScreeningRunTrigger } from './screening-run.model';
+import { CustomerScreeningStatus, JobAcceptanceScreening, JobAcceptanceScreeningState, ScreeningRunAclidLeg, ScreeningRunCustomerLeg, ScreeningRunTrigger } from './screening-run.model';
 import { fitAclidLeg } from './screening-run.util';
+import { ACCEPTANCE_MESSAGES, decideAcceptanceScreening, isAcceptanceGatedState } from './screening-acceptance.util';
 import { headerIndexesFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
 import { TABLE_UPLOAD_KEY_PREFIX } from '../workflow/utils/table-answers';
 import { fileRecord, flattenValues, hasParentSegment, isTableType, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
@@ -135,6 +136,24 @@ export class JobScreeningService {
           yield { workflowId, nodeId: node.id, service, param, value: entries.find((entry) => entry.id === param.id)?.value };
         }
       }
+    }
+  }
+
+  /**
+   * Whether screening lets this job be accepted. Reads nothing for a job that is not gated. Never throws:
+   * a check that cannot be made reads as NOT_PASSED, so the gate fails closed.
+   */
+  async acceptanceScreening(job: Job, options: { callerCanScreen?: boolean } = {}): Promise<JobAcceptanceScreening> {
+    const callerCanScreen = options.callerCanScreen ?? true;
+    try {
+      if (!isAcceptanceGatedState(job.state)) return decideAcceptanceScreening({ jobState: job.state, newestRun: null, currentFingerprint: '', callerCanScreen });
+      const newestRun = await this.screeningRuns.findNewestForJob(String(job._id));
+      const currentFingerprint = await this.screeningFingerprint(job);
+      return decideAcceptanceScreening({ jobState: job.state, newestRun, currentFingerprint, callerCanScreen });
+    } catch (error) {
+      // Fails closed: a check that cannot be made must not read as a pass.
+      this.logger.error(`Could not check acceptance screening for job ${String(job?._id)}: ${messageOf(error)}`);
+      return { state: JobAcceptanceScreeningState.NOT_PASSED, message: ACCEPTANCE_MESSAGES.CHECK_FAILED + (callerCanScreen ? '' : ACCEPTANCE_MESSAGES.NO_BIOSECURITY_ACCESS) };
     }
   }
 

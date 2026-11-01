@@ -1,8 +1,9 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
 import { AclidCustomerPendingError, AclidFeatureNotEnabledError, AclidScreenPendingError } from '../aclid/aclid.service';
 import { AUTO_SCREENING_ENABLED, JobScreeningService } from './job-screening.service';
-import { HomologyScreeningStatus, Job } from './job.model';
-import { CustomerScreeningStatus, ScreeningRunTrigger } from './screening-run.model';
+import { HomologyScreeningStatus, Job, JobState } from './job.model';
+import { CustomerScreeningStatus, JobAcceptanceScreeningState, ScreeningRunTrigger } from './screening-run.model';
+import { ACCEPTANCE_MESSAGES } from './screening-acceptance.util';
 
 const GIBSON_ASSEMBLY_SERVICE_NAME = 'Gibson Assembly';
 const M_CLONING_SERVICE_NAME = 'Modular Cloning';
@@ -1309,5 +1310,50 @@ describe('customer leg (aclid-customer-screening)', () => {
     const h = harness(two, { screenSequences: jest.fn(async () => granted) });
     await h.service.screenJob('job-1', 'user-1');
     expect(closed(h.screeningRuns).sequenceCount).toBe(2);
+  });
+});
+
+describe('acceptanceScreening', () => {
+  const nodes = (value: string): Array<{ id: string; serviceName: string; formData: unknown }> => [{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value }] }];
+  const jobIn = (state: JobState): Partial<Job> => ({ _id: 'job-1', workflows: [WORKFLOW_ID], state } as unknown as Partial<Job>);
+  const runFor = (fingerprint: string): any => ({
+    status: HomologyScreeningStatus.PASSED,
+    completedAt: new Date(),
+    sequenceCount: 1,
+    fingerprint,
+    unscreenedNotes: [],
+    customer: { status: CustomerScreeningStatus.NOT_AVAILABLE },
+    aclid: { homologyStatus: HomologyScreeningStatus.PASSED }
+  });
+  const withNewest = (screeningRuns: any, run: unknown): any => ({ ...screeningRuns, findNewestForJob: jest.fn(async () => run) });
+
+  it('reads the newest run and the current fingerprint', async () => {
+    const probe = harness(nodes(DNA_A), { job: jobIn(JobState.SUBMITTED) });
+    const fingerprint = await probe.service.screeningFingerprint(probe.job!);
+    const h = harness(nodes(DNA_A), { job: jobIn(JobState.SUBMITTED), screeningRuns: withNewest(probe.screeningRuns, runFor(fingerprint)) });
+
+    await expect(h.service.acceptanceScreening(h.job!)).resolves.toEqual({ state: JobAcceptanceScreeningState.CLEAR, message: null });
+    expect(h.screeningRuns.findNewestForJob).toHaveBeenCalledWith('job-1');
+  });
+
+  it('NOT_REQUIRED without any read for an accepted job', async () => {
+    const h = harness(nodes(DNA_A), { job: jobIn(JobState.ACCEPTED) });
+    await expect(h.service.acceptanceScreening(h.job!)).resolves.toMatchObject({ state: JobAcceptanceScreeningState.NOT_REQUIRED });
+    expect(h.screeningRuns.findNewestForJob).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when the check cannot be made', async () => {
+    const screeningRuns = { findNewestForJob: jest.fn(async () => Promise.reject(new Error('db down'))) };
+    const h = harness(nodes(DNA_A), { job: jobIn(JobState.SUBMITTED), screeningRuns });
+    await expect(h.service.acceptanceScreening(h.job!)).resolves.toEqual({ state: JobAcceptanceScreeningState.NOT_PASSED, message: ACCEPTANCE_MESSAGES.CHECK_FAILED });
+    await expect(h.service.acceptanceScreening(h.job!, { callerCanScreen: false })).resolves.toMatchObject({ message: ACCEPTANCE_MESSAGES.CHECK_FAILED + ACCEPTANCE_MESSAGES.NO_BIOSECURITY_ACCESS });
+  });
+
+  it('a value edited after the run reads STALE (behaviour 11, Review Focus 1)', async () => {
+    const before = harness(nodes(DNA_A), { job: jobIn(JobState.SUBMITTED) });
+    const fingerprint = await before.service.screeningFingerprint(before.job!);
+    const edited = harness(nodes(DNA_B), { job: jobIn(JobState.SUBMITTED), screeningRuns: withNewest(before.screeningRuns, runFor(fingerprint)) });
+
+    await expect(edited.service.acceptanceScreening(edited.job!)).resolves.toEqual({ state: JobAcceptanceScreeningState.STALE, message: ACCEPTANCE_MESSAGES.STALE });
   });
 });

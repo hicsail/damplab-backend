@@ -1056,6 +1056,35 @@ describe('JobResolver.reviewJob — owner notification (F4)', () => {
     expect(dispatch.mock.calls[0][0].title).toBeTruthy();
   });
 
+  it('reviewJob tells the review service whether the caller can see biosecurity, for ACCEPT only', async () => {
+    const reviewJob = jest.fn(async () => ({ _id: 'job-1', name: 'Job' }));
+    const userShowsBiosecurity = jest.fn(async () => false);
+    const resolver = new JobResolver(
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      { reviewJob } as any,
+      { userShowsBiosecurity } as any,
+      { dispatch: jest.fn() } as any,
+      {} as any,
+      {} as any
+    );
+    const staff: any = { sub: 'staff-1', email: 's@bu.edu', preferred_username: 'Staff', realm_access: { roles: [Role.DamplabStaff] } };
+
+    await resolver.reviewJob({ operationId: 'op-b1', jobId: 'job-1', decision: 'ACCEPT' } as any, staff);
+    expect(reviewJob).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ showsBiosecurity: false }));
+    expect(userShowsBiosecurity).toHaveBeenCalledTimes(1);
+
+    await resolver.reviewJob({ operationId: 'op-b2', jobId: 'job-1', decision: 'REQUEST_EDITS', message: 'x' } as any, staff);
+    expect(userShowsBiosecurity).toHaveBeenCalledTimes(1);
+    expect((reviewJob.mock.calls as any[][])[1][1].showsBiosecurity).toBeUndefined();
+  });
+
   it('does not notify when the review fails', async () => {
     const dispatch = jest.fn();
     const resolver = new JobResolver(

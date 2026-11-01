@@ -108,6 +108,8 @@ const GATES: Row[] = [
   // as on screeningBatch(es) — pinned in screening-run.resolver.spec.ts and securedna.resolver.spec.ts.
   [ScreeningRunResolver, 'jobScreeningRuns', Permission.JobsViewAll],
   [ScreeningRunResolver, 'screeningRun', Permission.JobsViewAll],
+  // Deliberately without the showBiosecurity half: state and message only, never results.
+  [ScreeningRunResolver, 'jobAcceptanceScreening', Permission.JobsViewAll],
   // The merged jobs page. Deliberately the BASELINE permission: this one query
   // serves a client and a technician, and the scope is enforced inside the
   // resolver rather than by the gate. See JobResolver.jobsForViewer.

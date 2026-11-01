@@ -18,6 +18,8 @@ import { User } from '../../src/auth/user.interface';
 import { DampLabService } from '../../src/services/models/damplab-service.model';
 import { SowTextPresetService } from '../../src/sow-preset/sow-text-preset.service';
 import { KeycloakService } from '../../src/keycloak/keycloak.service';
+import { JobScreeningService } from '../../src/job/job-screening.service';
+import { JobAcceptanceScreeningState } from '../../src/job/screening-run.model';
 
 /**
  * A real NestJS app, a real Mongo, real GraphQL — the parts the unit specs fake.
@@ -138,6 +140,11 @@ export interface TestAppOptions {
    * written at all.
    */
   keycloakGroupsBySub?: Record<string, { name?: string; path?: string }[]>;
+  /**
+   * Run the real screening gate. Off by default: a spec about SOWs or invoices should not need a
+   * screening run to accept a job. Only acceptance-screening.spec.ts turns this on.
+   */
+  realScreeningGate?: boolean;
 }
 
 export async function startTestApp(options: TestAppOptions = {}): Promise<TestApp> {
@@ -160,6 +167,11 @@ export async function startTestApp(options: TestAppOptions = {}): Promise<TestAp
   }
 
   const moduleFixture = await builder.compile();
+
+  if (!options.realScreeningGate) {
+    const screening = moduleFixture.get(JobScreeningService, { strict: false });
+    screening.acceptanceScreening = async (): Promise<{ state: JobAcceptanceScreeningState; message: null }> => ({ state: JobAcceptanceScreeningState.CLEAR, message: null });
+  }
 
   // Mirrors main.ts: bodyParser off, then an explicit 2mb json limit. The
   // default 100kb ceiling is small enough that a SOW payload can cross it, and

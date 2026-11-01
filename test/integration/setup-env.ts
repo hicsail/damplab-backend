@@ -88,3 +88,11 @@ delete process.env.DISABLE_AUTH;
 process.env.KEYCLOAK_SERVER_URL = '';
 process.env.KEYCLOAK_CLIENT_ID = '';
 process.env.KEYCLOAK_CLIENT_SECRET = '';
+
+/**
+ * Unconfigure Aclid and SecureDNA too. Set empty, not deleted, for the reason above: dotenv
+ * would put a developer's key back. An integration run must not call Aclid with the developer's
+ * key, and a screening run with no providers configured completes without calling anyone.
+ */
+process.env.ACLID_API_KEY = '';
+process.env.SECUREDNA_API_URL = '';

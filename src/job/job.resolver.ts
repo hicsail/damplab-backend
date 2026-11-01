@@ -909,7 +909,9 @@ export class JobResolver {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
       email: user.email,
-      claims: user.realm_access?.roles ?? []
+      claims: user.realm_access?.roles ?? [],
+      // Only ACCEPT is gated by screening, so only ACCEPT pays for the Keycloak read.
+      showsBiosecurity: input.decision === JobReviewDecision.ACCEPT ? await this.callerShowsBiosecurity(user) : undefined
     });
     const title = JobResolver.REVIEW_NOTIFICATION_TITLES[input.decision] ?? 'Your job was reviewed';
     // Keyed on the review's own operation id, so a retried review makes one
