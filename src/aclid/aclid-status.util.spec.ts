@@ -4,7 +4,6 @@ import {
   parseHomologyMode,
   homologyStatusFromAclidRegulatory,
   homologyStatusFromAclidScreen,
-  customerStatusFromAclid,
   customerScreeningStatus,
   jobCustomerStatusFromLeg,
   customerVerificationState,
@@ -74,27 +73,6 @@ describe('customerVerificationState', () => {
     expect(customerVerificationState({ screenId: 's', verificationStatus: 'partially_submitted' })).toBe('not_submitted');
     expect(customerVerificationState({ screenId: 's' })).toBe('not_submitted');
     expect(customerVerificationState({ screenId: 's', verificationStatus: 'not_required' })).toBe('not_required');
-  });
-});
-
-describe('customerStatusFromAclid', () => {
-  it('is Unavailable without a screen id', () => {
-    expect(customerStatusFromAclid({})).toBe(HomologyScreeningStatus.UNAVAILABLE);
-    expect(customerStatusFromAclid({ decisionStatus: 'approved' })).toBe(HomologyScreeningStatus.UNAVAILABLE);
-  });
-
-  it('maps decision_status and not_required', () => {
-    expect(customerStatusFromAclid({ screenId: 's1', decisionStatus: 'approved' })).toBe(HomologyScreeningStatus.PASSED);
-    expect(customerStatusFromAclid({ screenId: 's1', decisionStatus: 'rejected' })).toBe(HomologyScreeningStatus.FAILED);
-    expect(customerStatusFromAclid({ screenId: 's1', verificationStatus: 'not_required' })).toBe(HomologyScreeningStatus.PASSED);
-  });
-
-  it('is In Progress while awaiting, escalated, partial, or missing', () => {
-    for (const verificationStatus of ['partially_submitted', 'missing_verification', 'submitted']) {
-      expect(customerStatusFromAclid({ screenId: 's1', verificationStatus })).toBe(HomologyScreeningStatus.IN_PROGRESS);
-    }
-    expect(customerStatusFromAclid({ screenId: 's1', decisionStatus: 'awaiting' })).toBe(HomologyScreeningStatus.IN_PROGRESS);
-    expect(customerStatusFromAclid({ screenId: 's1', decisionStatus: 'escalated' })).toBe(HomologyScreeningStatus.IN_PROGRESS);
   });
 });
 

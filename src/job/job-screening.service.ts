@@ -553,19 +553,64 @@ export class JobScreeningService {
         ...aclidLegFields(screen, running ? HomologyScreeningStatus.IN_PROGRESS : homologyStatus),
         detail: running ? 'Aclid screen still running' : homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null
       };
-      if (screen.status === 'succeeded' && !run.aclid?.details) {
-        const { details, error } = await this.aclidDetails(screen);
-        leg.details = details;
-        if (error) leg.detail = leg.detail ? `${leg.detail}; ${error}` : error;
-      }
       const fitted = fitAclidLeg({ ...(run.aclid ?? {}), ...leg } as ScreeningRunAclidLeg);
       const write: Partial<ScreeningRunAclidLeg> = { ...leg, raw: fitted.raw, detail: fitted.detail };
-      if ('details' in leg) write.details = fitted.details;
-      // Same one-directional rule as the job's Homology row: only a new FAILED moves the run's verdict.
-      const patch: ScreeningRunPatch = homologyStatus === HomologyScreeningStatus.FAILED ? { status: HomologyScreeningStatus.FAILED } : {};
-      await this.screeningRuns.updateAclidLeg(String((run as { _id?: unknown })._id), write, patch);
+      // Only a new FAILED lowers the run. A slow screen that now passes lifts a run that was only
+      // waiting on it, and never one SecureDNA failed or one SecureDNA alone decides.
+      const lift =
+        homologyStatus === HomologyScreeningStatus.PASSED &&
+        run.status === HomologyScreeningStatus.UNAVAILABLE &&
+        run.aclid?.homologyStatus === HomologyScreeningStatus.IN_PROGRESS &&
+        run.secureDna?.status !== HomologyScreeningStatus.FAILED &&
+        parseHomologyMode(process.env.BIOSECURITY_HOMOLOGY_MODE, this.aclidService.isConfigured()) !== 'securedna';
+      const patch: ScreeningRunPatch = homologyStatus === HomologyScreeningStatus.FAILED ? { status: HomologyScreeningStatus.FAILED } : lift ? { status: HomologyScreeningStatus.PASSED } : {};
+      const runId = String((run as { _id?: unknown })._id);
+      await this.screeningRuns.updateAclidLeg(runId, write, patch);
+      // The details call can take 30 s; the verdict is already written, so it runs behind the caller.
+      if (screen.status === 'succeeded' && !run.aclid?.details) void this.backfillAclidDetails(runId, screen, { ...(run.aclid ?? {}), ...write } as ScreeningRunAclidLeg);
     } catch (error) {
       this.logger.error(`Could not update the screening run for Aclid screen ${screen.id}: ${messageOf(error)}`);
+    }
+  }
+
+  /**
+   * Re-read the newest run's customer leg from Aclid, so a review resolved there clears without a
+   * new screen. Never starts a screen and never throws. A failed read keeps the stored status and
+   * writes only `detail`: an API error, or Aclid switching the check off, must not unblock a leg
+   * that was NEEDS_REVIEW. Resolves the job's `customerStatus` for the leg as stored afterwards.
+   */
+  async refreshCustomerLeg(jobId: string): Promise<HomologyScreeningStatus> {
+    try {
+      const run = await this.screeningRuns.findNewestForJob(jobId);
+      const stored = run?.customer;
+      if (!run || !stored) return HomologyScreeningStatus.UNAVAILABLE;
+      const runId = String((run as { _id?: unknown })._id);
+      if (!stored.requesterId) return jobCustomerStatusFromLeg(stored.status);
+      try {
+        const leg = customerLegFromRecord(await this.aclidService.getCustomer(stored.requesterId));
+        await this.screeningRuns.updateCustomerLeg(runId, leg);
+        return jobCustomerStatusFromLeg(leg.status);
+      } catch (error) {
+        const detail = messageOf(error);
+        if (!(error instanceof AclidFeatureNotEnabledError)) this.logger.error(`Could not re-read Aclid customer ${stored.requesterId} for job ${jobId}: ${detail}`);
+        await this.screeningRuns.updateCustomerLeg(runId, { detail });
+        return jobCustomerStatusFromLeg(stored.status);
+      }
+    } catch (error) {
+      this.logger.error(`Could not refresh the customer leg for job ${jobId}: ${messageOf(error)}`);
+      return HomologyScreeningStatus.UNAVAILABLE;
+    }
+  }
+
+  /** Fetch and store a succeeded screen's details after the verdict write. Never rejects. */
+  private async backfillAclidDetails(runId: string, screen: AclidScreenRecord, written: ScreeningRunAclidLeg): Promise<void> {
+    try {
+      const { details, error } = await this.aclidDetails(screen);
+      const base = written.detail ?? null;
+      const fitted = fitAclidLeg({ ...written, details, detail: error ? (base ? `${base}; ${error}` : error) : base });
+      await this.screeningRuns.updateAclidLeg(runId, { details: fitted.details, raw: fitted.raw, detail: fitted.detail });
+    } catch (error) {
+      this.logger.error(`Could not store Aclid details for screen ${screen.id}: ${messageOf(error)}`);
     }
   }
 

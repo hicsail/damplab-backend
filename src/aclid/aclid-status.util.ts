@@ -74,29 +74,6 @@ export function customerVerificationState(
   return 'not_submitted';
 }
 
-export function customerStatusFromAclid(input: {
-  screenId?: string | null;
-  decisionStatus?: string | null;
-  verificationStatus?: string | null;
-  screenHomologyStatus?: HomologyScreeningStatus | null;
-}): HomologyScreeningStatus {
-  if (!input.screenId) {
-    return HomologyScreeningStatus.UNAVAILABLE;
-  }
-
-  const decisionStatus = input.decisionStatus?.toLowerCase();
-  const verificationStatus = input.verificationStatus?.toLowerCase();
-
-  if (decisionStatus === 'rejected') {
-    return HomologyScreeningStatus.FAILED;
-  }
-  if (decisionStatus === 'approved' || verificationStatus === 'not_required') {
-    return HomologyScreeningStatus.PASSED;
-  }
-
-  return HomologyScreeningStatus.IN_PROGRESS;
-}
-
 /**
  * The customer leg's status from Aclid's `review.verdict` and `decision_status`.
  * A staff decision (`rejected`, `approved`, `escalated`) outranks the automated

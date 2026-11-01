@@ -110,6 +110,8 @@ function harness(
     create: jest.fn(async () => 'run-1'),
     update: jest.fn(async () => undefined),
     findByAclidScreenId: jest.fn(async () => null),
+    findNewestForJob: jest.fn(async () => null),
+    updateCustomerLeg: jest.fn(async () => undefined),
     updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
   };
 
@@ -833,8 +835,12 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
     expect(screeningRuns.findByAclidScreenId).toHaveBeenCalledWith('scr_1');
     const [id, leg, patch] = screeningRuns.updateAclidLeg.mock.calls[0];
     expect(id).toBe('run-1');
-    expect(leg).toMatchObject({ homologyStatus: 'FAILED', regulatoryStatus: 'controlled', status: 'succeeded', details, detail: null, raw: { id: 'scr_1' } });
+    expect(leg).toMatchObject({ homologyStatus: 'FAILED', regulatoryStatus: 'controlled', status: 'succeeded', detail: null, raw: { id: 'scr_1' } });
+    expect(leg).not.toHaveProperty('details');
     expect(patch).toMatchObject({ status: 'FAILED' });
+    await new Promise(setImmediate);
+    expect(screeningRuns.updateAclidLeg).toHaveBeenCalledTimes(2);
+    expect(screeningRuns.updateAclidLeg.mock.calls[1][1]).toMatchObject({ details });
     expect(screeningRuns.create).not.toHaveBeenCalled();
   });
 
@@ -871,6 +877,131 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
     const { service } = harness([], { screeningRuns });
     await service.recordAclidRefresh(aclidScreen() as any);
     expect(screeningRuns.updateAclidLeg).not.toHaveBeenCalled();
+  });
+
+  describe('lifting a slow screen', () => {
+    const originalMode = process.env.BIOSECURITY_HOMOLOGY_MODE;
+    afterEach(() => {
+      if (originalMode === undefined) delete process.env.BIOSECURITY_HOMOLOGY_MODE;
+      else process.env.BIOSECURITY_HOMOLOGY_MODE = originalMode;
+    });
+    const pendingRun = (extra: Record<string, unknown> = {}, aclid: Record<string, unknown> = {}): any => ({
+      _id: 'run-1',
+      status: 'UNAVAILABLE',
+      aclid: { screenId: 'scr_1', homologyStatus: 'IN_PROGRESS', details: null, ...aclid },
+      ...extra
+    });
+    const firstPatch = async (found: any, configured = true): Promise<any> => {
+      const screeningRuns = {
+        create: jest.fn(),
+        update: jest.fn(),
+        findByAclidScreenId: jest.fn(async () => found),
+        updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
+      };
+      const { service } = harness([], { screeningRuns, aclidConfigured: configured });
+      await service.recordAclidRefresh(aclidScreen() as any);
+      return screeningRuns.updateAclidLeg.mock.calls[0][2];
+    };
+
+    it('a slow screen that now passes reaches PASSED', async () => {
+      expect(await firstPatch(pendingRun())).toEqual({ status: 'PASSED' });
+    });
+    it('not when the SecureDNA leg failed', async () => {
+      expect(await firstPatch(pendingRun({ secureDna: { status: 'FAILED' } }))).toEqual({});
+    });
+    it('not in securedna mode', async () => {
+      process.env.BIOSECURITY_HOMOLOGY_MODE = 'securedna';
+      expect(await firstPatch(pendingRun(), true)).toEqual({});
+    });
+    it('not when the Aclid leg already had an answer', async () => {
+      expect(await firstPatch(pendingRun({}, { homologyStatus: 'UNAVAILABLE' }))).toEqual({});
+    });
+    it('a passing screen never lifts a FAILED run', async () => {
+      expect(await firstPatch(pendingRun({ status: 'FAILED' }))).toEqual({});
+    });
+    it('resolves without waiting for the details call', async () => {
+      const screeningRuns = {
+        create: jest.fn(),
+        update: jest.fn(),
+        findByAclidScreenId: jest.fn(async () => pendingRun()),
+        updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
+      };
+      const { service } = harness([], { screeningRuns });
+      (service as any).aclidService.getScreenDetails = jest.fn(() => new Promise(() => undefined));
+      const result = await Promise.race([service.recordAclidRefresh(aclidScreen() as any).then(() => 'done'), new Promise((resolve) => setTimeout(() => resolve('timed out'), 200))]);
+      expect(result).toBe('done');
+      expect(screeningRuns.updateAclidLeg).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe('refreshCustomerLeg (aclid-customer-screening)', () => {
+  const leg = (status: string, extra: Record<string, unknown> = {}): any => ({ _id: 'run-1', customer: { status, requesterId: 'req_1', ...extra } });
+  const setup = (newest: unknown): ReturnType<typeof harness> => {
+    const h = harness([]);
+    h.screeningRuns.findNewestForJob.mockImplementation(async () => newest);
+    return h;
+  };
+
+  it("re-reads the newest run's leg and writes all of it", async () => {
+    const h = setup(leg('NEEDS_REVIEW'));
+    h.getCustomer.mockResolvedValue(customerRecord());
+    await expect(h.service.refreshCustomerLeg('job-1')).resolves.toBe('PASSED');
+    expect(h.getCustomer).toHaveBeenCalledWith('req_1');
+    expect(h.screeningRuns.updateCustomerLeg).toHaveBeenCalledWith(
+      'run-1',
+      expect.objectContaining({
+        status: 'PASSED',
+        verdict: expect.anything(),
+        decisionStatus: expect.anything(),
+        checks: expect.anything(),
+        counts: expect.anything(),
+        raw: expect.anything(),
+        detail: null
+      })
+    );
+    expect(h.createCustomer).not.toHaveBeenCalled();
+  });
+
+  it('NEEDS_REVIEW stores as IN_PROGRESS on the job', async () => {
+    const h = setup(leg('IN_PROGRESS'));
+    h.getCustomer.mockResolvedValue(customerRecord({ status: 'NEEDS_REVIEW' }));
+    await expect(h.service.refreshCustomerLeg('job-1')).resolves.toBe('IN_PROGRESS');
+  });
+
+  it('an API error keeps the blocking status and writes only detail', async () => {
+    const h = setup(leg('NEEDS_REVIEW'));
+    h.getCustomer.mockRejectedValue(new Error('boom'));
+    await expect(h.service.refreshCustomerLeg('job-1')).resolves.toBe('IN_PROGRESS');
+    expect(h.screeningRuns.updateCustomerLeg).toHaveBeenCalledWith('run-1', { detail: 'boom' });
+  });
+
+  it('a not-enabled 403 on refresh does not unblock', async () => {
+    const h = setup(leg('NEEDS_REVIEW'));
+    h.getCustomer.mockRejectedValue(new AclidFeatureNotEnabledError('sanctions is not enabled for your organization'));
+    await expect(h.service.refreshCustomerLeg('job-1')).resolves.toBe('IN_PROGRESS');
+    for (const call of h.screeningRuns.updateCustomerLeg.mock.calls) expect(call[1]).not.toHaveProperty('status');
+  });
+
+  it('a leg with no requester id is not read', async () => {
+    const h = setup({ _id: 'run-1', customer: { status: 'NOT_RUN', requesterId: null } });
+    await expect(h.service.refreshCustomerLeg('job-1')).resolves.toBe('UNAVAILABLE');
+    expect(h.getCustomer).not.toHaveBeenCalled();
+  });
+
+  it('no run, or a run with no leg, reads UNAVAILABLE', async () => {
+    const h = setup(null);
+    await expect(h.service.refreshCustomerLeg('job-1')).resolves.toBe('UNAVAILABLE');
+    h.screeningRuns.findNewestForJob.mockImplementation(async () => ({ _id: 'run-1', customer: null }));
+    await expect(h.service.refreshCustomerLeg('job-1')).resolves.toBe('UNAVAILABLE');
+    expect(h.screeningRuns.updateCustomerLeg).not.toHaveBeenCalled();
+    expect(h.getCustomer).not.toHaveBeenCalled();
+  });
+
+  it('a storage error resolves UNAVAILABLE', async () => {
+    const h = harness([]);
+    h.screeningRuns.findNewestForJob.mockRejectedValue(new Error('mongo down'));
+    await expect(h.service.refreshCustomerLeg('job-1')).resolves.toBe('UNAVAILABLE');
   });
 });
 

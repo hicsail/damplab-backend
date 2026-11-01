@@ -320,6 +320,8 @@ function kycHarness(job: any): {
   screenJob: jest.Mock;
   screenJobInBackground: jest.Mock;
   recordAclidRefresh: jest.Mock;
+  refreshCustomerLeg: jest.Mock;
+  isConfigured: jest.Mock;
 } {
   const findById = jest.fn(async () => job);
   const setAclidScreening = jest.fn(async (_id: string, aclidScreening: any) => ({ ...job, aclidScreening }));
@@ -327,14 +329,16 @@ function kycHarness(job: any): {
   const jobService: any = { findById, setAclidScreening, setHomologyScreening };
   const createVerificationUrl = jest.fn(async () => 'https://verify.aclid.bio/session/abc');
   const getScreen = jest.fn();
-  const aclidService: any = { createVerificationUrl, getScreen };
+  const isConfigured = jest.fn(() => true);
+  const aclidService: any = { createVerificationUrl, getScreen, isConfigured };
   const screenJob = jest.fn();
   const screenJobInBackground = jest.fn();
   const recordAclidRefresh = jest.fn(async () => undefined);
-  const jobScreeningService: any = { screenJob, screenJobInBackground, recordAclidRefresh };
+  const refreshCustomerLeg = jest.fn(async () => HomologyScreeningStatus.UNAVAILABLE);
+  const jobScreeningService: any = { screenJob, screenJobInBackground, recordAclidRefresh, refreshCustomerLeg };
   const keycloakService: any = { userShowsBiosecurity: jest.fn(async () => true) };
   const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, keycloakService, {} as any, jobScreeningService, aclidService);
-  return { resolver, createVerificationUrl, getScreen, setAclidScreening, setHomologyScreening, screenJob, screenJobInBackground, recordAclidRefresh };
+  return { resolver, createVerificationUrl, getScreen, setAclidScreening, setHomologyScreening, screenJob, screenJobInBackground, recordAclidRefresh, refreshCustomerLeg, isConfigured };
 }
 
 const screenedJob = (): any => ({
@@ -487,18 +491,53 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     expect(order).toEqual(['row', 'run']);
   });
 
-  it('returns once the job row is written, without waiting on the run write', async () => {
+  it('never starts a screen, even with Aclid configured and no screen on the job', async () => {
+    const job = screenedJob();
+    job.aclidScreening.screenId = null;
+    const { resolver, getScreen, screenJob, isConfigured } = kycHarness(job);
+    isConfigured.mockReturnValue(true);
+    await expect(resolver.refreshJobAclidScreening('job-1', owner)).rejects.toThrow(new BadRequestException('No Aclid screen on this job'));
+    expect(screenJob).not.toHaveBeenCalled();
+    expect(getScreen).not.toHaveBeenCalled();
+  });
+
+  it('writes the customer status the leg gives, before the run', async () => {
     const harness = kycHarness(screenedJob());
+    const order: string[] = [];
     harness.getScreen.mockResolvedValueOnce(approvedScreen);
-    harness.recordAclidRefresh.mockImplementationOnce(() => new Promise(() => undefined));
-    const result = await Promise.race([harness.resolver.refreshJobAclidScreening('job-1', owner), new Promise((resolve) => setTimeout(() => resolve('timed out'), 200))]);
-    expect(result).not.toBe('timed out');
-    expect(harness.recordAclidRefresh).toHaveBeenCalledWith(approvedScreen);
+    harness.refreshCustomerLeg.mockImplementationOnce(async () => {
+      order.push('leg');
+      return HomologyScreeningStatus.FAILED;
+    });
+    harness.setAclidScreening.mockImplementationOnce(async (_id: string, aclidScreening: any) => {
+      order.push('row');
+      return { ...screenedJob(), aclidScreening };
+    });
+    harness.recordAclidRefresh.mockImplementationOnce(async () => {
+      order.push('run');
+    });
+    await harness.resolver.refreshJobAclidScreening('job-1', owner);
+    expect(order).toEqual(['leg', 'row', 'run']);
+    expect(harness.setAclidScreening).toHaveBeenCalledWith('job-1', expect.objectContaining({ customerStatus: HomologyScreeningStatus.FAILED }));
+  });
+
+  it('startJobCustomerVerification still screens when there is no screen', async () => {
+    const job = screenedJob();
+    job.aclidScreening.screenId = null;
+    const harness = kycHarness(job);
+    harness.isConfigured.mockReturnValue(true);
+    const screened = screenedJob();
+    screened.aclidScreening.screenId = 'scr_9';
+    (harness.resolver as any).jobService.findById.mockResolvedValueOnce(job).mockResolvedValueOnce(screened);
+    await harness.resolver.startJobCustomerVerification('job-1', owner);
+    expect(harness.screenJob).toHaveBeenCalledTimes(1);
+    expect((harness.screenJob.mock.calls[0] as any[])[2]?.trigger).toBeUndefined();
   });
 
   it('re-reads the screen and rewrites the KYC fields, homology and customer status', async () => {
-    const { resolver, getScreen, setAclidScreening, screenJob, screenJobInBackground } = kycHarness(screenedJob());
+    const { resolver, getScreen, setAclidScreening, screenJob, screenJobInBackground, refreshCustomerLeg } = kycHarness(screenedJob());
     getScreen.mockResolvedValue(approvedScreen);
+    refreshCustomerLeg.mockResolvedValue(HomologyScreeningStatus.PASSED);
 
     const updated = await resolver.refreshJobAclidScreening('job-1', owner);
 
@@ -528,8 +567,9 @@ describe('JobResolver.refreshJobAclidScreening', () => {
   });
 
   it('records a rejection as FAILED for the customer and a controlled verdict as FAILED homology', async () => {
-    const { resolver, getScreen, setAclidScreening } = kycHarness(screenedJob());
+    const { resolver, getScreen, setAclidScreening, refreshCustomerLeg } = kycHarness(screenedJob());
     getScreen.mockResolvedValue({ ...approvedScreen, regulatoryStatus: 'controlled', decisionStatus: 'rejected' });
+    refreshCustomerLeg.mockResolvedValue(HomologyScreeningStatus.FAILED);
 
     await resolver.refreshJobAclidScreening('job-1', owner);
 

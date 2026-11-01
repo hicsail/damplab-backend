@@ -46,7 +46,7 @@ import { JobReviewService } from './job-review.service';
 import { assertShowsBiosecurity, callerShowsBiosecurity } from './biosecurity-gate';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
-import { customerStatusFromAclid, homologyStatusFromAclidScreen } from '../aclid/aclid-status.util';
+import { homologyStatusFromAclidScreen } from '../aclid/aclid-status.util';
 import { redactJobBiosecurity } from './biosecurity-view';
 
 @Resolver(() => Job)
@@ -409,7 +409,7 @@ export class JobResolver {
    * scope is enforced — the owner, the client named on a staff-submitted job,
    * or anyone holding `jobs:view-all`.
    */
-  private async jobForCustomerVerification(jobId: string, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
+  private async jobForVerificationAccess(jobId: string, user: User): Promise<Job> {
     const job = await this.jobService.findById(jobId);
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
@@ -418,8 +418,11 @@ export class JobResolver {
       throw new ForbiddenException('You do not have permission to access this job');
     }
     await this.assertShowsBiosecurity(user);
-    const ready = await this.ensureAclidScreen(job, user);
-    return ready;
+    return job;
+  }
+
+  private async jobForCustomerVerification(jobId: string, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
+    return this.ensureAclidScreen(await this.jobForVerificationAccess(jobId, user), user);
   }
 
   /**
@@ -475,9 +478,16 @@ export class JobResolver {
   })
   @RequirePermission(Permission.JobsView)
   async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
-    const { job, screening: existing, screenId } = await this.jobForCustomerVerification(jobId, user);
+    const job = await this.jobForVerificationAccess(jobId, user);
+    const existing = job.aclidScreening;
+    const screenId = existing?.screenId;
+    if (!existing || !screenId) {
+      throw new BadRequestException('No Aclid screen on this job');
+    }
     const screen = await this.aclidService.getScreen(screenId);
     const homologyStatus = homologyStatusFromAclidScreen(screen);
+    // Re-read the customer leg Aclid holds: a review resolved there clears without a new screen.
+    const customerStatus = await this.jobScreeningService.refreshCustomerLeg(jobId);
     const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
     const updated = await this.jobService.setAclidScreening(jobId, {
       ...existing,
@@ -489,18 +499,14 @@ export class JobResolver {
       // Same wording the screening run writes: a verdict clears the line, no
       // verdict names what Aclid did say.
       detail: homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null,
-      customerStatus: customerStatusFromAclid({
-        screenId,
-        decisionStatus: screen.decisionStatus,
-        verificationStatus: screen.verificationStatus,
-        screenHomologyStatus: homologyStatus
-      })
+      customerStatus
     });
 
     // The run that sent this screen catches up too (biosecurity-update): verdict, raw report, details.
-    // After the customer's own row, and not awaited: the details call can take up to 30 s and the
-    // customer's click must not wait on it. It never rejects; the catch is belt and braces.
-    void this.jobScreeningService.recordAclidRefresh(screen).catch((err) => this.logger.error(`Aclid refresh run write failed for jobId=${jobId}`, err instanceof Error ? err.stack : err));
+    // After the customer's own row. The verdict write is awaited so the gate and the card read it
+    // right after the click; only the details call (up to 30 s) runs in the background. It never
+    // rejects; the catch is belt and braces.
+    await this.jobScreeningService.recordAclidRefresh(screen).catch((err) => this.logger.error(`Aclid refresh run write failed for jobId=${jobId}`, err instanceof Error ? err.stack : err));
 
     // The Homology row is a stored rollup, and SecureDNA's leg cannot be read
     // back out of it. So this is one-directional: a screen that had no verdict
