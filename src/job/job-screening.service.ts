@@ -8,12 +8,12 @@ import { DampLabServices } from '../services/damplab-services.services';
 import { SecureDnaService } from '../securedna/securedna.service';
 import { Region } from '../securedna/region';
 import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
-import { ACLID_TERMINAL_STATUSES, AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
-import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidScreen, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
+import { ACLID_TERMINAL_STATUSES, AclidCustomerPendingError, AclidCustomerRecord, AclidFeatureNotEnabledError, AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
+import { ACLID_MIN_SEQUENCE_LENGTH, homologyStatusFromAclidScreen, isAclidLengthEligible, jobCustomerStatusFromLeg, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
 import { ScreeningRunPatch, ScreeningRunService } from './screening-run.service';
-import { ScreeningRunAclidLeg, ScreeningRunTrigger } from './screening-run.model';
+import { CustomerScreeningStatus, ScreeningRunAclidLeg, ScreeningRunCustomerLeg, ScreeningRunTrigger } from './screening-run.model';
 import { fitAclidLeg } from './screening-run.util';
 import { headerIndexesFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
 import { TABLE_UPLOAD_KEY_PREFIX } from '../workflow/utils/table-answers';
@@ -32,11 +32,11 @@ import {
 import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceName } from './job-screening-name.util';
 
 /**
- * Submission and resubmission start a screen in the background. Set to false to
- * pause that; staff's "re-run screening" works either way. Pairs with
- * BIOSECURITY_ENABLED in the UI's ClientView.tsx.
+ * Submission and resubmission start a screen in the background when this is true. It is off:
+ * staff's "Run screening" / "Rerun screening" is what starts screening, and the only trigger
+ * that also runs the customer leg. Pairs with BIOSECURITY_ENABLED in the UI's ClientView.tsx.
  */
-export const AUTO_SCREENING_ENABLED = true;
+export const AUTO_SCREENING_ENABLED = false;
 
 export interface ScreenJobOptions {
   trigger?: ScreeningRunTrigger;
@@ -56,9 +56,9 @@ export interface ScreenJobOptions {
  * SecureDNA's alone but still creates an Aclid screen when Aclid is keyed,
  * because KYC needs one.
  *
- * Screening runs on submission and is never awaited by the caller — a slow or
- * unreachable provider must not be able to hold up a customer's checkout. That
- * is the whole reason the job carries an IN_PROGRESS state.
+ * While AUTO_SCREENING_ENABLED is off, staff's rerun starts screening. Screening is never
+ * awaited by a customer-facing caller — a slow or unreachable provider must not be able to
+ * hold up a customer's checkout. That is the whole reason the job carries an IN_PROGRESS state.
  */
 @Injectable()
 export class JobScreeningService {
@@ -220,25 +220,33 @@ export class JobScreeningService {
       });
     }
 
-    const runId = await this.openRun(jobId, options);
+    // Taken before anything else so a value edited mid-run reads STALE. A fingerprint that cannot
+    // be read is stored as null and screening goes on.
+    let fingerprint: string | null = null;
     try {
-      return await this.screenWithRun(job, jobId, userSub, runId);
+      fingerprint = await this.screeningFingerprint(job);
+    } catch (error) {
+      this.logger.error(`Could not fingerprint job ${jobId} for its screening run: ${messageOf(error)}`);
+    }
+    const runId = await this.openRun(jobId, options, fingerprint);
+    try {
+      return await this.screenWithRun(job, jobId, userSub, runId, options);
     } catch (error) {
       // A job-row write (or anything else) threw: the run must not stay In Progress forever.
       // Close it, then rethrow so the caller sees exactly what it saw before runs existed.
-      await this.closeRun(runId, { status: HomologyScreeningStatus.UNAVAILABLE, detail: messageOf(error) });
+      await this.closeRun(runId, { status: HomologyScreeningStatus.UNAVAILABLE, detail: messageOf(error), unscreenedNotes: [messageOf(error)] });
       throw error;
     }
   }
 
   /** Everything `screenJob` does once the run is open. A throw here is closed by the caller. */
-  private async screenWithRun(job: Job, jobId: string, userSub: string, runId: string | null): Promise<HomologyScreening> {
+  private async screenWithRun(job: Job, jobId: string, userSub: string, runId: string | null, options: ScreenJobOptions): Promise<HomologyScreening> {
     let collection: ScreeningCollection;
     try {
       collection = await this.collectScreeningTargets(job);
     } catch (error) {
       const recorded = await this.unavailable(jobId, 0, `Could not read the job's sequences: ${messageOf(error)}`);
-      await this.closeRun(runId, { status: recorded.status, detail: recorded.detail ?? null });
+      await this.finishRun(job, jobId, runId, options, null, { status: recorded.status, detail: recorded.detail ?? null, unscreenedNotes: [recorded.detail ?? ''], sequenceCount: 0 });
       return recorded;
     }
     const { targets } = collection;
@@ -268,12 +276,23 @@ export class JobScreeningService {
         sequenceCount: 0,
         detail: 'No screenable DNA sequences on this job'
       });
-      await this.closeRun(runId, { status: recorded.status, detail: runDetail(recorded.detail, collection), aclid: aclidRun });
+      await this.finishRun(job, jobId, runId, options, null, {
+        status: recorded.status,
+        detail: runDetail(recorded.detail, collection),
+        aclid: aclidRun,
+        unscreenedNotes: collection.notes,
+        sequenceCount: 0
+      });
       return recorded;
     }
     if (targets.length > MAX_SECUREDNA_SEQUENCE_BATCH) {
       const recorded = await this.unavailable(jobId, targets.length, `Too many sequences for one batch (max ${MAX_SECUREDNA_SEQUENCE_BATCH})`);
-      await this.closeRun(runId, { status: recorded.status, detail: runDetail(recorded.detail, collection) });
+      await this.finishRun(job, jobId, runId, options, null, {
+        status: recorded.status,
+        detail: runDetail(recorded.detail, collection),
+        unscreenedNotes: collection.notes,
+        sequenceCount: targets.length
+      });
       return recorded;
     }
 
@@ -323,9 +342,11 @@ export class JobScreeningService {
       sequenceCount: secureDna?.sequenceCount ?? aclidLeg?.sequenceCount ?? targets.length,
       detail: details.length ? details.join('; ') : null
     });
-    await this.closeRun(runId, {
+    await this.finishRun(job, jobId, runId, options, aclid?.run.screenId ?? null, {
       status: recorded.status,
       detail: runDetail(recorded.detail, collection),
+      unscreenedNotes: collection.notes,
+      sequenceCount: targets.length,
       // The run keeps Aclid's leg whenever Aclid screened, even in `securedna` mode where the
       // Homology row ignores it: the screen exists, and KYC hangs off it.
       aclid: aclid ? fitAclidLeg(aclid.run) : null,
@@ -548,7 +569,7 @@ export class JobScreeningService {
     }
   }
 
-  private async openRun(jobId: string, options: ScreenJobOptions): Promise<string | null> {
+  private async openRun(jobId: string, options: ScreenJobOptions, fingerprint: string | null): Promise<string | null> {
     try {
       return await this.screeningRuns.create({
         jobId,
@@ -559,7 +580,7 @@ export class JobScreeningService {
         sequenceCount: 0,
         skippedCount: 0,
         sequences: [],
-        fingerprint: null
+        fingerprint
       });
     } catch (error) {
       this.logger.error(`Could not open a screening run for job ${jobId}: ${messageOf(error)}`);
@@ -573,6 +594,37 @@ export class JobScreeningService {
       await this.screeningRuns.update(runId, patch);
     } catch (error) {
       this.logger.error(`Could not update screening run ${runId}: ${messageOf(error)}`);
+    }
+  }
+
+  /**
+   * Close a run. On a staff rerun the customer leg runs first, so the run completes only once it
+   * has settled; a customer-triggered screen never posts a customer and stores no leg.
+   */
+  private async finishRun(job: Job, jobId: string, runId: string | null, options: ScreenJobOptions, screenId: string | null, patch: ScreeningRunPatch): Promise<void> {
+    const customer = options.trigger === ScreeningRunTrigger.RERUN ? await this.runCustomerLeg(job, jobId, screenId) : null;
+    await this.closeRun(runId, { ...patch, customer });
+  }
+
+  /** Post the customer to Aclid against this run's screen and keep the job's `customerStatus` in step. */
+  private async runCustomerLeg(job: Job, jobId: string, screenId: string | null): Promise<ScreeningRunCustomerLeg> {
+    const leg = screenId ? await this.screenCustomer(job, screenId) : customerLeg(CustomerScreeningStatus.NOT_RUN);
+    await this.jobService.setAclidCustomerStatus(jobId, jobCustomerStatusFromLeg(leg.status));
+    return leg;
+  }
+
+  /** Never throws: every failure becomes a leg status. */
+  private async screenCustomer(job: Job, screenId: string): Promise<ScreeningRunCustomerLeg> {
+    let requesterId: string | null = null;
+    try {
+      const { name, company, email } = screeningCustomerDetails(job);
+      requesterId = (await this.aclidService.createCustomer({ name, company, email, screenId })).requesterId;
+      return customerLegFromRecord(await this.aclidService.pollCustomer(requesterId));
+    } catch (error) {
+      if (error instanceof AclidCustomerPendingError) return { ...customerLegFromRecord(error.customer), status: CustomerScreeningStatus.IN_PROGRESS };
+      if (error instanceof AclidFeatureNotEnabledError) return customerLeg(CustomerScreeningStatus.NOT_AVAILABLE, { requesterId, detail: CUSTOMER_NOT_ENABLED_DETAIL });
+      this.logger.error(`Aclid customer screening failed for job ${String(job._id)}: ${messageOf(error)}`);
+      return customerLeg(CustomerScreeningStatus.UNAVAILABLE, { requesterId, detail: messageOf(error) });
     }
   }
 
@@ -608,14 +660,28 @@ export class JobScreeningService {
   private async recordAclid(jobId: string, screening: Omit<AclidScreening, 'customerStatus'>): Promise<void> {
     await this.jobService.setAclidScreening(jobId, {
       ...screening,
-      customerStatus: customerStatusFromAclid({
-        screenId: screening.screenId,
-        decisionStatus: screening.decisionStatus,
-        verificationStatus: screening.verificationStatus,
-        screenHomologyStatus: screening.homologyStatus
-      })
+      // Until the customer leg writes it (a staff rerun only).
+      customerStatus: HomologyScreeningStatus.UNAVAILABLE
     });
   }
+}
+
+const CUSTOMER_NOT_ENABLED_DETAIL = 'Customer screening is not enabled for this Aclid account';
+
+/** A customer leg with every field present, so the stored shape is uniform. */
+function customerLeg(status: CustomerScreeningStatus, fields: Partial<ScreeningRunCustomerLeg> = {}): ScreeningRunCustomerLeg {
+  return { status, requesterId: null, verdict: null, decisionStatus: null, checks: null, counts: null, raw: null, detail: null, ...fields };
+}
+
+function customerLegFromRecord(record: AclidCustomerRecord): ScreeningRunCustomerLeg {
+  return customerLeg(record.status, {
+    requesterId: record.requesterId,
+    verdict: record.verdict,
+    decisionStatus: record.decisionStatus,
+    checks: record.checks as unknown as ScreeningRunCustomerLeg['checks'],
+    counts: record.counts,
+    raw: record.raw
+  });
 }
 
 /** What the Homology row takes from the Aclid leg. Only `verdict` is an answer. */

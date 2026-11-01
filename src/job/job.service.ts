@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { AclidScreening, CustomerActionRequired, HomologyScreening, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
+import { AclidScreening, CustomerActionRequired, HomologyScreening, HomologyScreeningStatus, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
@@ -243,6 +243,15 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { aclidScreening: next } }, { new: true }).exec();
   }
 
+  /**
+   * Set only `aclidScreening.customerStatus`. The filter keeps it off a job with no Aclid row:
+   * `$set` on a dotted path there would create a partial object missing the non-null
+   * `homologyStatus`, `startedAt` and `sequenceCount`.
+   */
+  async setAclidCustomerStatus(jobId: string, status: HomologyScreeningStatus): Promise<void> {
+    await this.jobModel.updateOne({ _id: jobId, aclidScreening: { $ne: null } }, { $set: { 'aclidScreening.customerStatus': status } }).exec();
+  }
+
   private async mergeAclidScreening(jobId: string, incoming: AclidScreening): Promise<AclidScreening> {
     const existing = (await this.findById(jobId))?.aclidScreening;
     if (!existing?.screenId) {
@@ -256,7 +265,7 @@ export class JobService {
       verificationStatus: existing.verificationStatus ?? null,
       decisionStatus: existing.decisionStatus ?? null,
       verificationCompletedAt: existing.verificationCompletedAt ?? null,
-      customerStatus: existing.customerStatus ?? incoming.customerStatus
+      customerStatus: incoming.customerStatus
     };
   }
 

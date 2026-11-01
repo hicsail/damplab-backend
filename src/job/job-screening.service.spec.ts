@@ -1,8 +1,8 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
-import { AclidScreenPendingError } from '../aclid/aclid.service';
-import { JobScreeningService } from './job-screening.service';
+import { AclidCustomerPendingError, AclidFeatureNotEnabledError, AclidScreenPendingError } from '../aclid/aclid.service';
+import { AUTO_SCREENING_ENABLED, JobScreeningService } from './job-screening.service';
 import { HomologyScreeningStatus, Job } from './job.model';
-import { ScreeningRunTrigger } from './screening-run.model';
+import { CustomerScreeningStatus, ScreeningRunTrigger } from './screening-run.model';
 
 const GIBSON_ASSEMBLY_SERVICE_NAME = 'Gibson Assembly';
 const M_CLONING_SERVICE_NAME = 'Modular Cloning';
@@ -56,13 +56,19 @@ function harness(
   screenInline: jest.Mock;
   files: any;
   screeningRuns: any;
+  setAclidCustomerStatus: jest.Mock;
+  createCustomer: jest.Mock;
+  pollCustomer: jest.Mock;
+  getCustomer: jest.Mock;
+  workflowService: any;
 } {
   const job = overrides.job === undefined ? ({ _id: 'job-1', workflows: [WORKFLOW_ID] } as unknown as Job) : (overrides.job as Job | null);
 
   const setHomologyScreening = overrides.setHomologyScreening ?? jest.fn(async () => job);
   const setAclidScreening = overrides.setAclidScreening ?? jest.fn(async () => job);
   const appendScreeningBatchId = overrides.appendScreeningBatchId ?? jest.fn(async () => job);
-  const jobService: any = { findById: jest.fn(async () => job), setHomologyScreening, setAclidScreening, appendScreeningBatchId };
+  const setAclidCustomerStatus = jest.fn(async () => undefined);
+  const jobService: any = { findById: jest.fn(async () => job), setHomologyScreening, setAclidScreening, appendScreeningBatchId, setAclidCustomerStatus };
 
   const workflowService: any = {
     findByIds: jest.fn(async () => [{ _id: WORKFLOW_ID, nodes: nodes.map((n) => ({ _id: n.id })) }])
@@ -80,7 +86,18 @@ function harness(
   const secureDnaService: any = { screenSequences };
 
   const screenInline = overrides.screenInline ?? jest.fn();
-  const aclidService: any = { isConfigured: () => overrides.aclidConfigured ?? false, screenInline, getScreen: jest.fn(), getScreenDetails: jest.fn(async () => null) };
+  const createCustomer = jest.fn<Promise<{ requesterId: string; status: string }>, [unknown]>(async () => ({ requesterId: 'req_1', status: 'queued' }));
+  const pollCustomer = jest.fn<Promise<any>, [unknown]>(async () => customerRecord());
+  const getCustomer = jest.fn();
+  const aclidService: any = {
+    isConfigured: () => overrides.aclidConfigured ?? false,
+    screenInline,
+    getScreen: jest.fn(),
+    getScreenDetails: jest.fn(async () => null),
+    createCustomer,
+    pollCustomer,
+    getCustomer
+  };
 
   const files: any = {
     readObject:
@@ -97,7 +114,27 @@ function harness(
   };
 
   const service = new JobScreeningService(jobService, workflowService, workflowNodeService, dampLabServices, secureDnaService, aclidService, files, screeningRuns);
-  return { service, job, setHomologyScreening, setAclidScreening, appendScreeningBatchId, screenSequences, screenInline, files, screeningRuns };
+  return {
+    service,
+    job,
+    setHomologyScreening,
+    setAclidScreening,
+    appendScreeningBatchId,
+    screenSequences,
+    screenInline,
+    files,
+    screeningRuns,
+    setAclidCustomerStatus,
+    createCustomer,
+    pollCustomer,
+    getCustomer,
+    workflowService
+  };
+}
+
+/** A finished Aclid customer record (PASSED), with only the fields a test cares about overridden. */
+function customerRecord(overrides: Partial<Record<string, unknown>> = {}): any {
+  return { requesterId: 'req_1', status: 'PASSED', verdict: 'clear', decisionStatus: 'approved', checks: [], counts: { total: 0 }, raw: { requester_id: 'req_1' }, ...overrides };
 }
 
 const lastCall = (mock: jest.Mock): any => mock.mock.calls[mock.mock.calls.length - 1][1];
@@ -334,8 +371,8 @@ describe('screenJob homology mode', () => {
     expect(aclid.screenId).toBe('scr_1');
     expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.PASSED);
     expect(aclid.sequenceCount).toBe(1);
-    // Verification is pending, so the customer still has KYC to do.
-    expect(aclid.customerStatus).toBe(HomologyScreeningStatus.IN_PROGRESS);
+    // customerStatus comes from the customer leg, not from KYC (Approach 8).
+    expect(aclid.customerStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
   });
 
   it('in aclid mode runs SecureDNA when screenInline throws', async () => {
@@ -443,8 +480,8 @@ describe('screenJob homology mode', () => {
     expect(aclid.homologyStatus).toBe(HomologyScreeningStatus.IN_PROGRESS);
     expect(aclid.completedAt).toBeNull();
     expect(aclid.detail).toBe('Aclid screen still running');
-    // The screen id is what KYC hangs off, so the customer can verify now.
-    expect(aclid.customerStatus).toBe(HomologyScreeningStatus.IN_PROGRESS);
+    // customerStatus comes from the customer leg, not from KYC (Approach 8).
+    expect(aclid.customerStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
 
     // No verdict yet, so the backup still runs and the Homology row settles.
     expect(screenSequences).toHaveBeenCalled();
@@ -898,5 +935,248 @@ describe('screeningFingerprint', () => {
     const { service, job } = harness([{ id: 'n1', serviceName: 'Plates', parameters: [param], formData: [{ id: 'plate', value }] }], { readObject });
     await expect(service.screeningFingerprint(job!)).resolves.toMatch(/^[0-9a-f]{64}$/);
     expect(readObject).not.toHaveBeenCalled();
+  });
+});
+
+describe('customer leg (aclid-customer-screening)', () => {
+  const gibson = [{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_A }] }];
+  const rerun = { trigger: ScreeningRunTrigger.RERUN, triggeredBy: 'Staff' };
+  const originalMode = process.env.BIOSECURITY_HOMOLOGY_MODE;
+  const person = { clientDisplayName: 'Ada', institute: 'BU', email: 'a@bu.edu' };
+  const withPerson = { job: { _id: 'job-1', workflows: [WORKFLOW_ID], ...person } as unknown as Partial<Job> };
+  const passingScreen = (): jest.Mock => jest.fn(async () => aclidScreen());
+
+  afterEach(() => {
+    if (originalMode === undefined) delete process.env.BIOSECURITY_HOMOLOGY_MODE;
+    else process.env.BIOSECURITY_HOMOLOGY_MODE = originalMode;
+  });
+
+  /** The patch of the last `update` call. */
+  const closed = (screeningRuns: any): any => screeningRuns.update.mock.calls[screeningRuns.update.mock.calls.length - 1][1];
+
+  it('AUTO_SCREENING_ENABLED is off: screenJobInBackground creates no run', async () => {
+    const { service, screeningRuns } = harness(gibson);
+    service.screenJobInBackground('job-1', 'user-1');
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(AUTO_SCREENING_ENABLED).toBe(false);
+    expect(screeningRuns.create).not.toHaveBeenCalled();
+  });
+
+  it("a rerun posts the customer with the run's screen id, after homology", async () => {
+    const order: string[] = [];
+    const screenInline = jest.fn(async () => {
+      order.push('screenInline');
+      return aclidScreen();
+    });
+    const h = harness(gibson, { aclidConfigured: true, screenInline, ...withPerson });
+    h.createCustomer.mockImplementation(async () => {
+      order.push('createCustomer');
+      return { requesterId: 'req_1', status: 'queued' };
+    });
+
+    await h.service.screenJob('job-1', 'user-1', rerun);
+
+    expect(h.createCustomer).toHaveBeenCalledWith({ name: 'Ada', company: 'BU', email: 'a@bu.edu', screenId: 'scr_1' });
+    expect(h.pollCustomer).toHaveBeenCalledWith('req_1');
+    expect(order).toEqual(['screenInline', 'createCustomer']);
+    expect(closed(h.screeningRuns).customer).toMatchObject({ status: 'PASSED', requesterId: 'req_1' });
+  });
+
+  it('runs the leg even when homology failed', async () => {
+    const screenInline = jest.fn(async () => aclidScreen({ regulatoryStatus: 'controlled' }));
+    const h = harness(gibson, { aclidConfigured: true, screenInline, ...withPerson });
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(h.createCustomer).toHaveBeenCalled();
+    expect(closed(h.screeningRuns).status).toBe('FAILED');
+  });
+
+  it("a still-running screen's id is used", async () => {
+    const screenInline = jest.fn(async () => {
+      throw new AclidScreenPendingError(aclidScreen({ id: 'scr_pending', status: 'running' }) as any, 'still running');
+    });
+    const h = harness(gibson, { aclidConfigured: true, screenInline, screenSequences: jest.fn(async () => granted), ...withPerson });
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(h.createCustomer).toHaveBeenCalledWith(expect.objectContaining({ screenId: 'scr_pending' }));
+  });
+
+  const notRun = { status: 'NOT_RUN', requesterId: null, verdict: null, decisionStatus: null, checks: null, counts: null, raw: null, detail: null };
+
+  it('no screen id: NOT_RUN and no customer call', async () => {
+    const screenInline = jest.fn(async () => {
+      throw new Error('boom');
+    });
+    const h = harness(gibson, { aclidConfigured: true, screenInline, screenSequences: jest.fn(async () => granted), ...withPerson });
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(h.createCustomer).not.toHaveBeenCalled();
+    expect(closed(h.screeningRuns).customer).toEqual(notRun);
+  });
+
+  it('Aclid not configured: NOT_RUN', async () => {
+    const h = harness(gibson, { aclidConfigured: false, screenSequences: jest.fn(async () => granted), ...withPerson });
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(h.createCustomer).not.toHaveBeenCalled();
+    expect(closed(h.screeningRuns).customer).toEqual(notRun);
+  });
+
+  it('zero sequences: NOT_RUN on a rerun', async () => {
+    const h = harness([{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: 'TBD later' }] }], {
+      aclidConfigured: true,
+      screenInline: passingScreen(),
+      ...withPerson
+    });
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    const patch = closed(h.screeningRuns);
+    expect(patch.customer.status).toBe('NOT_RUN');
+    expect(patch.status).toBe('UNAVAILABLE');
+    expect(patch.sequenceCount).toBe(0);
+  });
+
+  it('feature not enabled gives NOT_AVAILABLE (behaviour 3)', async () => {
+    const h = harness(gibson, { aclidConfigured: true, screenInline: passingScreen(), ...withPerson });
+    h.createCustomer.mockRejectedValue(new AclidFeatureNotEnabledError('Feature "sanctions" is not enabled for your organization'));
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(closed(h.screeningRuns).customer).toMatchObject({ status: 'NOT_AVAILABLE', detail: 'Customer screening is not enabled for this Aclid account' });
+    expect(h.pollCustomer).not.toHaveBeenCalled();
+  });
+
+  it('not enabled on the read also gives NOT_AVAILABLE, keeping the id', async () => {
+    const h = harness(gibson, { aclidConfigured: true, screenInline: passingScreen(), ...withPerson });
+    h.pollCustomer.mockRejectedValue(new AclidFeatureNotEnabledError('Feature "sanctions" is not enabled for your organization'));
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(closed(h.screeningRuns).customer).toMatchObject({ status: 'NOT_AVAILABLE', requesterId: 'req_1' });
+  });
+
+  it('any other error gives UNAVAILABLE with the reason, keeping the id', async () => {
+    const h = harness(gibson, { aclidConfigured: true, screenInline: passingScreen(), ...withPerson });
+    h.pollCustomer.mockRejectedValue(new Error('boom'));
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(closed(h.screeningRuns).customer).toMatchObject({ status: 'UNAVAILABLE', detail: 'boom', requesterId: 'req_1' });
+  });
+
+  it('a post failure gives UNAVAILABLE with no id', async () => {
+    const h = harness(gibson, { aclidConfigured: true, screenInline: passingScreen(), ...withPerson });
+    h.createCustomer.mockRejectedValue(new Error('boom'));
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(closed(h.screeningRuns).customer).toMatchObject({ status: 'UNAVAILABLE', detail: 'boom', requesterId: null });
+  });
+
+  it('out of budget records IN_PROGRESS and keeps the id (behaviour 5)', async () => {
+    const h = harness(gibson, { aclidConfigured: true, screenInline: passingScreen(), ...withPerson });
+    h.pollCustomer.mockRejectedValue(new AclidCustomerPendingError(customerRecord({ status: CustomerScreeningStatus.IN_PROGRESS, verdict: 'needs_review' }) as any));
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(closed(h.screeningRuns).customer).toMatchObject({ status: 'IN_PROGRESS', requesterId: 'req_1', verdict: 'needs_review' });
+  });
+
+  it('a customer-triggered screen never posts a customer', async () => {
+    const h = harness(gibson, { aclidConfigured: true, screenInline: passingScreen(), ...withPerson });
+    await h.service.screenJob('job-1', 'sub');
+    expect(h.createCustomer).not.toHaveBeenCalled();
+    expect(closed(h.screeningRuns).customer ?? null).toBeNull();
+    expect(h.setAclidCustomerStatus).not.toHaveBeenCalled();
+  });
+
+  it('the run completes after the customer leg', async () => {
+    const order: string[] = [];
+    const h = harness(gibson, { aclidConfigured: true, screenInline: passingScreen(), ...withPerson });
+    h.pollCustomer.mockImplementation(async () => {
+      order.push('pollCustomer');
+      return customerRecord();
+    });
+    h.screeningRuns.update.mockImplementation(async (_id: string, patch: any) => {
+      order.push(patch.completedAt ? 'closed' : 'update');
+    });
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(order).toContain('pollCustomer');
+    expect(order.indexOf('pollCustomer')).toBeLessThan(order.indexOf('closed'));
+    expect(order.filter((o) => o === 'closed')).toHaveLength(1);
+    expect(order[order.length - 1]).toBe('closed');
+  });
+
+  it("writes the job's customerStatus from the leg", async () => {
+    const h = harness(gibson, { aclidConfigured: true, screenInline: passingScreen(), ...withPerson });
+    h.pollCustomer.mockResolvedValue(customerRecord({ status: CustomerScreeningStatus.NEEDS_REVIEW, verdict: 'needs_review' }));
+    await h.service.screenJob('job-1', 'user-1', rerun);
+    expect(h.setAclidCustomerStatus).toHaveBeenCalledWith('job-1', 'IN_PROGRESS');
+  });
+
+  it('stores the fingerprint when the run opens', async () => {
+    const h = harness(gibson, { screenSequences: jest.fn(async () => granted) });
+    await h.service.screenJob('job-1', 'user-1');
+    expect(h.screeningRuns.create.mock.calls[0][0].fingerprint).toBe(await h.service.screeningFingerprint(h.job!));
+  });
+
+  it('a value edited while the run is in flight leaves the opening fingerprint', async () => {
+    const nodes = [{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_A }] as unknown }];
+    const screenInline = jest.fn(async () => {
+      nodes[0].formData = [{ id: 'insert', value: DNA_B }];
+      return aclidScreen();
+    });
+    const h = harness(nodes, { aclidConfigured: true, screenInline });
+    await h.service.screenJob('job-1', 'user-1');
+    const stored = h.screeningRuns.create.mock.calls[0][0].fingerprint;
+    expect(stored).toMatch(/^[0-9a-f]{64}$/);
+    expect(stored).not.toBe(await h.service.screeningFingerprint(h.job!));
+  });
+
+  it('a fingerprint that cannot be read stores null and still screens', async () => {
+    const h = harness(gibson, { screenSequences: jest.fn(async () => granted) });
+    const original = h.workflowService.findByIds.getMockImplementation();
+    h.workflowService.findByIds.mockRejectedValueOnce(new Error('mongo down'));
+    h.workflowService.findByIds.mockImplementation(original);
+    await h.service.screenJob('job-1', 'user-1');
+    expect(h.screeningRuns.create.mock.calls[0][0].fingerprint).toBeNull();
+    expect(closed(h.screeningRuns).completedAt).toBeInstanceOf(Date);
+    expect(closed(h.screeningRuns).status).toBe('PASSED');
+  });
+
+  it('table notes go in unscreenedNotes (behaviour 9)', async () => {
+    const plate = { id: 'plate', name: 'Plate map', type: 'table', screening: true, screeningFields: ['Insert'] };
+    const h = harness(
+      [
+        { id: 'n1', serviceName: 'Plates', parameters: [plate], formData: [{ id: 'plate', value: JSON.stringify({ filename: 'plate.csv' }) }] },
+        { id: 'n2', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_A }] }
+      ],
+      { screenSequences: jest.fn(async () => granted) }
+    );
+    await h.service.screenJob('job-1', 'user-1');
+    const patch = closed(h.screeningRuns);
+    expect(patch.unscreenedNotes.join(' ')).toContain('was not uploaded');
+    expect(patch.status).toBe('PASSED');
+  });
+
+  it('a collection that throws blocks through unscreenedNotes', async () => {
+    const h = harness(gibson);
+    const original = h.workflowService.findByIds.getMockImplementation();
+    let calls = 0;
+    h.workflowService.findByIds.mockImplementation(async (...args: unknown[]) => {
+      if (++calls === 2) throw new Error('mongo down');
+      return original(...args);
+    });
+    await h.service.screenJob('job-1', 'user-1');
+    const patch = closed(h.screeningRuns);
+    expect(patch.unscreenedNotes).toHaveLength(1);
+    expect(patch.unscreenedNotes[0]).toMatch(/^Could not read the job's sequences/);
+    expect(patch.sequenceCount).toBe(0);
+  });
+
+  it('a job write that throws is closed with a note', async () => {
+    const setHomologyScreening = jest.fn(async () => {
+      throw new Error('write failed');
+    });
+    const h = harness(gibson, { setHomologyScreening, screenSequences: jest.fn(async () => granted) });
+    await expect(h.service.screenJob('job-1', 'user-1')).rejects.toThrow('write failed');
+    const patch = closed(h.screeningRuns);
+    expect(patch.unscreenedNotes).toEqual(['write failed']);
+    expect(patch.status).toBe('UNAVAILABLE');
+  });
+
+  it('the close carries sequenceCount', async () => {
+    const two = [
+      { id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_A }] },
+      { id: 'n2', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_B }] }
+    ];
+    const h = harness(two, { screenSequences: jest.fn(async () => granted) });
+    await h.service.screenJob('job-1', 'user-1');
+    expect(closed(h.screeningRuns).sequenceCount).toBe(2);
   });
 });
