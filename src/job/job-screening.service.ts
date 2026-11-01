@@ -18,7 +18,9 @@ import { fitAclidLeg } from './screening-run.util';
 import { headerIndexesFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
 import { TABLE_UPLOAD_KEY_PREFIX } from '../workflow/utils/table-answers';
 import { fileRecord, flattenValues, hasParentSegment, isTableType, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
+import { computeScreeningFingerprint, FlaggedAnswer, flaggedAnswerValue, screeningCustomerDetails } from './screening-fingerprint.util';
 import {
+  FlaggedParam,
   isScreenedParameter,
   looksLikeNucleotideSequence,
   normalizeFormDataToArray,
@@ -81,7 +83,6 @@ export class JobScreeningService {
    * snapshot, which predates them. A value that does not look like DNA is counted, not sent.
    */
   async collectScreeningTargets(job: Job): Promise<ScreeningCollection> {
-    const workflows = await this.workflowService.findByIds((job.workflows ?? []) as mongoose.Types.ObjectId[]);
     const collection: ScreeningCollection = { targets: [], skippedCount: 0, notes: [] };
     const push = (name: string, seq: string, label: string): void => {
       if (!looksLikeNucleotideSequence(seq)) {
@@ -91,14 +92,38 @@ export class JobScreeningService {
       collection.targets.push({ name, seq, label });
     };
 
+    for await (const { workflowId, nodeId, service, param, value } of this.flaggedParameters(job)) {
+      const paramName = typeof param.name === 'string' && param.name.trim() !== '' ? param.name.trim() : param.id;
+      const paramLabel = `${service.name} › ${paramName}`;
+      if (param.type === 'string') {
+        const values = screeningStringsFromValue(value);
+        const multi = param.allowMultipleValues === true;
+        values.forEach((seq, i) =>
+          push(multi ? multiValueSliceName(workflowId, nodeId, param.id, i + 1) : screeningSliceName(workflowId, nodeId, param.id), seq, multi ? `${paramLabel} › value ${i + 1}` : paramLabel)
+        );
+      } else if (isTableType(param.type)) {
+        await this.collectTableTargets(collection, push, { workflowId, nodeId, param, paramLabel, value });
+      }
+    }
+    return collection;
+  }
+
+  /**
+   * Every parameter flagged `screening: true` on a job, with the stored answer to it (undefined
+   * when none), in workflow, node, then parameter order. Shared by target collection and the
+   * fingerprint so both agree on what is flagged. Reads live effective parameters, never the
+   * node's snapshot.
+   */
+  private async *flaggedParameters(job: Job): AsyncGenerator<{ workflowId: string; nodeId: string; service: { name: string }; param: FlaggedParam; value: unknown }> {
+    const workflows = await this.workflowService.findByIds((job.workflows ?? []) as mongoose.Types.ObjectId[]);
     for (const workflow of workflows) {
       const workflowId = String(workflow._id);
       const nodeIds = (workflow.nodes ?? []).map((n: unknown) => String((n as { _id?: unknown })._id ?? n));
       const nodes = await this.workflowNodeService.getByIDs(nodeIds);
       const byId = new Map(nodes.map((n) => [String(n._id), n]));
 
-      for (const nodeId of nodeIds) {
-        const node = byId.get(nodeId);
+      for (const id of nodeIds) {
+        const node = byId.get(id);
         if (!node?.service) continue;
         const service = await this.dampLabServices.findOne(String(node.service));
         if (!service) continue;
@@ -107,22 +132,24 @@ export class JobScreeningService {
 
         for (const param of parameters) {
           if (!isScreenedParameter(param)) continue;
-          const paramName = typeof param.name === 'string' && param.name.trim() !== '' ? param.name.trim() : param.id;
-          const paramLabel = `${service.name} › ${paramName}`;
-          const value = entries.find((entry) => entry.id === param.id)?.value;
-          if (param.type === 'string') {
-            const values = screeningStringsFromValue(value);
-            const multi = param.allowMultipleValues === true;
-            values.forEach((seq, i) =>
-              push(multi ? multiValueSliceName(workflowId, node.id, param.id, i + 1) : screeningSliceName(workflowId, node.id, param.id), seq, multi ? `${paramLabel} › value ${i + 1}` : paramLabel)
-            );
-          } else if (isTableType(param.type)) {
-            await this.collectTableTargets(collection, push, { workflowId, nodeId: node.id, param, paramLabel, value });
-          }
+          yield { workflowId, nodeId: node.id, service, param, value: entries.find((entry) => entry.id === param.id)?.value };
         }
       }
     }
-    return collection;
+  }
+
+  /**
+   * A fingerprint of what a screen would cover: every flagged answer that has a value, and the
+   * customer details sent to Aclid. A table is fingerprinted by file key and name, never read.
+   * A thrown read propagates; callers decide.
+   */
+  async screeningFingerprint(job: Job): Promise<string> {
+    const answers: FlaggedAnswer[] = [];
+    for await (const { nodeId, param, value } of this.flaggedParameters(job)) {
+      const values = flaggedAnswerValue(param.type, value);
+      if (values.length > 0) answers.push({ nodeId, paramId: param.id, values });
+    }
+    return computeScreeningFingerprint(answers, screeningCustomerDetails(job));
   }
 
   /**

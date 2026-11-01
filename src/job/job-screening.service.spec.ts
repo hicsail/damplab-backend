@@ -836,3 +836,67 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
     expect(screeningRuns.updateAclidLeg).not.toHaveBeenCalled();
   });
 });
+
+describe('screeningFingerprint', () => {
+  const insertNode = (formData: unknown[], parameters?: any[]): Array<{ id: string; serviceName: string; formData: unknown; parameters?: any[] }> => [
+    { id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, parameters, formData }
+  ];
+
+  it('is the same for the same flagged values, whatever unflagged parameters hold', async () => {
+    const a = harness(
+      insertNode([
+        { id: 'insert', value: DNA_A },
+        { id: 'vector', value: DNA_B }
+      ])
+    );
+    const b = harness(
+      insertNode([
+        { id: 'insert', value: DNA_A },
+        { id: 'vector', value: 'something else' }
+      ])
+    );
+    expect(await a.service.screeningFingerprint(a.job!)).toBe(await b.service.screeningFingerprint(b.job!));
+  });
+
+  it('changes when a flagged value changes', async () => {
+    const a = harness(insertNode([{ id: 'insert', value: DNA_A }]));
+    const b = harness(insertNode([{ id: 'insert', value: DNA_B }]));
+    expect(await a.service.screeningFingerprint(a.job!)).not.toBe(await b.service.screeningFingerprint(b.job!));
+  });
+
+  it('changes when another parameter with a value is flagged (behaviour 11)', async () => {
+    const formData = [
+      { id: 'insert', value: DNA_A },
+      { id: 'vector', value: DNA_B }
+    ];
+    const before = harness(insertNode(formData));
+    const flagged = harness(
+      insertNode(formData, [
+        { id: 'insert', name: 'Insert', type: 'string', screening: true },
+        { id: 'vector', name: 'Vector', type: 'string', screening: true }
+      ])
+    );
+    expect(await before.service.screeningFingerprint(before.job!)).not.toBe(await flagged.service.screeningFingerprint(flagged.job!));
+  });
+
+  it('does not change when a flagged parameter has no value', async () => {
+    const formData = [{ id: 'insert', value: DNA_A }];
+    const before = harness(insertNode(formData));
+    const flagged = harness(
+      insertNode(formData, [
+        { id: 'insert', name: 'Insert', type: 'string', screening: true },
+        { id: 'vector', name: 'Vector', type: 'string', screening: true }
+      ])
+    );
+    expect(await before.service.screeningFingerprint(before.job!)).toBe(await flagged.service.screeningFingerprint(flagged.job!));
+  });
+
+  it('never reads S3 for a flagged table', async () => {
+    const readObject = jest.fn();
+    const param = { id: 'plate', name: 'Plate map', type: 'table', screening: true, screeningFields: ['insert'] };
+    const value = JSON.stringify({ filename: 'plate.csv', key: 'workflow-parameters/user-1/abc-plate.csv' });
+    const { service, job } = harness([{ id: 'n1', serviceName: 'Plates', parameters: [param], formData: [{ id: 'plate', value }] }], { readObject });
+    await expect(service.screeningFingerprint(job!)).resolves.toMatch(/^[0-9a-f]{64}$/);
+    expect(readObject).not.toHaveBeenCalled();
+  });
+});
