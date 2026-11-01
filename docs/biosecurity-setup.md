@@ -1,7 +1,7 @@
 # Biosecurity screening: setup
 
 What a server needs before the job page's Biosecurity card can screen anything. Screening runs from
-staff's **Rerun screening** button (automatic screening on submission is paused:
+staff's **Run screening** button, which reads **Rerun screening** once the job has a run (automatic screening on submission is paused:
 `AUTO_SCREENING_ENABLED = false` in `src/job/job-screening.service.ts`).
 
 ## What gets screened
@@ -16,9 +16,9 @@ Values that do not look like DNA are skipped and counted on the run.
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `ACLID_API_KEY` | For Aclid and KYC | unset | Aclid API key, sent raw in `Authorization`. Unset: Aclid is skipped (not failed), homology runs on SecureDNA only, and no KYC link can be minted. Read in `src/aclid/aclid.service.ts`. |
+| `ACLID_API_KEY` | For Aclid and customer screening | unset | Aclid API key, sent raw in `Authorization`. Local and staging use Aclid's test key; production uses its prod key; `ACLID_API_URL` is the same for both. Unset: Aclid is skipped (not failed), homology runs on SecureDNA only, and no customer screening runs: the Customer card reads *Not run*. Read in `src/aclid/aclid.service.ts`. |
 | `ACLID_API_URL` | No | `https://api.aclid.bio` | Aclid's origin; trailing slashes are trimmed. |
-| `BIOSECURITY_HOMOLOGY_MODE` | No | `aclid` when `ACLID_API_KEY` is set, else `securedna` | `aclid`: SecureDNA runs only when Aclid gives no verdict. `securedna`: the Homology row is SecureDNA's alone, but an Aclid screen is still created for KYC when keyed. `both`: both always run and Homology fails if either denies. Anything else reads as the default; unkeyed, the mode is always `securedna`. Read in `src/job/job-screening.service.ts` via `parseHomologyMode` in `src/aclid/aclid-status.util.ts`. |
+| `BIOSECURITY_HOMOLOGY_MODE` | No | `aclid` when `ACLID_API_KEY` is set, else `securedna` | `aclid`: SecureDNA runs only when Aclid gives no verdict. `securedna`: the Homology row is SecureDNA's alone, but an Aclid screen is still created for customer screening when keyed. `both`: both always run and Homology fails if either denies. Anything else reads as the default; unkeyed, the mode is always `securedna`. Read in `src/job/job-screening.service.ts` via `parseHomologyMode` in `src/aclid/aclid-status.util.ts`. |
 | `SECUREDNA_API_URL` | For SecureDNA | unset | Origin of a SecureDNA synthclient (the backend appends `/v1/screen`), e.g. `http://127.0.0.1:8787`. Unset: a SecureDNA leg records Unavailable. Read in `src/securedna/securedna.service.ts`. |
 | `SECUREDNA_REQUEST_TIMEOUT_MS` | No | `120000` | Per-request timeout for the synthclient, in ms. A non-number or <= 0 uses the default. |
 
@@ -38,19 +38,43 @@ the lab's synthesis token, which lives in `damplab-backend/secure_dna/certs/` (`
 has them, never commit them, and mount them into the container as SecureDNA's synthclient
 documentation describes.
 
+## Accepting a job
+
+Staff cannot accept a job until the newest screening run for it has completed, its homology is
+cleared, its customer screening is Passed, Not available or Not run, and nothing screened has
+changed since. A job with nothing to screen still needs one run: press **Run screening** once, and
+a completed run with zero sequences clears it. A changed flagged value, a replaced table file, a
+newly flagged parameter with a value, or changed customer details means **Rerun screening**.
+Customer screening In progress or Needs review: resolve it at Aclid and press **Refresh results**.
+A flagged table that could not be read blocks, even when other sequences passed. Staff without
+`showBiosecurity` are blocked too and are told someone with biosecurity access must screen first.
+There is no override: a job that can never pass gets request changes or cancel, and any exception
+is handled outside Canvas. Jobs already accepted or later are not re-checked and screening stays
+optional for them.
+
+## Customer screening and the sanctions feature
+
+A rerun posts `POST /v2/customers` with name (`clientDisplayName`, then `username`, then email),
+company (`institute`), email and `screen_id`. Today Aclid answers HTTP 403 with
+`Feature "sanctions" is not enabled for your organization`, which shows as *Not available* and does
+not block. When Aclid enables `sanctions`, nothing in Canvas changes for the leg to run, and a real
+fail or needs-review starts blocking. Collect the address and country first: they are not sent yet
+(decided 2026-11-01).
+
 ## Keycloak: `showBiosecurity`
 
 Who sees the Biosecurity card, the screening history and the batch details is a per-account
 Keycloak user attribute, `showBiosecurity`. Absent means shown; the value `false` hides the card
 and makes the backend refuse `jobScreeningRuns`, `screeningRun`, `screeningBatch`,
 `screeningBatches` and `rerunJobHomologyScreening` with FORBIDDEN. Set it in Keycloak's admin
-console (Users -> the user -> Attributes) or from Customer Management.
+console (Users -> the user -> Attributes) or from Customer Management. `jobAcceptanceScreening`
+takes no `showBiosecurity` check, since it returns only a state and message.
 
 ## Permission: `jobs:view-all`
 
 Every biosecurity read and the rerun also require `jobs:view-all` (Administrator and Technician
-tiers; see `docs/access-matrix.md`). Customers never see screening results; on their own job page
-they see only the verification button Aclid's KYC needs.
+tiers; see `docs/access-matrix.md`). Customers never see screening results. `BIOSECURITY_ENABLED = false` in the UI's
+`ClientView.tsx` hides the block from customers.
 
 ## Verify it works
 
@@ -61,5 +85,6 @@ they see only the verification button Aclid's KYC needs.
 2. For SecureDNA: start the synthclient and `curl -s -X POST "$SECUREDNA_API_URL/v1/screen"` should
    answer (not refuse the connection).
 3. In the app: flag a Text parameter, put a sequence of 30+ bp on a job, open the job as staff and
-   press **Rerun screening**. The card's history dropdown gains a run; open it to see each
-   sequence, Aclid's findings and materials, and SecureDNA's hits.
+   press **Run screening**. The card's history dropdown gains a run; open it to see each
+   sequence, Aclid's findings and materials, and SecureDNA's hits. The Customer card reads
+   *Not available* on today's account, and Accept is then enabled in the Review modal.
