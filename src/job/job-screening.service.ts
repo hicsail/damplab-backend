@@ -30,11 +30,11 @@ import {
 import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceName } from './job-screening-name.util';
 
 /**
- * Biosecurity screening is paused: submission and resubmission no longer start
- * a screen. Staff's "re-run screening" still works on demand. Flip back to
- * true when the feature is finished.
+ * Submission and resubmission start a screen in the background. Set to false to
+ * pause that; staff's "re-run screening" works either way. Pairs with
+ * BIOSECURITY_ENABLED in the UI's ClientView.tsx.
  */
-export const AUTO_SCREENING_ENABLED = false;
+export const AUTO_SCREENING_ENABLED = true;
 
 export interface ScreenJobOptions {
   trigger?: ScreeningRunTrigger;

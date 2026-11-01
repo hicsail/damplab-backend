@@ -14,7 +14,7 @@ import { HomologyScreeningStatus } from './job.model';
  * which is `jobs:view-all` + `showBiosecurity`.
  */
 export enum ScreeningRunTrigger {
-  /** Screening on submission (paused while AUTO_SCREENING_ENABLED is false), and the KYC path's on-demand screen. */
+  /** Screening on submission (when AUTO_SCREENING_ENABLED is on), and the KYC path's on-demand screen. */
   SUBMISSION = 'SUBMISSION',
   /** Staff's "Rerun screening". */
   RERUN = 'RERUN'
