@@ -531,7 +531,8 @@ export class JobScreeningService {
         startedAt: new Date(),
         sequenceCount: 0,
         skippedCount: 0,
-        sequences: []
+        sequences: [],
+        fingerprint: null
       });
     } catch (error) {
       this.logger.error(`Could not open a screening run for job ${jobId}: ${messageOf(error)}`);
