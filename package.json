@@ -54,6 +54,7 @@
     "reflect-metadata": "^0.1.13",
     "rimraf": "^6.1.2",
     "rxjs": "^7.2.0",
+    "seqparse": "^0.2.2",
     "uuid": "^11.0.3"
   },
   "devDependencies": {
