@@ -65,6 +65,17 @@ export class JobReviewOperation {
   @Prop({ type: String, required: false })
   normalizedMessage?: string;
 
+  /** ACCEPT only: the reviewer asked to accept whatever screening says. */
+  @Prop({ type: Boolean, required: false })
+  screeningOverrideRequested?: boolean;
+
+  /**
+   * ACCEPT only: screening had not cleared the job when it was written, and the override let it
+   * through. Set before the job write, so history and activity read it on a resumed operation.
+   */
+  @Prop({ type: Boolean, required: false })
+  screeningOverridden?: boolean;
+
   /**
    * The content version this command puts the graph back to, captured when the
    * command was journaled so a retry restores the same one.

@@ -97,6 +97,16 @@ describe('acceptance screening gate', () => {
     expect(await F.reviewJobError(ctx, 'staff', jobId, 'ACCEPT', 'op-w2')).toContain('Run screening before accepting');
   });
 
+  it('staff can override a job with no run, and the activity says so', async () => {
+    const jobId = await submit();
+    const accepted = await gql(ctx, 'staff', `mutation ($input: ReviewJobInput!) { reviewJob(input: $input) { id state } }`, {
+      input: { operationId: 'op-override', jobId, decision: 'ACCEPT', overrideScreening: true }
+    });
+    expect(accepted.reviewJob.state).toBe('ACCEPTED');
+    const activity = await ctx.connection.db!.collection('activity_events').findOne({ operationId: 'JOB_REVIEWED:op-override' });
+    expect(activity?.message).toBe('Job review decision: Accepted with screening override');
+  });
+
   it('request-changes needs no run', async () => {
     const jobId = await submit();
     const reviewed = await F.reviewJob(ctx, 'staff', jobId, 'REQUEST_EDITS', 'op-edits', 'Please revise the volumes.');

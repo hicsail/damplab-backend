@@ -51,7 +51,11 @@ interface OperationIdentity {
   decision?: JobReviewDecision;
   responseAction?: CustomerActionRequired;
   normalizedMessage?: string;
+  screeningOverride?: boolean;
 }
+
+/** What history and activity call an acceptance the screening override let through. */
+export const ACCEPTED_WITH_OVERRIDE = 'Accepted with screening override';
 
 interface ReviewMapping {
   action: CustomerActionRequired;
@@ -97,7 +101,9 @@ export class JobReviewService {
           actorSub: identity.actorSub,
           decision: identity.decision ?? null,
           responseAction: identity.responseAction ?? null,
-          normalizedMessage: identity.normalizedMessage ?? null
+          normalizedMessage: identity.normalizedMessage ?? null,
+          // Only when set, so operations journaled before the override existed keep their hash.
+          ...(identity.screeningOverride ? { screeningOverride: true } : {})
         })
       )
       .digest('hex');
@@ -202,6 +208,14 @@ export class JobReviewService {
     if (input.decision !== JobReviewDecision.ACCEPT && !normalizedMessage) {
       throw new BadRequestException('A message is required when requesting customer action.');
     }
+    const screeningOverride = input.overrideScreening === true;
+    if (screeningOverride && input.decision !== JobReviewDecision.ACCEPT) {
+      throw new BadRequestException('Only an acceptance can override screening.');
+    }
+    // Strictly true: the resolver always resolves it for ACCEPT, and an override must not pass on a missing answer.
+    if (screeningOverride && actor.showsBiosecurity !== true) {
+      throw new ForbiddenException('Only staff with biosecurity access can override screening.');
+    }
 
     const identity: OperationIdentity = {
       operationId,
@@ -209,7 +223,8 @@ export class JobReviewService {
       commandKind: JobReviewCommandKind.REVIEW,
       actorSub: actor.sub,
       decision: input.decision,
-      normalizedMessage
+      normalizedMessage,
+      screeningOverride
     };
     const existing = await this.findOperation(operationId);
     if (existing) {
@@ -230,7 +245,7 @@ export class JobReviewService {
       selectedHandoverVersionNumber = (await this.jobVersionService.getLatestContentVersion(input.jobId))?.versionNumber;
     }
     if (input.decision === JobReviewDecision.ACCEPT) {
-      const refusal = await this.acceptanceRefusal(job, actor);
+      const refusal = screeningOverride ? null : await this.acceptanceRefusal(job, actor);
       if (refusal) throw new BadRequestException(refusal);
       // Force the lazy v1 backfill first, exactly as appendStateEvent does. A job
       // submitted before versioning existed has no content version until someone
@@ -249,6 +264,7 @@ export class JobReviewService {
         actorOrg: jobVersionAuthorOrg({ authorRole: JobVersionAuthorRole.STAFF, claims: actor.claims, institute: job.institute }),
         decision: input.decision,
         normalizedMessage,
+        ...(screeningOverride ? { screeningOverrideRequested: true } : {}),
         ...this.originalFields(job),
         selectedAcceptedVersionNumber: selectedVersion?.versionNumber,
         selectedHandoverVersionNumber,
@@ -369,7 +385,10 @@ export class JobReviewService {
       // a crash, and screening can have gone stale in between. Operations already applied
       // returned above and are never re-checked.
       const refusal = await this.acceptanceRefusal(job, actor);
-      if (refusal) {
+      if (refusal && operation.screeningOverrideRequested) {
+        // Recorded only when the override changed the outcome: overriding a cleared job is a plain accept.
+        await this.updateOperationProgress(operation, { screeningOverridden: true });
+      } else if (refusal) {
         await this.casOperationStatus(operation, JobReviewOperationStatus.PENDING, JobReviewOperationStatus.CONFLICTED);
         throw new BadRequestException(refusal);
       }
@@ -461,7 +480,7 @@ export class JobReviewService {
         job,
         JobState.ACCEPTED,
         { role: JobVersionAuthorRole.STAFF, sub: operation.actorSub, name: operation.actorName, org: operation.actorOrg },
-        'Accepted',
+        operation.screeningOverridden ? ACCEPTED_WITH_OVERRIDE : 'Accepted',
         operation.operationId,
         version.workflows
       );
@@ -505,7 +524,8 @@ export class JobReviewService {
 
   private async writeReviewActivity(operation: JobReviewOperation): Promise<void> {
     if (operation.activityWrittenAt) return;
-    const decision = operation.decision === JobReviewDecision.ACCEPT ? 'Accepted' : this.reviewMapping(operation.decision as Exclude<JobReviewDecision, JobReviewDecision.ACCEPT>).heading;
+    const accepted = operation.screeningOverridden ? ACCEPTED_WITH_OVERRIDE : 'Accepted';
+    const decision = operation.decision === JobReviewDecision.ACCEPT ? accepted : this.reviewMapping(operation.decision as Exclude<JobReviewDecision, JobReviewDecision.ACCEPT>).heading;
     await this.activityService.createEventIdempotent({
       type: ActivityEventType.JOB_REVIEWED,
       operationId: `JOB_REVIEWED:${operation.operationId}`,

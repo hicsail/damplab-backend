@@ -21,6 +21,12 @@ export class ReviewJobInput {
 
   @Field({ nullable: true })
   message?: string;
+
+  @Field({
+    nullable: true,
+    description: 'ACCEPT only. Accept even though screening has not cleared the job. Staff with biosecurity access only.'
+  })
+  overrideScreening?: boolean;
 }
 
 @InputType()
