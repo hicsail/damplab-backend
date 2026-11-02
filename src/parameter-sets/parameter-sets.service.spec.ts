@@ -30,10 +30,10 @@ function fakeModel(seed: any[]): any {
 const buffers = { _id: SET_A, name: 'Buffers', parameters: [{ id: 'buffer' }] };
 const cleanup = { _id: SET_B, name: 'Cleanup', parameters: [{ id: 'kit' }] };
 
-const build = (sets: any[], users: any[] = []): { svc: ParameterSetsService; model: any } => {
+const build = (sets: any[], users: any[] = []): { svc: ParameterSetsService; model: any; services: any } => {
   const model = fakeModel(sets);
-  const services = { findUsingParameterSet: jest.fn(async () => users) };
-  return { svc: new ParameterSetsService(model, services as any), model };
+  const services = { findUsingParameterSet: jest.fn(async () => users), assertScreeningTemplatesMatch: jest.fn(async () => undefined) };
+  return { svc: new ParameterSetsService(model, services as any), model, services };
 };
 
 describe('ParameterSetsService', () => {
@@ -84,4 +84,10 @@ describe('ParameterSetsService', () => {
     await expect(svc.delete(SET_A)).resolves.toBe(true);
     expect(model.deleteOne).toHaveBeenCalledWith({ _id: SET_A });
   });
+});
+
+it('runs the screening template check on the stored parameters (biosecurity-update)', async () => {
+  const { svc, services } = build([]);
+  await svc.create({ name: 'Plates', parameters: [{ id: 'insert', name: 'Insert', type: 'string', screening: true }] });
+  expect(services.assertScreeningTemplatesMatch).toHaveBeenCalledWith([{ id: 'insert', name: 'Insert', type: 'string', screening: true }]);
 });

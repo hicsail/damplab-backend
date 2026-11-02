@@ -1,5 +1,5 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
-import { ACLID_POLL_INTERVAL_MS, ACLID_POLL_TIMEOUT_MS, ACLID_REQUEST_TIMEOUT_MS } from './aclid.constants';
+import { ACLID_DETAILS_MAX_MATCHES_PER_REGION, ACLID_POLL_INTERVAL_MS, ACLID_POLL_TIMEOUT_MS, ACLID_REQUEST_TIMEOUT_MS } from './aclid.constants';
 
 /**
  * Talks to Aclid (https://api.aclid.bio) over HTTP.
@@ -30,6 +30,16 @@ export interface AclidScreenRecord {
   decisionStatus: string | null;
   verificationCompletedAt: string | null;
   findings: Record<string, unknown> | null;
+  /** `match_count`: alignments across every sequence in the screen. */
+  matchCount: number | null;
+  /** `material_count`: unique controlled materials. */
+  materialCount: number | null;
+  /** `length`: cumulative length of every sequence. */
+  totalLength: number | null;
+  /** `material_summary`: material name → MaterialSummary. */
+  materialSummary: Record<string, unknown> | null;
+  /** The body exactly as Aclid sent it (`ReportMetadata`), kept on the screening run. */
+  raw: Record<string, unknown>;
 }
 
 export interface AclidInlineSequence {
@@ -57,6 +67,10 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 /** Aclid's snake_case screen body → our camelCase record. Missing fields are null, never undefined. */
 export function mapAclidScreen(raw: unknown): AclidScreenRecord {
   if (!isJsonObject(raw) || typeof raw.id !== 'string' || raw.id.length === 0) {
@@ -69,7 +83,12 @@ export function mapAclidScreen(raw: unknown): AclidScreenRecord {
     verificationStatus: stringOrNull(raw.verification_status),
     decisionStatus: stringOrNull(raw.decision_status),
     verificationCompletedAt: stringOrNull(raw.verification_completed_at),
-    findings: isJsonObject(raw.findings) ? raw.findings : null
+    findings: isJsonObject(raw.findings) ? raw.findings : null,
+    matchCount: numberOrNull(raw.match_count),
+    materialCount: numberOrNull(raw.material_count),
+    totalLength: numberOrNull(raw.length),
+    materialSummary: isJsonObject(raw.material_summary) ? raw.material_summary : null,
+    raw
   };
 }
 
@@ -164,6 +183,18 @@ export class AclidService {
   async getScreen(screenId: string, timeoutMs?: number): Promise<AclidScreenRecord> {
     const raw = await this.request('GET', `/v2/screens/${encodeURIComponent(screenId)}`, undefined, timeoutMs);
     return mapAclidScreen(raw);
+  }
+
+  /**
+   * `GET /v2/screens/{id}/details` — each sequence's matches, findings and regulatory
+   * status, keyed by the name it was sent under (`MatchGroup`). Null while the screen is not
+   * complete: Aclid answers 204 with no body, which `request` returns as null.
+   */
+  async getScreenDetails(screenId: string): Promise<Record<string, unknown> | null> {
+    const raw = await this.request('GET', `/v2/screens/${encodeURIComponent(screenId)}/details?max_match_count_per_region=${ACLID_DETAILS_MAX_MATCHES_PER_REGION}`);
+    if (raw === null) return null;
+    if (!isJsonObject(raw)) throw new HttpException('Aclid returned screen details that are not an object', HttpStatus.BAD_GATEWAY);
+    return raw;
   }
 
   /**

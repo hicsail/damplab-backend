@@ -1,3 +1,4 @@
+import { ScreeningRunTrigger } from './screening-run.model';
 import { UseGuards, Inject, forwardRef, Logger, ForbiddenException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '@nestjs/graphql';
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
@@ -42,6 +43,7 @@ import { assertParameterAnswersValid } from './parameter-answer-gate';
 import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
+import { assertShowsBiosecurity, callerShowsBiosecurity } from './biosecurity-gate';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
 import { customerStatusFromAclid, homologyStatusFromAclidScreen } from '../aclid/aclid-status.util';
@@ -394,7 +396,7 @@ export class JobResolver {
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
     }
-    await this.jobScreeningService.screenJob(jobId, user.sub);
+    await this.jobScreeningService.screenJob(jobId, user.sub, { trigger: ScreeningRunTrigger.RERUN, triggeredBy: user.name || user.email || user.preferred_username || null });
     return (await this.jobService.findById(jobId)) ?? job;
   }
 
@@ -475,7 +477,6 @@ export class JobResolver {
   async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const { job, screening: existing, screenId } = await this.jobForCustomerVerification(jobId, user);
     const screen = await this.aclidService.getScreen(screenId);
-
     const homologyStatus = homologyStatusFromAclidScreen(screen);
     const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
     const updated = await this.jobService.setAclidScreening(jobId, {
@@ -495,6 +496,11 @@ export class JobResolver {
         screenHomologyStatus: homologyStatus
       })
     });
+
+    // The run that sent this screen catches up too (biosecurity-update): verdict, raw report, details.
+    // After the customer's own row, and not awaited: the details call can take up to 30 s and the
+    // customer's click must not wait on it. It never rejects; the catch is belt and braces.
+    void this.jobScreeningService.recordAclidRefresh(screen).catch((err) => this.logger.error(`Aclid refresh run write failed for jobId=${jobId}`, err instanceof Error ? err.stack : err));
 
     // The Homology row is a stored rollup, and SecureDNA's leg cannot be read
     // back out of it. So this is one-directional: a screen that had no verdict
@@ -519,18 +525,14 @@ export class JobResolver {
 
   /**
    * The Biosecurity block is per account, stored as a Keycloak attribute.
-   * A missing method (unit harnesses that never construct Keycloak) is off.
+   * A missing method (unit harnesses that never construct Keycloak) reads as shown.
    */
-  private async callerShowsBiosecurity(user: User): Promise<boolean> {
-    const read = this.keycloakService?.userShowsBiosecurity;
-    if (typeof read !== 'function' || !user?.sub) return true;
-    return read.call(this.keycloakService, user.sub);
+  private callerShowsBiosecurity(user: User): Promise<boolean> {
+    return callerShowsBiosecurity(this.keycloakService, user);
   }
 
-  private async assertShowsBiosecurity(user: User): Promise<void> {
-    if (!(await this.callerShowsBiosecurity(user))) {
-      throw new ForbiddenException('Biosecurity is not enabled for this account');
-    }
+  private assertShowsBiosecurity(user: User): Promise<void> {
+    return assertShowsBiosecurity(this.keycloakService, user);
   }
 
   /** Staff with the flag see the full record. Everyone else sees the customer view, or nothing. */

@@ -3,6 +3,8 @@ export interface User {
   preferred_username: string;
   sub: string;
   email: string;
+  /** Display name (the token's `name` claim); absent on some accounts and on API-key callers. */
+  name?: string;
   realm_access: {
     roles: string[];
   };

@@ -8,19 +8,39 @@ import { DampLabServices } from '../services/damplab-services.services';
 import { SecureDnaService } from '../securedna/securedna.service';
 import { Region } from '../securedna/region';
 import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
-import { AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
+import { ACLID_TERMINAL_STATUSES, AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
 import { ACLID_MIN_SEQUENCE_LENGTH, customerStatusFromAclid, homologyStatusFromAclidScreen, isAclidLengthEligible, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
-import { SCREENED_FIELDS_BY_SERVICE } from './job-screening.constants';
-import { getFormStringFromEntries, looksLikeNucleotideSequence, normalizeFormDataToArray, ScreeningTarget } from './job-screening.util';
-import { screeningSliceName } from './job-screening-name.util';
+import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
+import { ScreeningRunPatch, ScreeningRunService } from './screening-run.service';
+import { ScreeningRunAclidLeg, ScreeningRunTrigger } from './screening-run.model';
+import { fitAclidLeg } from './screening-run.util';
+import { headerIndexesFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
+import { TABLE_UPLOAD_KEY_PREFIX } from '../workflow/utils/table-answers';
+import { fileRecord, flattenValues, hasParentSegment, isTableType, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
+import {
+  isScreenedParameter,
+  looksLikeNucleotideSequence,
+  normalizeFormDataToArray,
+  normalizeSequenceString,
+  ScreeningCollection,
+  ScreeningTarget,
+  screeningStringsFromValue
+} from './job-screening.util';
+import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceName } from './job-screening-name.util';
 
 /**
- * Biosecurity screening is paused: submission and resubmission no longer start
- * a screen. Staff's "re-run screening" still works on demand. Flip back to
- * true when the feature is finished.
+ * Submission and resubmission start a screen in the background. Set to false to
+ * pause that; staff's "re-run screening" works either way. Pairs with
+ * BIOSECURITY_ENABLED in the UI's ClientView.tsx.
  */
-export const AUTO_SCREENING_ENABLED = false;
+export const AUTO_SCREENING_ENABLED = true;
+
+export interface ScreenJobOptions {
+  trigger?: ScreeningRunTrigger;
+  /** Display name of whoever asked; null for a screen nobody asked for by name. */
+  triggeredBy?: string | null;
+}
 
 /**
  * Homology screening for a job: find the customer-supplied sequences, send them
@@ -48,18 +68,28 @@ export class JobScreeningService {
     private readonly workflowNodeService: WorkflowNodeService,
     private readonly dampLabServices: DampLabServices,
     private readonly secureDnaService: SecureDnaService,
-    private readonly aclidService: AclidService
+    private readonly aclidService: AclidService,
+    private readonly files: WorkflowParameterFilesService,
+    private readonly screeningRuns: ScreeningRunService
   ) {}
 
   /**
-   * Every screenable sequence on a job, in workflow then node then field order.
-   *
-   * A field whose content does not look like DNA is skipped rather than sent —
-   * see `looksLikeNucleotideSequence`.
+   * Every screenable sequence on a job, in workflow, node, then parameter order: the value of
+   * each Text parameter flagged `screening: true`, and every non-empty cell of each
+   * `screeningFields` column of a flagged Table's uploaded file (row by row). The flags are read
+   * from the live effective parameters — set parameters included — never from the node's
+   * snapshot, which predates them. A value that does not look like DNA is counted, not sent.
    */
-  async collectScreeningTargets(job: Job): Promise<ScreeningTarget[]> {
+  async collectScreeningTargets(job: Job): Promise<ScreeningCollection> {
     const workflows = await this.workflowService.findByIds((job.workflows ?? []) as mongoose.Types.ObjectId[]);
-    const targets: ScreeningTarget[] = [];
+    const collection: ScreeningCollection = { targets: [], skippedCount: 0, notes: [] };
+    const push = (name: string, seq: string, label: string): void => {
+      if (!looksLikeNucleotideSequence(seq)) {
+        collection.skippedCount++;
+        return;
+      }
+      collection.targets.push({ name, seq, label });
+    };
 
     for (const workflow of workflows) {
       const workflowId = String(workflow._id);
@@ -72,27 +102,85 @@ export class JobScreeningService {
         if (!node?.service) continue;
         const service = await this.dampLabServices.findOne(String(node.service));
         if (!service) continue;
+        const parameters: unknown[] = Array.isArray(service.parameters) ? service.parameters : [];
+        const entries = normalizeFormDataToArray(node.formData, getMultiValueParamIds(parameters));
 
-        const fields = SCREENED_FIELDS_BY_SERVICE.get(service.name);
-        if (!fields) continue;
-
-        const entries = normalizeFormDataToArray(node.formData, getMultiValueParamIds(service.parameters));
-        for (const field of fields) {
-          const seq = getFormStringFromEntries(entries, field);
-          if (!seq || !looksLikeNucleotideSequence(seq)) continue;
-          targets.push({ name: screeningSliceName(workflowId, node.id, field), seq });
+        for (const param of parameters) {
+          if (!isScreenedParameter(param)) continue;
+          const paramName = typeof param.name === 'string' && param.name.trim() !== '' ? param.name.trim() : param.id;
+          const paramLabel = `${service.name} › ${paramName}`;
+          const value = entries.find((entry) => entry.id === param.id)?.value;
+          if (param.type === 'string') {
+            const values = screeningStringsFromValue(value);
+            const multi = param.allowMultipleValues === true;
+            values.forEach((seq, i) =>
+              push(multi ? multiValueSliceName(workflowId, node.id, param.id, i + 1) : screeningSliceName(workflowId, node.id, param.id), seq, multi ? `${paramLabel} › value ${i + 1}` : paramLabel)
+            );
+          } else if (isTableType(param.type)) {
+            await this.collectTableTargets(collection, push, { workflowId, nodeId: node.id, param, paramLabel, value });
+          }
         }
       }
     }
-
-    return targets;
+    return collection;
   }
 
   /**
-   * Screen a job and record the outcome. Safe to call without awaiting: it
-   * resolves rather than rejects, having written a terminal status either way.
+   * A flagged Table's uploaded file(s). Reads only keys under `workflow-parameters/` with no
+   * `..` segment — the guard `countNewTableAnswers` applies — because `readObject` reads
+   * whatever it is given. A file that is not uploaded or cannot be read, and a screening column
+   * the file lacks, are noted on the run and do not fail it (behaviour 2).
    */
-  async screenJob(jobId: string, userSub: string): Promise<HomologyScreening> {
+  private async collectTableTargets(
+    collection: ScreeningCollection,
+    push: (name: string, seq: string, label: string) => void,
+    args: { workflowId: string; nodeId: string; param: { id: string; screeningFields?: unknown }; paramLabel: string; value: unknown }
+  ): Promise<void> {
+    const fields = Array.isArray(args.param.screeningFields) ? args.param.screeningFields.filter((f): f is string => typeof f === 'string' && f.trim() !== '') : [];
+    const files = flattenValues(args.value).filter((v) => v !== null && v !== undefined && v !== '');
+    for (let f = 0; f < files.length; f++) {
+      const record = fileRecord(files[f]);
+      const filename = typeof record?.filename === 'string' && record.filename !== '' ? record.filename : 'the uploaded file';
+      const fieldId = files.length > 1 ? `${args.param.id}_f${f + 1}` : args.param.id;
+      const label = files.length > 1 ? `${args.paramLabel} › file ${f + 1}` : args.paramLabel;
+      const key = sampleSheetKeyOf(files[f]);
+      if (!key || !key.startsWith(TABLE_UPLOAD_KEY_PREFIX) || hasParentSegment(key)) {
+        collection.notes.push(`${label}: ${filename} was not uploaded, so it was not screened`);
+        continue;
+      }
+      let table: TableRecords;
+      try {
+        table = await readTableRecords(await this.files.readObject(key, TABLE_FILE_MAX_BYTES));
+      } catch (error) {
+        collection.notes.push(`${label}: could not read ${filename} (${messageOf(error)})`);
+        continue;
+      }
+      // Every column whose header matches a screening field, once each, in column order: two columns
+      // may share a header (exactly or by case) and a sequence in either must be screened.
+      const matched = new Set<number>();
+      for (const field of fields) {
+        const indexes = headerIndexesFor(table.header, field);
+        if (indexes.length === 0) collection.notes.push(`${label}: ${filename} has no column “${field}”`);
+        else indexes.forEach((index) => matched.add(index));
+      }
+      const present = [...matched].sort((a, b) => a - b);
+      const slugs = columnSlugs(present.map((index) => table.header[index]));
+      table.grid.forEach((row, rowIndex) => {
+        present.forEach((index, c) => {
+          const cell = (row[index] ?? '').trim();
+          if (cell !== '') push(tableCellSliceName(args.workflowId, args.nodeId, fieldId, rowIndex + 1, slugs[c]), cell, `${label} › row ${rowIndex + 1} › ${table.header[index]}`);
+        });
+      });
+    }
+  }
+
+  /**
+   * Screen a job and record the outcome. Safe to call without awaiting: it resolves rather
+   * than rejects, having written a terminal status either way. Writes exactly one screening
+   * run once the job is found (behaviour 6); the job's own rows are written exactly as before
+   * (behaviour 7). Run writes are best-effort and never change the outcome.
+   */
+  async screenJob(jobId: string, userSub: string, options: ScreenJobOptions = {}): Promise<HomologyScreening> {
     const job = await this.jobService.findById(jobId);
     if (!job) {
       this.logger.warn(`Screening skipped: job ${jobId} not found`);
@@ -105,14 +193,36 @@ export class JobScreeningService {
       });
     }
 
-    let targets: ScreeningTarget[];
+    const runId = await this.openRun(jobId, options);
     try {
-      targets = await this.collectScreeningTargets(job);
+      return await this.screenWithRun(job, jobId, userSub, runId);
     } catch (error) {
-      return this.unavailable(jobId, 0, `Could not read the job's sequences: ${messageOf(error)}`);
+      // A job-row write (or anything else) threw: the run must not stay In Progress forever.
+      // Close it, then rethrow so the caller sees exactly what it saw before runs existed.
+      await this.closeRun(runId, { status: HomologyScreeningStatus.UNAVAILABLE, detail: messageOf(error) });
+      throw error;
     }
+  }
+
+  /** Everything `screenJob` does once the run is open. A throw here is closed by the caller. */
+  private async screenWithRun(job: Job, jobId: string, userSub: string, runId: string | null): Promise<HomologyScreening> {
+    let collection: ScreeningCollection;
+    try {
+      collection = await this.collectScreeningTargets(job);
+    } catch (error) {
+      const recorded = await this.unavailable(jobId, 0, `Could not read the job's sequences: ${messageOf(error)}`);
+      await this.closeRun(runId, { status: recorded.status, detail: recorded.detail ?? null });
+      return recorded;
+    }
+    const { targets } = collection;
+    await this.updateRun(runId, {
+      sequences: targets.map((t) => ({ name: t.name, label: t.label, length: normalizeSequenceString(t.seq).length, aclidEligible: isAclidLengthEligible(t.seq) })),
+      sequenceCount: targets.length,
+      skippedCount: collection.skippedCount
+    });
 
     if (targets.length === 0) {
+      let aclidRun: ScreeningRunAclidLeg | null = null;
       if (this.aclidService.isConfigured()) {
         await this.recordAclid(jobId, {
           screenId: null,
@@ -122,17 +232,22 @@ export class JobScreeningService {
           completedAt: new Date(),
           detail: 'No screenable sequences'
         });
+        aclidRun = { screenId: null, homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail: 'No screenable sequences' };
       }
-      return this.record(jobId, {
+      const recorded = await this.record(jobId, {
         status: HomologyScreeningStatus.UNAVAILABLE,
         startedAt: new Date(),
         completedAt: new Date(),
         sequenceCount: 0,
         detail: 'No screenable DNA sequences on this job'
       });
+      await this.closeRun(runId, { status: recorded.status, detail: runDetail(recorded.detail, collection), aclid: aclidRun });
+      return recorded;
     }
     if (targets.length > MAX_SECUREDNA_SEQUENCE_BATCH) {
-      return this.unavailable(jobId, targets.length, `Too many sequences for one batch (max ${MAX_SECUREDNA_SEQUENCE_BATCH})`);
+      const recorded = await this.unavailable(jobId, targets.length, `Too many sequences for one batch (max ${MAX_SECUREDNA_SEQUENCE_BATCH})`);
+      await this.closeRun(runId, { status: recorded.status, detail: runDetail(recorded.detail, collection) });
+      return recorded;
     }
 
     const startedAt = new Date();
@@ -173,7 +288,7 @@ export class JobScreeningService {
     }
     if (secureDna?.detail) details.push(secureDna.detail);
 
-    return this.record(jobId, {
+    const recorded = await this.record(jobId, {
       status: rollupHomologyStatuses(statuses),
       startedAt,
       completedAt: new Date(),
@@ -181,6 +296,15 @@ export class JobScreeningService {
       sequenceCount: secureDna?.sequenceCount ?? aclidLeg?.sequenceCount ?? targets.length,
       detail: details.length ? details.join('; ') : null
     });
+    await this.closeRun(runId, {
+      status: recorded.status,
+      detail: runDetail(recorded.detail, collection),
+      // The run keeps Aclid's leg whenever Aclid screened, even in `securedna` mode where the
+      // Homology row ignores it: the screen exists, and KYC hangs off it.
+      aclid: aclid ? fitAclidLeg(aclid.run) : null,
+      secureDna: secureDna ? { batchId: secureDna.batchId ?? null, status: secureDna.status, detail: secureDna.detail ?? null } : null
+    });
+    return recorded;
   }
 
   /**
@@ -204,7 +328,8 @@ export class JobScreeningService {
         homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
         detail: `Aclid skipped: ${detail.toLowerCase()}`,
         error: null,
-        sequenceCount: 0
+        sequenceCount: 0,
+        run: { screenId: null, homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail }
       };
     }
 
@@ -243,7 +368,17 @@ export class JobScreeningService {
         homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
         detail,
         error: reason,
-        sequenceCount: aclidTargets.length
+        sequenceCount: aclidTargets.length,
+        run: {
+          screenId: pending?.id ?? null,
+          homologyStatus: pending ? HomologyScreeningStatus.IN_PROGRESS : HomologyScreeningStatus.UNAVAILABLE,
+          status: pending?.status ?? null,
+          regulatoryStatus: pending?.regulatoryStatus ?? null,
+          verificationStatus: pending?.verificationStatus ?? null,
+          decisionStatus: pending?.decisionStatus ?? null,
+          raw: pending?.raw ?? null,
+          detail
+        }
       };
     }
 
@@ -269,12 +404,19 @@ export class JobScreeningService {
       detail: answered ? null : verdictLine
     });
 
+    const { details, error: detailsError } = await this.aclidDetails(screen);
+
     return {
       outcome: answered ? 'verdict' : 'error',
       homologyStatus,
       detail: verdictLine,
       error: answered ? null : reason,
-      sequenceCount: aclidTargets.length
+      sequenceCount: aclidTargets.length,
+      run: {
+        ...aclidLegFields(screen, homologyStatus),
+        details,
+        detail: [answered ? null : verdictLine, detailsError].filter((part): part is string => !!part).join('; ') || null
+      }
     };
   }
 
@@ -285,7 +427,7 @@ export class JobScreeningService {
   private async runSecureDna(jobId: string, userSub: string, targets: ScreeningTarget[], startedAt: Date): Promise<HomologyScreening> {
     try {
       const batch = await this.secureDnaService.screenSequences({
-        sequences: targets,
+        sequences: targets.map(({ name, seq }) => ({ name, seq })),
         region: Region.ALL,
         providerReference: `damplab-job-${jobId}`,
         jobId,
@@ -331,6 +473,83 @@ export class JobScreeningService {
         detail: messageOf(error)
       };
     }
+  }
+
+  /**
+   * Aclid's per-sequence details for a screen that succeeded. Null while Aclid answers 204 —
+   * the next refresh tries again. A failed call keeps the verdict and says why (behaviour 13).
+   */
+  private async aclidDetails(screen: AclidScreenRecord): Promise<{ details: Record<string, unknown> | null; error: string | null }> {
+    if (screen.status !== 'succeeded') return { details: null, error: null };
+    try {
+      return { details: await this.aclidService.getScreenDetails(screen.id), error: null };
+    } catch (error) {
+      return { details: null, error: `Aclid details unavailable: ${messageOf(error)}` };
+    }
+  }
+
+  /**
+   * `refreshJobAclidScreening` read the job's screen again: bring the run that sent it up to
+   * date — the verdict fields, the raw report, and the details once the screen has succeeded
+   * and the run has none yet. Updates that run, never a new one; a screen no run carries (a
+   * job screened before runs existed) is left alone. Best-effort, like every run write.
+   */
+  async recordAclidRefresh(screen: AclidScreenRecord): Promise<void> {
+    try {
+      const run = await this.screeningRuns.findByAclidScreenId(screen.id);
+      if (!run) return;
+      const homologyStatus = homologyStatusFromAclidScreen(screen);
+      // A screen that has not finished is still running, not "without a regulatory status".
+      const running = homologyStatus === HomologyScreeningStatus.UNAVAILABLE && !ACLID_TERMINAL_STATUSES.has(String(screen.status));
+      const leg: Partial<ScreeningRunAclidLeg> = {
+        ...aclidLegFields(screen, running ? HomologyScreeningStatus.IN_PROGRESS : homologyStatus),
+        detail: running ? 'Aclid screen still running' : homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null
+      };
+      if (screen.status === 'succeeded' && !run.aclid?.details) {
+        const { details, error } = await this.aclidDetails(screen);
+        leg.details = details;
+        if (error) leg.detail = leg.detail ? `${leg.detail}; ${error}` : error;
+      }
+      const fitted = fitAclidLeg({ ...(run.aclid ?? {}), ...leg } as ScreeningRunAclidLeg);
+      const write: Partial<ScreeningRunAclidLeg> = { ...leg, raw: fitted.raw, detail: fitted.detail };
+      if ('details' in leg) write.details = fitted.details;
+      // Same one-directional rule as the job's Homology row: only a new FAILED moves the run's verdict.
+      const patch: ScreeningRunPatch = homologyStatus === HomologyScreeningStatus.FAILED ? { status: HomologyScreeningStatus.FAILED } : {};
+      await this.screeningRuns.updateAclidLeg(String((run as { _id?: unknown })._id), write, patch);
+    } catch (error) {
+      this.logger.error(`Could not update the screening run for Aclid screen ${screen.id}: ${messageOf(error)}`);
+    }
+  }
+
+  private async openRun(jobId: string, options: ScreenJobOptions): Promise<string | null> {
+    try {
+      return await this.screeningRuns.create({
+        jobId,
+        trigger: options.trigger ?? ScreeningRunTrigger.SUBMISSION,
+        triggeredBy: options.triggeredBy ?? null,
+        status: HomologyScreeningStatus.IN_PROGRESS,
+        startedAt: new Date(),
+        sequenceCount: 0,
+        skippedCount: 0,
+        sequences: []
+      });
+    } catch (error) {
+      this.logger.error(`Could not open a screening run for job ${jobId}: ${messageOf(error)}`);
+      return null;
+    }
+  }
+
+  private async updateRun(runId: string | null, patch: ScreeningRunPatch): Promise<void> {
+    if (!runId) return;
+    try {
+      await this.screeningRuns.update(runId, patch);
+    } catch (error) {
+      this.logger.error(`Could not update screening run ${runId}: ${messageOf(error)}`);
+    }
+  }
+
+  private closeRun(runId: string | null, patch: ScreeningRunPatch): Promise<void> {
+    return this.updateRun(runId, { ...patch, completedAt: new Date() });
   }
 
   /** Dispatch without blocking the caller. Errors are recorded, never thrown. */
@@ -379,11 +598,37 @@ interface AclidLeg {
   /** Why there is no verdict, when the reason is a failure rather than a skip. */
   error: string | null;
   sequenceCount: number;
+  /** What the screening run stores for this leg. */
+  run: ScreeningRunAclidLeg;
 }
 
 /** Homology-row wording for a SecureDNA run that stood in for Aclid. */
 function backupLine(aclid: AclidLeg): string {
   return aclid.outcome === 'error' ? `SecureDNA backup after Aclid error: ${aclid.error}` : 'SecureDNA (no Aclid-eligible sequences)';
+}
+
+/** The verdict fields of an Aclid leg, from a screen record. */
+function aclidLegFields(screen: AclidScreenRecord, homologyStatus: HomologyScreeningStatus): ScreeningRunAclidLeg {
+  return {
+    screenId: screen.id,
+    homologyStatus,
+    status: screen.status,
+    regulatoryStatus: screen.regulatoryStatus,
+    verificationStatus: screen.verificationStatus,
+    decisionStatus: screen.decisionStatus,
+    matchCount: screen.matchCount ?? null,
+    materialCount: screen.materialCount ?? null,
+    findings: screen.findings,
+    materialSummary: screen.materialSummary ?? null,
+    raw: screen.raw ?? null
+  };
+}
+
+/** A run's detail line: the job row's detail, then what collection skipped or could not read. */
+function runDetail(recorded: string | null | undefined, collection: ScreeningCollection): string | null {
+  const parts = [recorded ?? null, collection.skippedCount ? `${collection.skippedCount} value${collection.skippedCount === 1 ? '' : 's'} skipped: not DNA` : null, ...collection.notes];
+  const line = parts.filter((part): part is string => !!part).join('; ');
+  return line || null;
 }
 
 function parseTimestamp(raw: string | null): Date | null {

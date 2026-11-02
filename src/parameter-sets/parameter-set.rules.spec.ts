@@ -65,3 +65,7 @@ describe('normalizeSetParameters', () => {
     expect(() => normalizeSetParameters([a, b])).toThrow('Parameter “A”: “Show only if” forms a loop with another parameter’s condition.');
   });
 });
+
+it('refuses a set parameter whose screening flag breaks the rules (biosecurity-update)', () => {
+  expect(() => normalizeSetParameters([{ id: 'n', name: 'Cycles', type: 'number', screening: true }])).toThrow('Parameter “Cycles”: Only Text and Table parameters can require screening.');
+});

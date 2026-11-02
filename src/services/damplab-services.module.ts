@@ -8,6 +8,7 @@ import { DampLabService, DampLabServiceSchema } from './models/damplab-service.m
 import { ServiceUpdatePipe } from './update.pipe';
 import { InventoryModule } from '../inventory/inventory.module';
 import { ParameterSet, ParameterSetSchema } from '../parameter-sets/parameter-set.model';
+import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
 
 @Module({
   imports: [
@@ -17,7 +18,15 @@ import { ParameterSet, ParameterSetSchema } from '../parameter-sets/parameter-se
     ]),
     InventoryModule
   ],
-  providers: [DampLabServicesResolver, DampLabServices, DampLabServicePipe, ServiceUpdatePipe, CreateServicePipe],
+  providers: [
+    DampLabServicesResolver,
+    DampLabServices,
+    DampLabServicePipe,
+    ServiceUpdatePipe,
+    CreateServicePipe,
+    // Provided here, not imported from WorkflowModule: that would close a cycle. It needs only the global ConfigService (see JobVersionModule).
+    WorkflowParameterFilesService
+  ],
   exports: [DampLabServices, DampLabServicePipe]
 })
 export class DampLabServicesModule {}
