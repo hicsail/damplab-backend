@@ -4,7 +4,7 @@ import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
-import { AclidScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
+import { AclidScreening, HomologyScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { normalizeMemberEmailList, jobMemberEmails, jobPrimaryEmail, isJobMember, isValidEmail } from './job-membership';
 import { normalizeJobDescription } from './job-description';
 import { normalizeClientEmail } from './client-email';
@@ -1118,6 +1118,28 @@ export class JobResolver {
     );
 
     return withUrls;
+  }
+
+  /**
+   * Biosecurity belongs to jobs:view-all. These three are gated per field so every
+   * path that returns a Job (jobsForViewer, the member-open mutations, nested Jobs)
+   * is covered at once. Hidden reads as null, which all three nullable types allow.
+   * Staff pass the parent through, so a job already redacted by ownJobById or the
+   * Aclid refresh stays redacted.
+   */
+  @ResolveField(() => HomologyScreening, { name: 'homologyScreening', nullable: true })
+  homologyScreening(@Parent() job: Job, @CurrentUser() user: User): HomologyScreening | null | undefined {
+    return hasPermission(user, Permission.JobsViewAll) ? job.homologyScreening : null;
+  }
+
+  @ResolveField(() => AclidScreening, { name: 'aclidScreening', nullable: true })
+  aclidScreening(@Parent() job: Job, @CurrentUser() user: User): AclidScreening | null | undefined {
+    return hasPermission(user, Permission.JobsViewAll) ? job.aclidScreening : null;
+  }
+
+  @ResolveField(() => [ID], { name: 'screeningBatchIds', nullable: 'itemsAndList', description: 'Every SecureDNA screening batch run for this job, oldest first.' })
+  screeningBatchIds(@Parent() job: Job, @CurrentUser() user: User): string[] | null | undefined {
+    return hasPermission(user, Permission.JobsViewAll) ? job.screeningBatchIds : null;
   }
 
   @ResolveField(() => [Comment], { description: 'Staff see internal notes too; everyone else sees only what was written for the customer.' })

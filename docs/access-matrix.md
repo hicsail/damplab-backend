@@ -198,6 +198,7 @@ Biosecurity card, and the Review override.
 | `startJobCustomerVerification` | `jobs:view-all` (was `jobs:view` + membership, 2026-11-02) |
 | `refreshJobAclidScreening` | `jobs:view` plus job membership; the full record goes to `jobs:view-all`, every screening field is removed for anyone else. Never starts a screen or posts a customer. |
 | `jobById` | `jobs:view-all`: the full record |
+| `Job.homologyScreening`, `Job.aclidScreening`, `Job.screeningBatchIds` | field-gated on `jobs:view-all` on every path (`jobsForViewer`, member mutations, nested Jobs); null for anyone else |
 | `ownJobById` | membership; screening fields are removed without `jobs:view-all`, staff get the customer view |
 | `reviewJob` ACCEPT | `@Roles(DamplabStaff)` plus the screening gate, with no role exemption (2026-11-01). Mirrored by the Review modal. Request-changes decisions and a job currently ACCEPTED are not gated. |
 | `reviewJob` with `overrideScreening` | `@Roles(DamplabStaff)`: every Administrator (2026-11-02) |

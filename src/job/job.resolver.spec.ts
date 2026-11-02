@@ -1323,3 +1323,38 @@ describe('JobResolver — closing and reopening a job', () => {
     await expect(harness(job).resolver.reopenJob('job-1', staff)).rejects.toThrow('Only a closed job can be reopened.');
   });
 });
+
+describe('JobResolver biosecurity field gate (jobs:view-all)', () => {
+  const resolver = new JobResolver({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any);
+  const as = (roles: string[]): any => ({ sub: 'u-1', email: 'u@example.org', preferred_username: 'U', realm_access: { roles } });
+  const job: any = {
+    _id: 'job-1',
+    homologyScreening: { status: 'CLEAR' },
+    aclidScreening: { status: 'CLEAR' },
+    screeningBatchIds: ['b1', 'b2']
+  };
+
+  it('hides all three fields from a caller with no roles', () => {
+    const client = as([]);
+    expect(resolver.homologyScreening(job, client)).toBeNull();
+    expect(resolver.aclidScreening(job, client)).toBeNull();
+    expect(resolver.screeningBatchIds(job, client)).toBeNull();
+  });
+
+  it.each([
+    ['Technician', Role.Technician],
+    ['Administrator', Role.DamplabStaff]
+  ])('passes the parent values through for a %s', (_name, role) => {
+    const staff = as([role]);
+    expect(resolver.homologyScreening(job, staff)).toBe(job.homologyScreening);
+    expect(resolver.aclidScreening(job, staff)).toBe(job.aclidScreening);
+    expect(resolver.screeningBatchIds(job, staff)).toBe(job.screeningBatchIds);
+  });
+
+  it('passes an already-redacted parent through for staff', () => {
+    const redacted: any = { _id: 'job-1' };
+    const staff = as([Role.Technician]);
+    expect(resolver.homologyScreening(redacted, staff)).toBeUndefined();
+    expect(resolver.screeningBatchIds(redacted, staff)).toBeUndefined();
+  });
+});
