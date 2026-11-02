@@ -127,7 +127,7 @@ const expectedColumns = (param: unknown): string[] => {
 
 /**
  * The screening flag's rules (biosecurity-update). `screening: true` marks a Text whose value
- * is a sequence, or a Table whose `screeningFields` columns hold sequences. A Table defined
+ * is a sequence, a File Upload whose file holds sequences, or a Table whose `screeningFields` columns hold sequences. A Table defined
  * only by a staff template has no columns here: `DampLabServices.assertScreeningTemplatesMatch`
  * checks it against the template's header instead.
  *
@@ -138,7 +138,7 @@ export function screeningRuleViolation(param: unknown): string | null {
   const p = param as { type?: unknown; screening?: unknown; screeningFields?: unknown };
   const isTable = isTableTypeName(p.type);
   if (p.screening !== undefined && p.screening !== null && typeof p.screening !== 'boolean') return '“Requires screening” must be true or false.';
-  if (p.screening === true && p.type !== 'string' && !isTable) return 'Only Text and Table parameters can require screening.';
+  if (p.screening === true && p.type !== 'string' && p.type !== 'file' && !isTable) return 'Only Text, Table and File Upload parameters can require screening.';
   const hasFields = p.screeningFields !== undefined && p.screeningFields !== null;
   if (hasFields && !isTable) return 'Only a Table has screening columns.';
   if (hasFields && (!Array.isArray(p.screeningFields) || p.screeningFields.some((field) => typeof field !== 'string'))) return 'Screening columns must be a list of column names.';

@@ -164,7 +164,7 @@ describe('DampLabServices screening rules (biosecurity-update behaviour 4)', () 
   it('update: refuses the flag on a Number before anything is written', async () => {
     const { svc, model } = build();
     await expect(svc.update(op(), { parameters: [{ id: 'n', name: 'Cycles', type: 'number', screening: true }] } as any)).rejects.toThrow(
-      'Parameter “Cycles”: Only Text and Table parameters can require screening.'
+      'Parameter “Cycles”: Only Text, Table and File Upload parameters can require screening.'
     );
     expect(model.updateOne).not.toHaveBeenCalled();
   });
