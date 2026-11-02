@@ -742,6 +742,26 @@ describe('screening runs (biosecurity-update behaviour 6)', () => {
     expect(other.setAclidScreening.mock.calls.at(-1)?.[2]).toBeUndefined();
   });
 
+  it('a staff rerun where every sequence is too short for Aclid clears the old screen id (M9)', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const short = [{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: DNA_SHORT }] }];
+    const h = harness(short, { aclidConfigured: true, screenInline: jest.fn() });
+    await h.service.screenJob('job-1', 'user-1', { trigger: ScreeningRunTrigger.RERUN, triggeredBy: 'Staff' });
+    expect(h.screenInline).not.toHaveBeenCalled();
+    expect(h.setAclidScreening.mock.calls.at(-1)?.[2]).toEqual({ rerun: true });
+  });
+
+  it('a staff rerun where Aclid errors keeps the old screen id (M9)', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenInline = jest.fn(async () => {
+      throw new Error('aclid down');
+    });
+    const h = harness(gibson, { aclidConfigured: true, screenInline });
+    await h.service.screenJob('job-1', 'user-1', { trigger: ScreeningRunTrigger.RERUN, triggeredBy: 'Staff' });
+    expect(screenInline).toHaveBeenCalled();
+    expect(h.setAclidScreening.mock.calls.at(-1)?.[2]).toBeUndefined();
+  });
+
   it('closes the run when collection itself fails', async () => {
     const { service, screeningRuns } = harness(gibson);
     jest.spyOn(service, 'collectScreeningTargets').mockRejectedValueOnce(new Error('mongo down'));

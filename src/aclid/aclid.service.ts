@@ -319,8 +319,8 @@ export class AclidService {
 
   /**
    * `POST /v2/verification_url/` — mint Aclid's hosted KYC page for one screen.
-   * The customer completes verification there; we never create Aclid customers
-   * ourselves.
+   * The customer completes verification there. Creating the Aclid customer for a
+   * job is a separate call, `createCustomer`.
    */
   async createVerificationUrl(args: AclidVerificationUrlArgs): Promise<string> {
     const body: JsonObject = { screen_id: args.screenId };
