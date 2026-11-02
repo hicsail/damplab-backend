@@ -1,4 +1,4 @@
-import { checkValue, effectiveValidation, parameterDefinitionError, parseValidation, ruleMessage, ValidationRule } from './parameter-validation';
+import { checkValue, effectiveValidation, parameterDefinitionError, parseValidation, ruleMessage, screeningRuleViolation, ValidationRule } from './parameter-validation';
 
 const rules = (text: string): ValidationRule[] => {
   const parsed = parseValidation(text);
@@ -150,5 +150,52 @@ describe('parameterDefinitionError', () => {
   });
   it('falls back to the id when the parameter has no name', () => {
     expect(parameterDefinitionError({ id: 'n', type: 'string', validation: '>0' })).toBe('Parameter “n”: only Number parameters can have a validation.');
+  });
+});
+
+describe('screening definition rules (biosecurity-update behaviour 4)', () => {
+  const text = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ id: 'insert', name: 'Insert', type: 'string', ...over });
+  const table = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'plate',
+    name: 'Plate',
+    type: 'table',
+    tableData: { columns: [{ header: 'Well' }, { header: 'Insert' }] },
+    ...over
+  });
+
+  it('accepts a flagged Text, a flagged Table with known columns, and anything unflagged', () => {
+    expect(screeningRuleViolation(text({ screening: true }))).toBeNull();
+    expect(screeningRuleViolation(table({ screening: true, screeningFields: [' insert '] }))).toBeNull();
+    expect(screeningRuleViolation({ ...table({ screening: true, screeningFields: ['Insert'] }), type: 'sampleSheet' })).toBeNull();
+    expect(screeningRuleViolation(text())).toBeNull();
+    expect(screeningRuleViolation(text({ screening: false }))).toBeNull();
+  });
+
+  it('refuses the flag on any other type', () => {
+    expect(screeningRuleViolation({ id: 'n', name: 'Cycles', type: 'number', screening: true })).toBe('Only Text and Table parameters can require screening.');
+    expect(screeningRuleViolation({ id: 'f', name: 'Map', type: 'file', screening: true })).toBe('Only Text and Table parameters can require screening.');
+    expect(screeningRuleViolation(text({ screening: 'yes' }))).toBe('“Requires screening” must be true or false.');
+  });
+
+  it('refuses screening columns on a non-table, and a non-list', () => {
+    expect(screeningRuleViolation(text({ screening: true, screeningFields: ['Insert'] }))).toBe('Only a Table has screening columns.');
+    expect(screeningRuleViolation(table({ screening: true, screeningFields: 'Insert' }))).toBe('Screening columns must be a list of column names.');
+  });
+
+  it('refuses a flagged Table with no screening columns', () => {
+    expect(screeningRuleViolation(table({ screening: true }))).toBe('A Table that requires screening needs at least one screening column.');
+    expect(screeningRuleViolation(table({ screening: true, screeningFields: [' '] }))).toBe('A Table that requires screening needs at least one screening column.');
+  });
+
+  it('refuses a screening column the Table does not have, case-insensitively', () => {
+    expect(screeningRuleViolation(table({ screening: true, screeningFields: ['insert', 'Vector'] }))).toBe("Screening column “Vector” is not one of this Table's columns.");
+  });
+
+  it('leaves a template-only Table to the template check', () => {
+    expect(screeningRuleViolation({ id: 't', name: 'T', type: 'table', templateFile: { key: 'sample-sheet-templates/a.xlsx' }, screening: true, screeningFields: ['Anything'] })).toBeNull();
+  });
+
+  it('parameterDefinitionError reports it with the parameter label', () => {
+    expect(parameterDefinitionError({ id: 'n', name: 'Cycles', type: 'number', screening: true })).toBe('Parameter “Cycles”: Only Text and Table parameters can require screening.');
   });
 });

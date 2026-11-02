@@ -11,6 +11,7 @@ import { TemplateResolver } from '../../template/template.resolver';
 import { JobResolver } from '../../job/job.resolver';
 import { CommentResolver } from '../../comment/comment.resolver';
 import { SecureDnaResolver } from '../../securedna/securedna.resolver';
+import { ScreeningRunResolver } from '../../job/screening-run.resolver';
 import { WorkflowResolver } from '../../workflow/workflow.resolver';
 import { WorkflowNodeResolver } from '../../workflow/resolvers/node.resolver';
 import { SampleSheetResolver } from '../../workflow/resolvers/sample-sheet.resolver';
@@ -103,6 +104,12 @@ const GATES: Row[] = [
   [SecureDnaResolver, 'screeningBatch', Permission.JobsViewAll],
   [SecureDnaResolver, 'createSequencesBatch', Permission.JobsViewAll],
   [SecureDnaResolver, 'screenSequencesBatch', Permission.JobsViewAll],
+  // Screening history (biosecurity-update). The showBiosecurity half is inline (biosecurity-gate.ts),
+  // as on screeningBatch(es) — pinned in screening-run.resolver.spec.ts and securedna.resolver.spec.ts.
+  [ScreeningRunResolver, 'jobScreeningRuns', Permission.JobsViewAll],
+  [ScreeningRunResolver, 'screeningRun', Permission.JobsViewAll],
+  // Deliberately without the showBiosecurity half: state and message only, never results.
+  [ScreeningRunResolver, 'jobAcceptanceScreening', Permission.JobsViewAll],
   // The merged jobs page. Deliberately the BASELINE permission: this one query
   // serves a client and a technician, and the scope is enforced inside the
   // resolver rather than by the gate. See JobResolver.jobsForViewer.

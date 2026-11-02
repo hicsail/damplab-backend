@@ -171,8 +171,8 @@ async function firstWorksheet(buffer: Buffer): Promise<ExcelJS.Worksheet | undef
   });
 }
 
-/** The header row and row count of an uploaded file, or a TableFileError saying why it cannot be read. */
-export async function readTableFile(buffer: Buffer): Promise<TableFileContents> {
+/** The first visible worksheet of an upload, or a TableFileError saying why it cannot be read. Size and inflation caps included. */
+async function openWorksheet(buffer: Buffer): Promise<ExcelJS.Worksheet> {
   if (buffer.byteLength > TABLE_FILE_MAX_BYTES) throw new TableFileError(TABLE_FILE_TOO_LARGE_MESSAGE);
   let worksheet: ExcelJS.Worksheet | undefined;
   try {
@@ -182,7 +182,12 @@ export async function readTableFile(buffer: Buffer): Promise<TableFileContents> 
     throw new TableFileError(TABLE_FILE_UNREADABLE_MESSAGE);
   }
   if (!worksheet) throw new TableFileError(TABLE_FILE_NO_SHEETS_MESSAGE);
-  const contents = readTableRows(worksheetRows(worksheet));
+  return worksheet;
+}
+
+/** The header row and row count of an uploaded file, or a TableFileError saying why it cannot be read. */
+export async function readTableFile(buffer: Buffer): Promise<TableFileContents> {
+  const contents = readTableRows(worksheetRows(await openWorksheet(buffer)));
   // A byte-order mark that survived parsing would sit on the first header cell.
   return { ...contents, header: contents.header.map((cell) => cell.replace(/^\uFEFF/, '').trim()).filter((cell) => cell !== '') };
 }
@@ -193,4 +198,69 @@ export async function checkTableFile(buffer: Buffer, expected: readonly string[]
   const missing = missingColumns(header, expected);
   if (missing.length > 0) throw new TableFileError(missingColumnsMessage(missing));
   return rowCount;
+}
+
+export interface TableRecords {
+  /** The header cells, trimmed, blanks left out, in column order. Two columns may share a header. */
+  header: string[];
+  /**
+   * One entry per row the row count counts, each cell keyed by the header above it. Cells under a
+   * blank header, and blank cells, are left out. When two columns share a header the first column's
+   * cell is kept here; `grid` has both. Null-prototype objects, so a `constructor` or `__proto__`
+   * header is an ordinary key.
+   */
+  rows: Record<string, string>[];
+  /** The same rows by column: `grid[r][c]` is the cell under `header[c]`, '' when blank. Lossless where `rows` is not. */
+  grid: string[][];
+}
+
+/** The first header equal to `column` after trimming and ignoring case — the rule `missingColumns` uses. */
+export function headerFor(header: readonly string[], column: string): string | undefined {
+  const wanted = columnKey(column);
+  return header.find((cell) => columnKey(cell) === wanted);
+}
+
+/** The index of every header equal to `column` after trimming and ignoring case, in column order. */
+export function headerIndexesFor(header: readonly string[], column: string): number[] {
+  const wanted = columnKey(column);
+  const found: number[] = [];
+  header.forEach((cell, index) => {
+    if (columnKey(cell) === wanted) found.push(index);
+  });
+  return found;
+}
+
+/**
+ * Every row of an uploaded file as `{ header: cell }` (and by column, as `grid`), for screening the sequences in it.
+ *
+ * Cells are placed by their column (`cell.col`), never by their position among the
+ * non-blank cells `worksheetCells` returns: a row with A and B blank and the sequence
+ * in C must put it under C's header. Same header and emptiness rules as
+ * `readTableRows`, same caps as `readTableFile`.
+ */
+export async function readTableRecords(buffer: Buffer): Promise<TableRecords> {
+  const rows = worksheetCells(await openWorksheet(buffer)).map((cells) => cells.map((cell) => ({ col: Number(cell.col), text: (cell.text ?? '').replace(/^\uFEFF/, '').trim() })));
+  const headerIndex = rows.findIndex((row) => row.some((cell) => cell.text !== ''));
+  if (headerIndex === -1) return { header: [], rows: [], grid: [] };
+  const headerByCol = new Map<number, string>();
+  for (const cell of rows[headerIndex]) if (cell.text !== '' && !headerByCol.has(cell.col)) headerByCol.set(cell.col, cell.text);
+  const columns = [...headerByCol.entries()].sort((a, b) => a[0] - b[0]);
+  const slotOf = new Map(columns.map(([col], slot) => [col, slot]));
+  const records: Record<string, string>[] = [];
+  const grid: string[][] = [];
+  for (const row of rows.slice(headerIndex + 1)) {
+    if (!row.some((cell) => cell.text !== '')) continue;
+    const record: Record<string, string> = Object.create(null);
+    const line: string[] = columns.map(() => '');
+    for (const cell of row) {
+      const slot = slotOf.get(cell.col);
+      if (slot === undefined || cell.text === '') continue;
+      line[slot] = cell.text;
+      const header = columns[slot][1];
+      if (!(header in record)) record[header] = cell.text;
+    }
+    records.push(record);
+    grid.push(line);
+  }
+  return { header: columns.map(([, text]) => text), rows: records, grid };
 }

@@ -69,6 +69,11 @@ export async function reviewJobError(ctx: TestApp, actor: ActorName, jobId: stri
   return gqlError(ctx, actor, `mutation ($input: ReviewJobInput!) { reviewJob(input: $input) { id state } }`, { input: { operationId, jobId, decision, message } });
 }
 
+/** Staff's "Run screening". The fixtures flag nothing, so a run completes with zero sequences, which clears the gate. */
+export async function screenJob(ctx: TestApp, jobId: string): Promise<void> {
+  await gql(ctx, 'staff', `mutation ($jobId: ID!) { rerunJobHomologyScreening(jobId: $jobId) { id } }`, { jobId });
+}
+
 export async function jobState(ctx: TestApp, actor: ActorName, jobId: string): Promise<any> {
   const data = await gql(ctx, actor, `query ($id: ID!) { jobById(id: $id) { id state customerActionRequired latestContentVersionNumber } }`, { id: jobId });
   return data.jobById;

@@ -1,5 +1,5 @@
-import { getFormStringFromEntries, looksLikeNucleotideSequence, normalizeSequenceString } from './job-screening.util';
-import { parseScreeningSliceName, screeningSliceName } from './job-screening-name.util';
+import { getFormStringFromEntries, looksLikeNucleotideSequence, normalizeSequenceString, screeningStringsFromValue } from './job-screening.util';
+import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceName } from './job-screening-name.util';
 
 const DNA = 'ATGGCGCGTACGTAGCTAGCTAGCATCGATCGATCGTAGCTAGCTAGCTAGCATCGATCGG';
 
@@ -54,21 +54,24 @@ describe('getFormStringFromEntries', () => {
   });
 });
 
-describe('screening slice names', () => {
-  const workflowId = '65a1b2c3d4e5f60718293a4b';
-
-  it('round-trips a node id that itself contains underscores', () => {
-    const name = screeningSliceName(workflowId, 'dndnode_12_3', 'insert');
-    expect(parseScreeningSliceName(name)).toEqual({ workflowId, nodeId: 'dndnode_12_3', fieldId: 'insert' });
+describe('slice names (biosecurity-update)', () => {
+  const wf = '65a1b2c3d4e5f60718293a4b';
+  it('builds the three shapes', () => {
+    expect(screeningSliceName(wf, 'dndnode_1', 'insert')).toBe(`${wf}_dndnode_1_insert`);
+    expect(multiValueSliceName(wf, 'dndnode_1', 'inserts', 2)).toBe(`${wf}_dndnode_1_inserts_v2`);
+    expect(tableCellSliceName(wf, 'dndnode_1', 'plate', 12, 'insert')).toBe(`${wf}_dndnode_1_plate_r12_insert`);
   });
 
-  it('round-trips both screened fields', () => {
-    expect(parseScreeningSliceName(screeningSliceName(workflowId, 'n1', 'vector'))?.fieldId).toBe('vector');
-    expect(parseScreeningSliceName(screeningSliceName(workflowId, 'n1', 'insert'))?.fieldId).toBe('insert');
+  it('slugs headers and de-duplicates them in order', () => {
+    expect(columnSlugs(['Insert', 'insert ', 'Vector (5′→3′)', '###', 'A'.repeat(60)])).toEqual(['insert', 'insert-2', 'vector-5-3', 'col', 'a'.repeat(40)]);
   });
+});
 
-  it('rejects a name that is not a slice name', () => {
-    expect(parseScreeningSliceName('nonsense')).toBeNull();
-    expect(parseScreeningSliceName(`${workflowId}_n1_antibiotic`)).toBeNull();
+describe('screeningStringsFromValue', () => {
+  it('gives every non-blank string, trimmed', () => {
+    expect(screeningStringsFromValue(' ATG ')).toEqual(['ATG']);
+    expect(screeningStringsFromValue(['A', ' ', 'B', 3 as any, null])).toEqual(['A', 'B']);
+    expect(screeningStringsFromValue(null)).toEqual([]);
+    expect(screeningStringsFromValue(7)).toEqual([]);
   });
 });
