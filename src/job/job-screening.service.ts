@@ -352,7 +352,8 @@ export class JobScreeningService {
     // regulatory status, or nothing was long enough to screen. A succeeded
     // screen is a pass even when `regulatory_status` is empty — that is a
     // clear result, not a reason to ask SecureDNA.
-    const secureDna = mode === 'aclid' && aclid?.outcome === 'verdict' ? null : await this.runSecureDna(jobId, userSub, targets, startedAt);
+    // An Aclid answer we have not read is not an unavailable Aclid: it never triggers the backup.
+    const secureDna = mode === 'aclid' && (aclid?.outcome === 'verdict' || aclid?.outcome === 'unread') ? null : await this.runSecureDna(jobId, userSub, targets, startedAt);
 
     // `securedna` mode keeps the Homology row SecureDNA's alone even though an
     // Aclid screen exists for KYC.
@@ -368,8 +369,13 @@ export class JobScreeningService {
     }
     if (secureDna?.detail) details.push(secureDna.detail);
 
+    // Nothing clears a run while Aclid's answer is unread: SecureDNA's pass in `both` mode is not
+    // enough. A failure from either provider still fails it.
+    const rolledUp = rollupHomologyStatuses(statuses);
+    const status = aclidLeg?.outcome === 'unread' && rolledUp === HomologyScreeningStatus.PASSED ? HomologyScreeningStatus.UNAVAILABLE : rolledUp;
+
     const recorded = await this.record(jobId, {
-      status: rollupHomologyStatuses(statuses),
+      status,
       startedAt,
       completedAt: new Date(),
       batchId: secureDna?.batchId ?? null,
@@ -491,7 +497,7 @@ export class JobScreeningService {
         detail
       });
       return {
-        outcome: 'error',
+        outcome: 'unread',
         homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
         detail,
         error: detail,
@@ -844,7 +850,7 @@ function customerLegFromRecord(record: AclidCustomerRecord): ScreeningRunCustome
 
 /** What the Homology row takes from the Aclid leg. Only `verdict` is an answer. */
 interface AclidLeg {
-  outcome: 'verdict' | 'error' | 'no-eligible-sequences';
+  outcome: 'verdict' | 'error' | 'unread' | 'no-eligible-sequences';
   homologyStatus: HomologyScreeningStatus;
   detail: string;
   /** Why there is no verdict, when the reason is a failure rather than a skip. */

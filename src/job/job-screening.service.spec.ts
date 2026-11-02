@@ -3,7 +3,7 @@ import { AclidCustomerPendingError, AclidFeatureNotEnabledError, AclidScreenPend
 import { AUTO_SCREENING_ENABLED, JobScreeningService } from './job-screening.service';
 import { HomologyScreeningStatus, Job, JobState } from './job.model';
 import { CustomerScreeningStatus, JobAcceptanceScreeningState, ScreeningRunTrigger } from './screening-run.model';
-import { ACCEPTANCE_MESSAGES } from './screening-acceptance.util';
+import { ACCEPTANCE_MESSAGES, decideAcceptanceScreening } from './screening-acceptance.util';
 
 const GIBSON_ASSEMBLY_SERVICE_NAME = 'Gibson Assembly';
 const M_CLONING_SERVICE_NAME = 'Modular Cloning';
@@ -94,7 +94,7 @@ function harness(
     isConfigured: () => overrides.aclidConfigured ?? false,
     screenInline,
     getScreen: jest.fn(),
-    getScreenDetails: jest.fn(async (): Promise<Record<string, unknown> | null> => ({})),
+    getScreenDetails: jest.fn(async (): Promise<Record<string, unknown> | null> => ({ [`${WORKFLOW_ID}_n1_insert`]: { matches: [], findings: null, regulatory_status: 'not_controlled' } })),
     createCustomer,
     pollCustomer,
     getCustomer
@@ -896,6 +896,44 @@ describe('screening runs (biosecurity-update behaviour 6)', () => {
     expect(lastCall(setAclidScreening)).toMatchObject({ homologyStatus: HomologyScreeningStatus.IN_PROGRESS, screenId: 'scr_1' });
     expect(closing(screeningRuns).status).not.toBe('PASSED');
     expect(lastStatus(setHomologyScreening).status).not.toBe('PASSED');
+  });
+
+  it.each<[string, string, () => Promise<Record<string, unknown> | null>]>([
+    ['aclid', 'a 204', async (): Promise<null> => null],
+    ['aclid', 'an empty body', async (): Promise<Record<string, unknown>> => ({})],
+    ['aclid', 'a group with a null status', async (): Promise<Record<string, unknown>> => ({ g: { matches: [], regulatory_status: null } })],
+    [
+      'aclid',
+      'an error',
+      async (): Promise<never> => {
+        throw new Error('Aclid timed out');
+      }
+    ],
+    [
+      'both',
+      'a thrown call',
+      async (): Promise<never> => {
+        throw new Error('Aclid timed out');
+      }
+    ]
+  ])('%s mode: an unread Aclid answer (%s) is not cleared by a granting SecureDNA (wave 4)', async (mode, _label, getDetails) => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = mode;
+    const screenSequences = jest.fn(async () => granted);
+    const { service, screeningRuns, setAclidScreening, setHomologyScreening } = harness(gibson, {
+      aclidConfigured: true,
+      screenInline: jest.fn(async () => aclidScreen({ regulatoryStatus: null })),
+      screenSequences
+    });
+    (service as any).aclidService.getScreenDetails = jest.fn(getDetails);
+    await service.screenJob('job-1', 'user-1');
+    expect(closing(screeningRuns).status).not.toBe('PASSED');
+    expect(lastStatus(setHomologyScreening).status).not.toBe('PASSED');
+    expect(closing(screeningRuns).aclid).toMatchObject({ homologyStatus: 'IN_PROGRESS', detail: expect.stringContaining('could not be read') });
+    expect(lastCall(setAclidScreening)).toMatchObject({ homologyStatus: HomologyScreeningStatus.IN_PROGRESS });
+    const finished = { ...(closing(screeningRuns) as any), completedAt: new Date(), fingerprint: 'fp' };
+    expect(decideAcceptanceScreening({ jobState: JobState.SUBMITTED, newestRun: finished, currentFingerprint: 'fp', callerCanScreen: true } as any).state).not.toBe('CLEAR');
+    if (mode === 'aclid') expect(screenSequences).not.toHaveBeenCalled();
+    else expect(screenSequences).toHaveBeenCalled();
   });
 
   it('records a pending Aclid screen on the run so a refresh can finish it', async () => {
