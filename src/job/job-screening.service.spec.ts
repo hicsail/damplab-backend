@@ -1592,7 +1592,7 @@ describe('collectScreeningTargets from flagged files (biosecurity-tweaks)', () =
   it('labels every record of every file: 2 + 3 = 5 (behaviour 12)', async () => {
     const bodies: Record<string, string> = {
       'workflow-parameters/user-1/a.fasta': `>a1\n${DNA_A}\n>a2\n${DNA_B}\n`,
-      'workflow-parameters/user-1/b.fasta': `>b1\n${DNA_A}\n> \n${DNA_B}\n>b3\n${DNA_A}\n`
+      'workflow-parameters/user-1/b.fasta': `>b1\n${DNA_A}\n>\n${DNA_B}\n>b3\n${DNA_A}\n`
     };
     const readObject = jest.fn(async (key: string) => Buffer.from(bodies[key]));
     const { service, job } = harness(node([stored('a.fasta'), stored('b.fasta')]), { readObject });

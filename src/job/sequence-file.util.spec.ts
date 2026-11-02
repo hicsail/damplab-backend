@@ -33,6 +33,15 @@ describe('extractSequenceRecords (biosecurity-tweaks)', () => {
     expect(extractSequenceRecords(Buffer.from(gb), 'plasmid.gb')).toMatchObject({ records: [{ name: 'pX' }], skipped: 0 });
     expect(extractSequenceRecords(snapgene(DNA_A), 'construct.dna')).toEqual({ records: [{ name: 'construct', seq: DNA_A }], skipped: 0 });
   });
+  it('keeps a FASTA record under an empty header (F4)', () => {
+    expect(extractSequenceRecords(Buffer.from(`>a\n${DNA_A}\n>\n${DNA_B}\n`), 'e.fasta')).toEqual({
+      records: [
+        { name: 'a', seq: DNA_A },
+        { name: '', seq: DNA_B }
+      ],
+      skipped: 0
+    });
+  });
   it('reads an upper-case extension (Review Focus 1)', () => expect(extractSequenceRecords(snapgene(DNA_A), 'CONSTRUCT.DNA')).toMatchObject({ records: [{ seq: DNA_A }] }));
   it('skips and counts a protein record in a DNA file (behaviour 13)', () =>
     expect(extractSequenceRecords(Buffer.from(`>d\n${DNA_A}\n>p\n${PROTEIN}\n`), 'mixed.fa')).toEqual({

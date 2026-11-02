@@ -21,6 +21,9 @@ function isDnaRecord(record: Seq): boolean {
  * fetches (only the named `parseFile` export is used, never seqparse's default export, which
  * resolves accession IDs from NCBI).
  *
+ * A non-`.dna` file's bare `>` header lines are rewritten to `> ` first, because seqparse drops a record
+ * under a bare `>` and it would go unscreened; the UI twin must do the same.
+ *
  * Contract (mirrored by its twin, `damplab-ui/src/utils/sequenceFile.ts`):
  * 1. The filename's extension is lowercased before it is handed to seqparse.
  * 2. For `.dna` (SnapGene) files the buffer's own ArrayBuffer slice is passed as `source`.
@@ -41,7 +44,9 @@ export function extractSequenceRecords(buf: Buffer, filename: string): SequenceF
 
   let parsed: Seq[];
   try {
-    parsed = parseFile(buf.toString('utf8'), options);
+    const text = buf.toString('utf8');
+    // seqparse drops a record under a bare `>` header, which would leave it unscreened.
+    parsed = parseFile(fileName.endsWith('.dna') ? text : text.replace(/^>[ \t]*$/gm, '> '), options);
   } catch {
     return { error: SEQUENCE_FILE_UNREADABLE };
   }
