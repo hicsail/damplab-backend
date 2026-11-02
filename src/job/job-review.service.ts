@@ -16,9 +16,16 @@ import { CustomerActionRequired, Job, JobDocument, JobState } from './job.model'
 import { JobReviewCommandKind, JobReviewOperation, JobReviewOperationDocument, JobReviewOperationStatus } from './job-review-operation.model';
 import { isJobMember } from './job-membership';
 import { jobVersionAuthorOrg } from '../job-version/author-org';
+import { JobScreeningService } from './job-screening.service';
+import { JobAcceptanceScreeningState } from './screening-run.model';
 
 export interface JobReviewActor {
   sub: string;
+  /**
+   * Whether the actor may see biosecurity results. Only read for ACCEPT, where it decides whether
+   * a refusal also tells them to find someone who can screen. Absent means can-screen.
+   */
+  showsBiosecurity?: boolean;
   /** Token email; with sub, what isJobMember matches on. */
   email?: string;
   name: string;
@@ -61,8 +68,15 @@ export class JobReviewService {
     private readonly commentService: CommentService,
     @Inject(forwardRef(() => SOWService))
     private readonly sowService: SOWService,
-    private readonly activityService: ActivityService
+    private readonly activityService: ActivityService,
+    private readonly jobScreeningService: JobScreeningService
   ) {}
+
+  /** The gate's refusal message, or null when screening lets this job be accepted. Never throws. */
+  private async acceptanceRefusal(job: Job, actor?: Pick<JobReviewActor, 'showsBiosecurity'>): Promise<string | null> {
+    const gate = await this.jobScreeningService.acceptanceScreening(job, { callerCanScreen: actor?.showsBiosecurity !== false });
+    return gate.state === JobAcceptanceScreeningState.CLEAR || gate.state === JobAcceptanceScreeningState.NOT_REQUIRED ? null : gate.message ?? 'Screening has not cleared this job.';
+  }
 
   private normalizeOperationId(value: string): string {
     const operationId = value?.trim();
@@ -216,6 +230,8 @@ export class JobReviewService {
       selectedHandoverVersionNumber = (await this.jobVersionService.getLatestContentVersion(input.jobId))?.versionNumber;
     }
     if (input.decision === JobReviewDecision.ACCEPT) {
+      const refusal = await this.acceptanceRefusal(job, actor);
+      if (refusal) throw new BadRequestException(refusal);
       // Force the lazy v1 backfill first, exactly as appendStateEvent does. A job
       // submitted before versioning existed has no content version until someone
       // reads its history; getLatestContentVersion is a plain findOne and would
@@ -331,7 +347,7 @@ export class JobReviewService {
     if (!applied && operation.status !== JobReviewOperationStatus.APPLIED) this.assertOperationResumable(operation);
   }
 
-  private async ensureReviewJobWritten(operation: JobReviewOperation): Promise<Job> {
+  private async ensureReviewJobWritten(operation: JobReviewOperation, actor?: Pick<JobReviewActor, 'showsBiosecurity'>): Promise<Job> {
     let job = await this.jobModel.findById(operation.jobId).exec();
     if (!job) throw new NotFoundException(`Job with ID ${operation.jobId} not found`);
     if (operation.jobWrittenAt) return job;
@@ -348,6 +364,14 @@ export class JobReviewService {
       const latest = await this.jobVersionService.getLatestContentVersion(operation.jobId);
       if (latest?.versionNumber !== operation.selectedAcceptedVersionNumber) {
         return this.conflictOperation(operation, 'The latest job content changed before acceptance could be recorded.');
+      }
+      // Checked again here, not only at creation: a pending operation can be resumed after
+      // a crash, and screening can have gone stale in between. Operations already applied
+      // returned above and are never re-checked.
+      const refusal = await this.acceptanceRefusal(job, actor);
+      if (refusal) {
+        await this.casOperationStatus(operation, JobReviewOperationStatus.PENDING, JobReviewOperationStatus.CONFLICTED);
+        throw new BadRequestException(refusal);
       }
     }
 
@@ -614,7 +638,7 @@ export class JobReviewService {
     return this.finalizeReviewOperation(operation, job);
   }
 
-  private async completeReviewOperation(operation: JobReviewOperation): Promise<Job> {
+  private async completeReviewOperation(operation: JobReviewOperation, actor?: Pick<JobReviewActor, 'showsBiosecurity'>): Promise<Job> {
     this.assertOperationResumable(operation);
     if (operation.status === JobReviewOperationStatus.COMPLETE) {
       await this.writeReviewActivity(operation);
@@ -624,7 +648,7 @@ export class JobReviewService {
       return this.finishAcceptanceCompensation(operation);
     }
 
-    const job = operation.status === JobReviewOperationStatus.PENDING ? await this.ensureReviewJobWritten(operation) : await this.completedJob(operation);
+    const job = operation.status === JobReviewOperationStatus.PENDING ? await this.ensureReviewJobWritten(operation, actor) : await this.completedJob(operation);
     if (operation.decision === JobReviewDecision.ACCEPT) return this.completeAcceptanceOperation(operation, job);
     if (operation.status === JobReviewOperationStatus.APPLIED) {
       await this.casOperationStatus(operation, JobReviewOperationStatus.APPLIED, JobReviewOperationStatus.FINALIZING);
@@ -874,7 +898,7 @@ export class JobReviewService {
 
   async reviewJob(input: ReviewJobInput, actor: JobReviewActor): Promise<Job> {
     const operation = await this.loadOrCreateReviewOperation(input, actor);
-    return this.completeReviewOperation(operation);
+    return this.completeReviewOperation(operation, actor);
   }
 
   async respondToJobReview(input: RespondToJobReviewInput, actor: JobReviewActor): Promise<Job> {

@@ -193,4 +193,7 @@ mirrors it with `userProps.showBiosecurity` on the job page's Biosecurity card.
 | `screeningBatch(id)`, `screeningBatches` | `jobs:view-all` + `showBiosecurity` — the second check added 2026-10-29 (F2). `/screener` lists `screeningBatches`, so it is refused to staff with the flag off. |
 | `createSequencesBatch`, `screenSequencesBatch` | `jobs:view-all` + `showBiosecurity` (added 2026-10-30; `/screener` is hidden to staff with the flag off, this is its server twin) |
 | `rerunJobHomologyScreening` | `jobs:view-all` + `showBiosecurity` (unchanged) |
+| `jobAcceptanceScreening(jobId)` | `jobs:view-all`, no `showBiosecurity` check: state and message only, never results, so staff who cannot see the card still learn why Accept is off (new, 2026-11-01) |
+| `reviewJob` ACCEPT | `@Roles(DamplabStaff)` plus the screening gate, with no role exemption (2026-11-01). Mirrored by the Review modal. Request-changes decisions and a job currently ACCEPTED are not gated. |
+| `refreshJobAclidScreening` | `jobs:view` plus job membership + `showBiosecurity` (unchanged). Never starts a screen or posts a customer; customers never receive the customer leg. |
 | Saving `screening` / `screeningFields` on a parameter | the existing catalog-edit gates of `updateService` / `createService` and the parameter-set mutations; no new gate |

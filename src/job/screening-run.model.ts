@@ -21,6 +21,18 @@ export enum ScreeningRunTrigger {
 }
 registerEnumType(ScreeningRunTrigger, { name: 'ScreeningRunTrigger' });
 
+/** The customer-screening (Aclid `/v2/customers`) leg of a run. NOT_AVAILABLE and NOT_RUN are set by the service, never by Aclid. */
+export enum CustomerScreeningStatus {
+  PASSED = 'PASSED',
+  NEEDS_REVIEW = 'NEEDS_REVIEW',
+  FAILED = 'FAILED',
+  IN_PROGRESS = 'IN_PROGRESS',
+  NOT_AVAILABLE = 'NOT_AVAILABLE',
+  NOT_RUN = 'NOT_RUN',
+  UNAVAILABLE = 'UNAVAILABLE'
+}
+registerEnumType(CustomerScreeningStatus, { name: 'CustomerScreeningStatus' });
+
 @Schema({ _id: false })
 @ObjectType({ description: 'One sequence a screening run sent to the providers' })
 export class ScreeningRunSequence {
@@ -100,6 +112,43 @@ export class ScreeningRunAclidLeg {
 export const ScreeningRunAclidLegSchema = SchemaFactory.createForClass(ScreeningRunAclidLeg);
 
 @Schema({ _id: false, minimize: false })
+@ObjectType({ description: 'What Aclid’s customer screening said in one screening run' })
+export class ScreeningRunCustomerLeg {
+  @Prop({ type: String, required: true, enum: CustomerScreeningStatus })
+  @Field(() => CustomerScreeningStatus)
+  status: CustomerScreeningStatus;
+
+  @Prop({ type: String, default: null })
+  @Field(() => String, { nullable: true })
+  requesterId?: string | null;
+
+  @Prop({ type: String, default: null })
+  @Field(() => String, { nullable: true })
+  verdict?: string | null;
+
+  @Prop({ type: String, default: null })
+  @Field(() => String, { nullable: true })
+  decisionStatus?: string | null;
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, default: null })
+  @Field(() => JSON, { nullable: true, description: 'review.checks' })
+  checks?: Record<string, unknown> | null;
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, default: null })
+  @Field(() => JSON, { nullable: true, description: 'review.counts' })
+  counts?: Record<string, unknown> | null;
+
+  @Prop({ type: mongoose.Schema.Types.Mixed, default: null })
+  @Field(() => JSON, { nullable: true, description: 'The GET /v2/customers/{requester_id} body' })
+  raw?: Record<string, unknown> | null;
+
+  @Prop({ type: String, default: null })
+  @Field(() => String, { nullable: true })
+  detail?: string | null;
+}
+export const ScreeningRunCustomerLegSchema = SchemaFactory.createForClass(ScreeningRunCustomerLeg);
+
+@Schema({ _id: false, minimize: false })
 @ObjectType({ description: 'What SecureDNA said in one screening run; the batch holds the hits' })
 export class ScreeningRunSecureDnaLeg {
   @Prop({ type: String, default: null })
@@ -169,6 +218,38 @@ export class ScreeningRun {
   @Prop({ type: ScreeningRunSecureDnaLegSchema, default: null })
   @Field(() => ScreeningRunSecureDnaLeg, { nullable: true })
   secureDna?: ScreeningRunSecureDnaLeg | null;
+
+  @Prop({ type: ScreeningRunCustomerLegSchema, default: null })
+  @Field(() => ScreeningRunCustomerLeg, { nullable: true })
+  customer?: ScreeningRunCustomerLeg | null;
+
+  @Prop({ type: String, default: null })
+  @Field(() => String, { nullable: true, description: 'Hash of the screened inputs at the run’s start; a changed job reads STALE' })
+  fingerprint?: string | null;
+
+  @Prop({ type: [String], default: [] })
+  @Field(() => [String], { description: 'Flagged tables that could not be screened' })
+  unscreenedNotes: string[];
+}
+
+/** Whether the job may be accepted, as far as screening is concerned. */
+export enum JobAcceptanceScreeningState {
+  CLEAR = 'CLEAR',
+  NOT_REQUIRED = 'NOT_REQUIRED',
+  NOT_RUN = 'NOT_RUN',
+  IN_PROGRESS = 'IN_PROGRESS',
+  NOT_PASSED = 'NOT_PASSED',
+  STALE = 'STALE'
+}
+registerEnumType(JobAcceptanceScreeningState, { name: 'JobAcceptanceScreeningState' });
+
+@ObjectType({ description: 'Whether screening allows the job to be accepted' })
+export class JobAcceptanceScreening {
+  @Field(() => JobAcceptanceScreeningState)
+  state: JobAcceptanceScreeningState;
+
+  @Field(() => String, { nullable: true })
+  message?: string | null;
 }
 
 export type ScreeningRunDocument = ScreeningRun & Document;

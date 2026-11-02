@@ -1,5 +1,6 @@
+import mongoose from 'mongoose';
 import { ScreeningRunService } from './screening-run.service';
-import { ScreeningRunTrigger } from './screening-run.model';
+import { ScreeningRunSchema, ScreeningRunTrigger } from './screening-run.model';
 import { HomologyScreeningStatus } from './job.model';
 
 const JOB = '65a1b2c3d4e5f60718293a4b';
@@ -35,7 +36,8 @@ describe('ScreeningRunService', () => {
       startedAt: new Date('2026-10-29T12:00:00Z'),
       sequenceCount: 0,
       skippedCount: 0,
-      sequences: []
+      sequences: [],
+      fingerprint: null
     });
     expect(id).toBe(RUN);
     expect(model.create.mock.calls[0][0]).toMatchObject({ trigger: 'RERUN', triggeredBy: 'staff@bu.edu' });
@@ -45,7 +47,7 @@ describe('ScreeningRunService', () => {
     const model = fakeModel();
     await new ScreeningRunService(model).findForJob(JOB);
     expect(model.find).toHaveBeenCalledWith({ jobId: JOB });
-    expect(model.found.select).toHaveBeenCalledWith({ 'aclid.raw': 0, 'aclid.details': 0 });
+    expect(model.found.select).toHaveBeenCalledWith({ 'aclid.raw': 0, 'aclid.details': 0, 'customer.raw': 0 });
     expect(model.found.sort).toHaveBeenCalledWith({ startedAt: -1 });
   });
 
@@ -68,5 +70,43 @@ describe('ScreeningRunService', () => {
     const model = fakeModel();
     await new ScreeningRunService(model).findByAclidScreenId('scr_1');
     expect(model.findOne).toHaveBeenCalledWith({ 'aclid.screenId': 'scr_1' });
+  });
+
+  it('findNewestForJob returns the newest run by startedAt, without the raw reports', async () => {
+    const model = fakeModel();
+    const q = chain({ _id: RUN });
+    model.findOne = jest.fn(() => q);
+    await expect(new ScreeningRunService(model).findNewestForJob(JOB)).resolves.toEqual({ _id: RUN });
+    expect(model.findOne).toHaveBeenCalledWith({ jobId: JOB });
+    expect(q.select).toHaveBeenCalledWith({ 'aclid.raw': 0, 'aclid.details': 0, 'customer.raw': 0 });
+    expect(q.sort).toHaveBeenCalledWith({ startedAt: -1 });
+  });
+
+  it('findNewestForJob returns null for an invalid id, without a query', async () => {
+    const model = fakeModel();
+    await expect(new ScreeningRunService(model).findNewestForJob('nope')).resolves.toBeNull();
+    expect(model.findOne).not.toHaveBeenCalled();
+  });
+
+  it('updateCustomerLeg sets the leg field by field', async () => {
+    const model = fakeModel();
+    await new ScreeningRunService(model).updateCustomerLeg('run-1', { detail: 'x' });
+    expect(model.updateOne).toHaveBeenCalledWith({ _id: 'run-1' }, { $set: { 'customer.detail': 'x' } });
+  });
+
+  it('an older stored run reads an empty unscreenedNotes and null customer and fingerprint', () => {
+    const Model = mongoose.model('ScreeningRunHydrateTest', ScreeningRunSchema);
+    const run = Model.hydrate({
+      _id: new mongoose.Types.ObjectId(),
+      jobId: new mongoose.Types.ObjectId(),
+      trigger: 'RERUN',
+      status: 'PASSED',
+      startedAt: new Date(),
+      sequenceCount: 0,
+      skippedCount: 0
+    });
+    expect(Array.from(run.unscreenedNotes)).toEqual([]);
+    expect(run.customer ?? null).toBeNull();
+    expect(run.fingerprint ?? null).toBeNull();
   });
 });

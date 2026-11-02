@@ -31,7 +31,7 @@ import { WorkflowNodeService } from '../workflow/services/node.service';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityEventType } from '../activity/activity-event.model';
-import { JobScreeningService } from './job-screening.service';
+import { AUTO_SCREENING_ENABLED, JobScreeningService } from './job-screening.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
 import { jobVersionAuthorOrg } from '../job-version/author-org';
@@ -46,7 +46,6 @@ import { JobReviewService } from './job-review.service';
 import { assertShowsBiosecurity, callerShowsBiosecurity } from './biosecurity-gate';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
-import { customerStatusFromAclid, homologyStatusFromAclidScreen } from '../aclid/aclid-status.util';
 import { redactJobBiosecurity } from './biosecurity-view';
 
 @Resolver(() => Job)
@@ -409,7 +408,7 @@ export class JobResolver {
    * scope is enforced — the owner, the client named on a staff-submitted job,
    * or anyone holding `jobs:view-all`.
    */
-  private async jobForCustomerVerification(jobId: string, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
+  private async jobForVerificationAccess(jobId: string, user: User): Promise<Job> {
     const job = await this.jobService.findById(jobId);
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
@@ -418,21 +417,25 @@ export class JobResolver {
       throw new ForbiddenException('You do not have permission to access this job');
     }
     await this.assertShowsBiosecurity(user);
-    const ready = await this.ensureAclidScreen(job, user);
-    return ready;
+    return job;
+  }
+
+  private async jobForCustomerVerification(jobId: string, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
+    return this.ensureAclidScreen(await this.jobForVerificationAccess(jobId, user), user);
   }
 
   /**
-   * A verification URL needs an Aclid screen. Submission creates one in the
-   * background; a job opened before that finishes, or one whose DNA lives on
-   * a step we only just started reading, still has none. Screen once, now,
-   * and use the id if Aclid stored one.
+   * A verification URL needs the job's Aclid screen. While AUTO_SCREENING_ENABLED is off, staff's
+   * "Run screening" is what creates one, so a job without a screen is refused here: the
+   * customer's call must not spend Aclid calls or write a screening run. Once automatic
+   * screening is on, a job that still has no screen is screened once, now, and the id used if
+   * Aclid stored one.
    */
   private async ensureAclidScreen(job: Job, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
     if (job.aclidScreening?.screenId) {
       return { job, screening: job.aclidScreening, screenId: job.aclidScreening.screenId };
     }
-    if (!this.aclidService.isConfigured?.()) {
+    if (!AUTO_SCREENING_ENABLED || !this.aclidService.isConfigured?.()) {
       throw new BadRequestException('No Aclid screen on this job');
     }
     await this.jobScreeningService.screenJob(String((job as { _id?: unknown })._id), user.sub ?? '');
@@ -445,9 +448,10 @@ export class JobResolver {
   }
 
   /**
-   * Mint Aclid's hosted verification page for this job's screen. KYC is Aclid's
-   * flow end to end — we never create Aclid customers ourselves — so all that
-   * is ours is the screen id and where to send the customer afterwards.
+   * Mint Aclid's hosted verification page for this job's screen. The verification itself is
+   * Aclid's flow; what is ours is the screen id and where to send the customer afterwards.
+   * Staff's rerun is what creates Aclid customer records, for the customer leg of a screening
+   * run, and never from here.
    */
   @Mutation(() => CustomerVerificationSession, {
     description: "Mint an Aclid hosted-KYC session for this job's screen. Requires being on the job (owner, named client, or jobs:view-all)."
@@ -475,32 +479,39 @@ export class JobResolver {
   })
   @RequirePermission(Permission.JobsView)
   async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
-    const { job, screening: existing, screenId } = await this.jobForCustomerVerification(jobId, user);
+    const job = await this.jobForVerificationAccess(jobId, user);
+    const existing = job.aclidScreening;
+    const screenId = existing?.screenId;
+    if (!existing || !screenId) {
+      throw new BadRequestException('No Aclid screen on this job');
+    }
     const screen = await this.aclidService.getScreen(screenId);
-    const homologyStatus = homologyStatusFromAclidScreen(screen);
+    // The verdict is taken with the screen's per-sequence details in hand: Aclid leaves the
+    // top-level status empty on a controlled screen. A succeeded screen whose results could not
+    // be read has no verdict yet, so it reads In Progress and a later refresh settles it.
+    const verdict = await this.jobScreeningService.readAclidVerdict(screen);
+    const homologyStatus = verdict.unread ? HomologyScreeningStatus.IN_PROGRESS : verdict.homologyStatus;
+    // Re-read the customer leg Aclid holds: a review resolved there clears without a new screen.
+    const customerStatus = await this.jobScreeningService.refreshCustomerLeg(jobId);
     const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
     const updated = await this.jobService.setAclidScreening(jobId, {
       ...existing,
       homologyStatus,
-      regulatoryStatus: screen.regulatoryStatus,
+      regulatoryStatus: verdict.regulatoryStatus,
       verificationStatus: screen.verificationStatus,
       decisionStatus: screen.decisionStatus,
       verificationCompletedAt: verificationCompletedAt && !Number.isNaN(verificationCompletedAt.getTime()) ? verificationCompletedAt : null,
       // Same wording the screening run writes: a verdict clears the line, no
       // verdict names what Aclid did say.
-      detail: homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null,
-      customerStatus: customerStatusFromAclid({
-        screenId,
-        decisionStatus: screen.decisionStatus,
-        verificationStatus: screen.verificationStatus,
-        screenHomologyStatus: homologyStatus
-      })
+      detail: verdict.unread ? verdict.detail : homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null,
+      customerStatus
     });
 
     // The run that sent this screen catches up too (biosecurity-update): verdict, raw report, details.
-    // After the customer's own row, and not awaited: the details call can take up to 30 s and the
-    // customer's click must not wait on it. It never rejects; the catch is belt and braces.
-    void this.jobScreeningService.recordAclidRefresh(screen).catch((err) => this.logger.error(`Aclid refresh run write failed for jobId=${jobId}`, err instanceof Error ? err.stack : err));
+    // After the customer's own row. The verdict write is awaited so the gate and the card read it
+    // right after the click; only the details call (up to 30 s) runs in the background. It never
+    // rejects; the catch is belt and braces.
+    await this.jobScreeningService.recordAclidRefresh(screen, verdict).catch((err) => this.logger.error(`Aclid refresh run write failed for jobId=${jobId}`, err instanceof Error ? err.stack : err));
 
     // The Homology row is a stored rollup, and SecureDNA's leg cannot be read
     // back out of it. So this is one-directional: a screen that had no verdict
@@ -903,7 +914,9 @@ export class JobResolver {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
       email: user.email,
-      claims: user.realm_access?.roles ?? []
+      claims: user.realm_access?.roles ?? [],
+      // Only ACCEPT is gated by screening, so only ACCEPT pays for the Keycloak read.
+      showsBiosecurity: input.decision === JobReviewDecision.ACCEPT ? await this.callerShowsBiosecurity(user) : undefined
     });
     const title = JobResolver.REVIEW_NOTIFICATION_TITLES[input.decision] ?? 'Your job was reviewed';
     // Keyed on the review's own operation id, so a retried review makes one

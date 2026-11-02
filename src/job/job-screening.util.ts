@@ -27,7 +27,9 @@ export function screeningStringsFromValue(value: unknown): string[] {
 }
 
 /** A parameter the catalog marked `screening: true` (biosecurity-update). No key reads as false. */
-export const isScreenedParameter = (param: unknown): param is { id: string; type: string; name?: string; allowMultipleValues?: boolean; screeningFields?: unknown } =>
+export type FlaggedParam = { id: string; type: string; name?: string; allowMultipleValues?: boolean; screeningFields?: unknown };
+
+export const isScreenedParameter = (param: unknown): param is FlaggedParam =>
   !!param && typeof param === 'object' && (param as { screening?: unknown }).screening === true && typeof (param as { id?: unknown }).id === 'string';
 
 /** Comparison form: what makes two sequences the same sequence. */
