@@ -196,7 +196,7 @@ Biosecurity card, and the Review override.
 | `rerunJobHomologyScreening` | `jobs:view-all` |
 | `jobAcceptanceScreening(jobId)` | `jobs:view-all`: state and message only, never results |
 | `startJobCustomerVerification` | `jobs:view-all` (was `jobs:view` + membership, 2026-11-02) |
-| `refreshJobAclidScreening` | `jobs:view` plus job membership; the full record goes to `jobs:view-all`, every screening field is removed for anyone else. Never starts a screen or posts a customer. |
+| `refreshJobAclidScreening` | `jobs:view-all` (was `jobs:view` + membership, 2026-11-02). Never starts a screen or posts a customer. |
 | `jobById` | `jobs:view-all`: the full record |
 | `Job.homologyScreening`, `Job.aclidScreening`, `Job.screeningBatchIds` | field-gated on `jobs:view-all` on every path (`jobsForViewer`, member mutations, nested Jobs); null for anyone else |
 | `ownJobById` | membership; screening fields are removed without `jobs:view-all`, staff get the customer view |

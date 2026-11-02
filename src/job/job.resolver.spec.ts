@@ -596,7 +596,7 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     getScreen.mockResolvedValue(approvedScreen);
     refreshCustomerLeg.mockResolvedValue(HomologyScreeningStatus.PASSED);
 
-    const updated = await resolver.refreshJobAclidScreening('job-1', owner);
+    const updated = await resolver.refreshJobAclidScreening('job-1', technician);
 
     expect(getScreen).toHaveBeenCalledWith('scr_123');
     expect(setAclidScreening).toHaveBeenCalledWith(
@@ -614,9 +614,8 @@ describe('JobResolver.refreshJobAclidScreening', () => {
         startedAt: new Date('2026-09-01T00:00:00Z')
       })
     );
-    // The owner lacks jobs:view-all, so every screening field is removed.
-    expect(updated.aclidScreening).toBeUndefined();
-    expect(updated.homologyScreening).toBeUndefined();
+    // The caller holds jobs:view-all (the gate), so the full record comes back.
+    expect(updated.aclidScreening?.decisionStatus).toBe('approved');
     // A refresh is a read of Aclid's state, never a new screen.
     expect(screenJob).not.toHaveBeenCalled();
     expect(screenJobInBackground).not.toHaveBeenCalled();
@@ -657,7 +656,7 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     const { resolver, getScreen, setHomologyScreening, screenJob, screenJobInBackground } = kycHarness(job);
     getScreen.mockResolvedValue({ ...approvedScreen, regulatoryStatus: 'controlled' });
 
-    const updated = await resolver.refreshJobAclidScreening('job-1', owner);
+    const updated = await resolver.refreshJobAclidScreening('job-1', technician);
 
     expect(setHomologyScreening).toHaveBeenCalledTimes(1);
     expect(setHomologyScreening).toHaveBeenCalledWith(
@@ -671,7 +670,7 @@ describe('JobResolver.refreshJobAclidScreening', () => {
         sequenceCount: 2
       })
     );
-    expect(updated.homologyScreening).toBeUndefined();
+    expect(updated.homologyScreening?.status).toBe(HomologyScreeningStatus.FAILED);
     expect(screenJob).not.toHaveBeenCalled();
     expect(screenJobInBackground).not.toHaveBeenCalled();
   });

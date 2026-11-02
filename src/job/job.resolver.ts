@@ -398,10 +398,9 @@ export class JobResolver {
    * the caller is on their own job page, so "not found" is the honest answer
    * to a stale id, and "forbidden" the honest answer to someone else's.
    *
-   * The refresh mutation is gated on the baseline `jobs:view`, so this is where
-   * scope is enforced — the owner, the client named on a staff-submitted job,
-   * or anyone holding `jobs:view-all`. The staff-only start is already
-   * `jobs:view-all`, so it passes through here unchanged.
+   * Both callers (the start and the refresh) are gated on `jobs:view-all`, so
+   * the membership check below always passes for them. It stays as belt and
+   * braces: scope is still enforced here if a gate is ever loosened.
    */
   private async jobForVerificationAccess(jobId: string, user: User): Promise<Job> {
     const job = await this.jobService.findById(jobId);
@@ -469,9 +468,9 @@ export class JobResolver {
    * `rerunJobHomologyScreening`, which is staff-only.
    */
   @Mutation(() => Job, {
-    description: "Re-read this job's Aclid screen and record its current regulatory, verification and decision status. Does not re-screen. Requires being on the job."
+    description: "Re-read this job's Aclid screen and record its current regulatory, verification and decision status. Does not re-screen. Staff-only."
   })
-  @RequirePermission(Permission.JobsView)
+  @RequirePermission(Permission.JobsViewAll)
   async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const job = await this.jobForVerificationAccess(jobId, user);
     const existing = job.aclidScreening;
@@ -514,7 +513,7 @@ export class JobResolver {
     // because a FAILED row may be SecureDNA's, which this refresh knows nothing
     // about. Anything other than a new FAILED leaves the row exactly as it was.
     if (homologyStatus !== HomologyScreeningStatus.FAILED) {
-      return this.presentBiosecurity(updated ?? job, user);
+      return updated ?? job;
     }
     const rollup = job.homologyScreening;
     const failed = await this.jobService.setHomologyScreening(jobId, {
@@ -525,12 +524,7 @@ export class JobResolver {
       sequenceCount: rollup?.sequenceCount ?? existing.sequenceCount,
       detail: `Aclid now reports controlled${rollup?.detail ? ` (was: ${rollup.detail})` : ''}`
     });
-    return this.presentBiosecurity(failed ?? updated ?? job, user);
-  }
-
-  /** `jobs:view-all` sees the full record. Everyone else sees no screening field at all. */
-  private presentBiosecurity(job: Job, user: User): Job {
-    return hasPermission(user, Permission.JobsViewAll) ? job : redactJobBiosecurity(job, 'hidden');
+    return failed ?? updated ?? job;
   }
 
   @Mutation(() => Job, {
