@@ -69,20 +69,11 @@ not block. When Aclid enables `sanctions`, nothing in Canvas changes for the leg
 fail or needs-review starts blocking. Collect the address and country first: they are not sent yet
 (decided 2026-11-01).
 
-## Keycloak: `showBiosecurity`
-
-Who sees the Biosecurity card, the screening history and the batch details is a per-account
-Keycloak user attribute, `showBiosecurity`. Absent means shown; the value `false` hides the card
-and makes the backend refuse `jobScreeningRuns`, `screeningRun`, `screeningBatch`,
-`screeningBatches` and `rerunJobHomologyScreening` with FORBIDDEN. Set it in Keycloak's admin
-console (Users -> the user -> Attributes) or from Customer Management. `jobAcceptanceScreening`
-takes no `showBiosecurity` check, since it returns only a state and message.
-
 ## Permission: `jobs:view-all`
 
-Every biosecurity read and the rerun also require `jobs:view-all` (Administrator and Technician
-tiers; see `docs/access-matrix.md`). Customers never see screening results. `BIOSECURITY_ENABLED = false` in the UI's
-`ClientView.tsx` hides the block from customers.
+Every biosecurity read, the rerun, the batch screens and the verification link require `jobs:view-all`
+(Administrator and Technician; see `docs/access-matrix.md`). Nobody else sees any of it. There is no
+per-account switch: a `showBiosecurity` attribute left on a Keycloak user is ignored.
 
 ## Verify it works
 

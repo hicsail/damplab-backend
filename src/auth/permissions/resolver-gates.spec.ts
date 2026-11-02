@@ -271,7 +271,6 @@ const GATES: Row[] = [
   [CustomerManagementResolver, 'searchKeycloakUsersForCustomerManagement', Permission.CustomersManage],
   [CustomerManagementResolver, 'setUserKeycloakCustomerCategory', Permission.CustomersManage],
   [CustomerManagementResolver, 'setUserKeycloakAccessTier', Permission.CustomersManage],
-  [CustomerManagementResolver, 'setUserShowBiosecurity', Permission.CustomersManage],
   [CustomerProfileResolver, 'updateCustomerProfile', Permission.CustomersManage],
   [PermissionsResolver, 'rolePreviews', Permission.CustomersManage]
 ];
