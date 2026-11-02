@@ -180,20 +180,25 @@ the homepage button, `AppBreadcrumbs`' `STATIC` map, and the page's own heading.
 | `createJob` | refuses, for every caller, a number that breaks its parameter's validation and an "Other" answer with blank text (op-catalog-enhances) |
 | `saveJobWorkflows` | when the caller writes as a customer (no `damplab-staff` role): refuses a number that save changes to a value breaking its parameter's validation, and an "Other" answer that save leaves with blank text. Unchanged answers are not checked; staff saves and `restoreJobVersion` are not checked (op-catalog-enhances) |
 
-## Biosecurity resolver gates (biosecurity-update)
+## Biosecurity resolver gates (biosecurity-update, biosecurity-tweaks)
 
-Every read of a job's biosecurity record takes two checks: the decorator `jobs:view-all` (customers
-never reach it), then the per-account Keycloak attribute `showBiosecurity` inline
-(`src/job/biosecurity-gate.ts`; absent = shown). A caller who fails either gets FORBIDDEN. The UI
-mirrors it with `userProps.showBiosecurity` on the job page's Biosecurity card.
+Biosecurity belongs to `jobs:view-all` (Administrator, Technician) and to nobody else. There is no
+per-account switch: the `showBiosecurity` Keycloak attribute was retired 2026-11-02 and is ignored.
+A caller without the permission gets FORBIDDEN, and job reads drop `homologyScreening`,
+`aclidScreening` and `screeningBatchIds`. The UI mirrors it with the Screener entry and route, the
+Biosecurity card, and the Review override.
 
 | Operation | Gate |
 |---|---|
-| `jobScreeningRuns(jobId)`, `screeningRun(id)` | `jobs:view-all` + `showBiosecurity` (new, 2026-10-29) |
-| `screeningBatch(id)`, `screeningBatches` | `jobs:view-all` + `showBiosecurity` — the second check added 2026-10-29 (F2). `/screener` lists `screeningBatches`, so it is refused to staff with the flag off. |
-| `createSequencesBatch`, `screenSequencesBatch` | `jobs:view-all` + `showBiosecurity` (added 2026-10-30; `/screener` is hidden to staff with the flag off, this is its server twin) |
-| `rerunJobHomologyScreening` | `jobs:view-all` + `showBiosecurity` (unchanged) |
-| `jobAcceptanceScreening(jobId)` | `jobs:view-all`, no `showBiosecurity` check: state and message only, never results, so staff who cannot see the card still learn why Accept is off (new, 2026-11-01) |
+| `jobScreeningRuns(jobId)`, `screeningRun(id)` | `jobs:view-all` |
+| `screeningBatch(id)`, `screeningBatches` | `jobs:view-all` |
+| `createSequencesBatch`, `screenSequencesBatch` | `jobs:view-all` |
+| `rerunJobHomologyScreening` | `jobs:view-all` |
+| `jobAcceptanceScreening(jobId)` | `jobs:view-all`: state and message only, never results |
+| `startJobCustomerVerification` | `jobs:view-all` (was `jobs:view` + membership, 2026-11-02) |
+| `refreshJobAclidScreening` | `jobs:view` plus job membership; the full record goes to `jobs:view-all`, every screening field is removed for anyone else. Never starts a screen or posts a customer. |
+| `jobById` | `jobs:view-all`: the full record |
+| `ownJobById` | membership; screening fields are removed without `jobs:view-all`, staff get the customer view |
 | `reviewJob` ACCEPT | `@Roles(DamplabStaff)` plus the screening gate, with no role exemption (2026-11-01). Mirrored by the Review modal. Request-changes decisions and a job currently ACCEPTED are not gated. |
-| `refreshJobAclidScreening` | `jobs:view` plus job membership + `showBiosecurity` (unchanged). Never starts a screen or posts a customer; customers never receive the customer leg. |
+| `reviewJob` with `overrideScreening` | `@Roles(DamplabStaff)`: every Administrator (2026-11-02) |
 | Saving `screening` / `screeningFields` on a parameter | the existing catalog-edit gates of `updateService` / `createService` and the parameter-set mutations; no new gate |

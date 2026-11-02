@@ -933,7 +933,7 @@ describe('screening runs (biosecurity-update behaviour 6)', () => {
     expect(closing(screeningRuns).aclid).toMatchObject({ homologyStatus: 'IN_PROGRESS', detail: expect.stringContaining('could not be read') });
     expect(lastCall(setAclidScreening)).toMatchObject({ homologyStatus: HomologyScreeningStatus.IN_PROGRESS });
     const finished = { ...(closing(screeningRuns) as any), completedAt: new Date(), fingerprint: 'fp' };
-    expect(decideAcceptanceScreening({ jobState: JobState.SUBMITTED, newestRun: finished, currentFingerprint: 'fp', callerCanScreen: true } as any).state).not.toBe('CLEAR');
+    expect(decideAcceptanceScreening({ jobState: JobState.SUBMITTED, newestRun: finished, currentFingerprint: 'fp' } as any).state).not.toBe('CLEAR');
     if (mode === 'aclid') expect(screenSequences).not.toHaveBeenCalled();
     else expect(screenSequences).toHaveBeenCalled();
   });
@@ -1569,7 +1569,6 @@ describe('acceptanceScreening', () => {
     const screeningRuns = { findNewestForJob: jest.fn(async () => Promise.reject(new Error('db down'))) };
     const h = harness(nodes(DNA_A), { job: jobIn(JobState.SUBMITTED), screeningRuns });
     await expect(h.service.acceptanceScreening(h.job!)).resolves.toEqual({ state: JobAcceptanceScreeningState.NOT_PASSED, message: ACCEPTANCE_MESSAGES.CHECK_FAILED });
-    await expect(h.service.acceptanceScreening(h.job!, { callerCanScreen: false })).resolves.toMatchObject({ message: ACCEPTANCE_MESSAGES.CHECK_FAILED + ACCEPTANCE_MESSAGES.NO_BIOSECURITY_ACCESS });
   });
 
   it('a value edited after the run reads STALE (behaviour 11, Review Focus 1)', async () => {

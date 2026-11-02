@@ -1480,28 +1480,21 @@ describe('JobReviewService acceptance screening gate', () => {
     expect(jobScreening.acceptanceScreening).not.toHaveBeenCalled();
   });
 
-  it("passes the actor's access through", async () => {
+  it('asks the gate about the job alone', async () => {
     const { service, jobScreening } = buildHarness();
-    await service.reviewJob({ ...accept, operationId: 'gate-8' }, { ...staff, showsBiosecurity: false });
-    expect(jobScreening.acceptanceScreening).toHaveBeenCalledWith(expect.anything(), { callerCanScreen: false });
-  });
-
-  it('treats an absent flag as can-screen', async () => {
-    const { service, jobScreening } = buildHarness();
-    await service.reviewJob({ ...accept, operationId: 'gate-9' }, staff);
-    expect(jobScreening.acceptanceScreening).toHaveBeenCalledWith(expect.anything(), { callerCanScreen: true });
+    await service.reviewJob({ ...accept, operationId: 'gate-8' }, staff);
+    expect(jobScreening.acceptanceScreening.mock.calls[0]).toHaveLength(1);
   });
 });
 
 describe('JobReviewService screening override', () => {
   const accept = { jobId: JOB_ID, decision: JobReviewDecision.ACCEPT, overrideScreening: true };
-  const bioStaff = { ...staff, showsBiosecurity: true };
 
   it('accepts a job screening has not cleared, and records the override in history and activity', async () => {
     const { service, job, operations, versions, comments, activityEvents, jobScreening } = buildHarness();
     jobScreening.acceptanceScreening.mockResolvedValue({ state: 'NOT_PASSED', message: 'nope' });
 
-    await service.reviewJob({ ...accept, operationId: 'ovr-1' }, bioStaff);
+    await service.reviewJob({ ...accept, operationId: 'ovr-1' }, staff);
 
     expect(job.state).toBe(JobState.ACCEPTED);
     expect(operations[0]).toMatchObject({ screeningOverrideRequested: true, screeningOverridden: true });
@@ -1514,26 +1507,25 @@ describe('JobReviewService screening override', () => {
   it('a job that screening clears is a plain accept, even with the box ticked', async () => {
     const { service, job, operations, activityEvents } = buildHarness();
 
-    await service.reviewJob({ ...accept, operationId: 'ovr-2' }, bioStaff);
+    await service.reviewJob({ ...accept, operationId: 'ovr-2' }, staff);
 
     expect(job.state).toBe(JobState.ACCEPTED);
     expect(operations[0].screeningOverridden).toBeUndefined();
     expect(activityEvents[0].message).toBe('Job review decision: Accepted');
   });
 
-  it.each([false, undefined])('refuses staff whose showsBiosecurity is %s with FORBIDDEN, and journals nothing', async (showsBiosecurity) => {
-    const { service, job, operations, jobScreening } = buildHarness();
+  it('any staff actor may override (behaviour 18)', async () => {
+    const { service, job, jobScreening } = buildHarness();
     jobScreening.acceptanceScreening.mockResolvedValue({ state: 'NOT_RUN', message: 'nope' });
 
-    await expect(service.reviewJob({ ...accept, operationId: `ovr-3-${showsBiosecurity}` }, { ...staff, showsBiosecurity })).rejects.toBeInstanceOf(ForbiddenException);
+    await service.reviewJob({ ...accept, operationId: 'ovr-3' }, staff);
 
-    expect(operations).toHaveLength(0);
-    expect(job.state).toBe(JobState.SUBMITTED);
+    expect(job.state).toBe(JobState.ACCEPTED);
   });
 
   it('refuses an override on a request-changes decision', async () => {
     const { service } = buildHarness();
-    await expect(service.reviewJob({ operationId: 'ovr-4', jobId: JOB_ID, decision: JobReviewDecision.REQUEST_EDITS, message: 'Fix it.', overrideScreening: true }, bioStaff)).rejects.toThrow(
+    await expect(service.reviewJob({ operationId: 'ovr-4', jobId: JOB_ID, decision: JobReviewDecision.REQUEST_EDITS, message: 'Fix it.', overrideScreening: true }, staff)).rejects.toThrow(
       new BadRequestException('Only an acceptance can override screening.')
     );
   });
@@ -1542,18 +1534,18 @@ describe('JobReviewService screening override', () => {
     const { service, jobScreening, failActivityOnce } = buildHarness();
     jobScreening.acceptanceScreening.mockResolvedValue({ state: 'NOT_PASSED', message: 'nope' });
     failActivityOnce();
-    await expect(service.reviewJob({ ...accept, operationId: 'ovr-5' }, bioStaff)).rejects.toThrow('activity failed');
+    await expect(service.reviewJob({ ...accept, operationId: 'ovr-5' }, staff)).rejects.toThrow('activity failed');
 
-    await expect(service.reviewJob({ jobId: JOB_ID, decision: JobReviewDecision.ACCEPT, operationId: 'ovr-5' }, bioStaff)).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.reviewJob({ jobId: JOB_ID, decision: JobReviewDecision.ACCEPT, operationId: 'ovr-5' }, staff)).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('a resumed overridden operation still writes the override wording', async () => {
     const { service, job, activityEvents, jobScreening, failActivityOnce } = buildHarness();
     jobScreening.acceptanceScreening.mockResolvedValue({ state: 'NOT_PASSED', message: 'nope' });
     failActivityOnce();
-    await expect(service.reviewJob({ ...accept, operationId: 'ovr-6' }, bioStaff)).rejects.toThrow('activity failed');
+    await expect(service.reviewJob({ ...accept, operationId: 'ovr-6' }, staff)).rejects.toThrow('activity failed');
 
-    await service.reviewJob({ ...accept, operationId: 'ovr-6' }, bioStaff);
+    await service.reviewJob({ ...accept, operationId: 'ovr-6' }, staff);
 
     expect(job.state).toBe(JobState.ACCEPTED);
     expect(activityEvents[0].message).toBe(`Job review decision: ${ACCEPTED_WITH_OVERRIDE}`);

@@ -100,29 +100,30 @@ const GATES: Row[] = [
   [WorkflowResolver, 'workflowById', Permission.JobsViewAll],
   [JobResolver, 'jobClients', Permission.JobsViewAll],
   [JobResolver, 'rerunJobHomologyScreening', Permission.JobsViewAll],
+  // Staff's Copy verification link (biosecurity-tweaks): customers have no UI for it.
+  [JobResolver, 'startJobCustomerVerification', Permission.JobsViewAll],
   [SecureDnaResolver, 'screeningBatches', Permission.JobsViewAll],
   [SecureDnaResolver, 'screeningBatch', Permission.JobsViewAll],
   [SecureDnaResolver, 'createSequencesBatch', Permission.JobsViewAll],
   [SecureDnaResolver, 'screenSequencesBatch', Permission.JobsViewAll],
-  // Screening history (biosecurity-update). The showBiosecurity half is inline (biosecurity-gate.ts),
-  // as on screeningBatch(es) — pinned in screening-run.resolver.spec.ts and securedna.resolver.spec.ts.
+  // Screening history (biosecurity-update). `jobs:view-all` is the whole gate, as on screeningBatch(es).
   [ScreeningRunResolver, 'jobScreeningRuns', Permission.JobsViewAll],
   [ScreeningRunResolver, 'screeningRun', Permission.JobsViewAll],
-  // Deliberately without the showBiosecurity half: state and message only, never results.
+  // State and message only, never results.
   [ScreeningRunResolver, 'jobAcceptanceScreening', Permission.JobsViewAll],
   // The merged jobs page. Deliberately the BASELINE permission: this one query
   // serves a client and a technician, and the scope is enforced inside the
   // resolver rather than by the gate. See JobResolver.jobsForViewer.
   [JobResolver, 'jobsForViewer', Permission.JobsView],
-  // Customer KYC through Aclid's hosted verification page. Baseline for the same
-  // reason: the customer is the one who has to complete it, so a client must
-  // reach both. Whether the caller is *on* the job is `callerMayAccessJob`
-  // inside the resolver. Re-running the screen itself stays jobs:view-all above.
-  [JobResolver, 'startJobCustomerVerification', Permission.JobsView],
+  // Customer KYC refresh through Aclid's hosted verification page. Baseline: the
+  // customer lands back on their job page and refreshes. Whether the caller is *on*
+  // the job is `callerMayAccessJob` inside the resolver; the response is redacted
+  // unless the caller holds jobs:view-all. Re-running the screen and starting a
+  // verification session stay jobs:view-all above.
   [JobResolver, 'refreshJobAclidScreening', Permission.JobsView],
 
   // Collaborators. Baseline, scoped inside: membership (or damplab-staff /
-  // jobs:view-all) is checked in the resolver, the way the KYC mutations are.
+  // jobs:view-all) is checked in the resolver, the way `refreshJobAclidScreening` is.
   [JobResolver, 'addJobMember', Permission.JobsView],
   [JobResolver, 'removeJobMember', Permission.JobsView],
   [JobResolver, 'setJobDescription', Permission.JobsView],
@@ -228,7 +229,7 @@ const GATES: Row[] = [
   // and anyone who can see the catalog may download it, because the canvas is
   // where a customer picks it up. Replacing a filled-in sheet is open at the
   // baseline and scoped *inside* the resolver to the job's own actors (owner,
-  // named client, jobs:view-all), the way the KYC mutations are.
+  // named client, jobs:view-all), the way `refreshJobAclidScreening` is.
   [SampleSheetResolver, 'sampleSheetTemplateUploadUrl', Permission.CatalogEditorWrite],
   [SampleSheetResolver, 'sampleSheetTemplateUrl', Permission.CatalogView],
   [SampleSheetResolver, 'parameterSetSampleSheetTemplateUrl', Permission.CatalogEditorRead],

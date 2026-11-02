@@ -54,12 +54,10 @@ changed since. A job with nothing to screen still needs one run: press **Run scr
 a completed run with zero sequences clears it. A changed flagged value, a replaced table file, a replaced sequence file, a
 newly flagged parameter with a value, or changed customer details means **Rerun screening**.
 Customer screening In progress or Needs review: resolve it at Aclid and press **Refresh results**.
-A flagged table or sequence file that could not be read blocks, even when other sequences passed. Staff without
-`showBiosecurity` are blocked too and are told someone with biosecurity access must screen first.
-Staff with `showBiosecurity` can tick **Override screening and accept anyway** in the Review modal
+A flagged table or sequence file that could not be read blocks, even when other sequences passed.
+Any Administrator can tick **Override screening and accept anyway** in the Review modal
 to accept regardless of screening; the job's history and activity then read *Accepted with
-screening override* and name who did it (the customer's comment says *Accepted*). Staff without
-`showBiosecurity` are not offered the override and the server refuses it. Jobs already accepted or later are not re-checked and screening stays
+screening override* and name who did it (the customer's comment says *Accepted*). Jobs already accepted or later are not re-checked and screening stays
 optional for them.
 
 ## Customer screening and the sanctions feature

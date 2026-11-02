@@ -13,7 +13,7 @@ const clearRun: any = {
 };
 
 const decide = (run: any, over: Record<string, unknown> = {}): JobAcceptanceScreening =>
-  decideAcceptanceScreening({ jobState: JobState.SUBMITTED, newestRun: run, currentFingerprint: 'fp', callerCanScreen: true, ...over } as any);
+  decideAcceptanceScreening({ jobState: JobState.SUBMITTED, newestRun: run, currentFingerprint: 'fp', ...over } as any);
 
 const expectDecision = (run: any, state: S, message: keyof typeof ACCEPTANCE_MESSAGES | null, over: Record<string, unknown> = {}): void => {
   const result = decide(run, over);
@@ -60,12 +60,6 @@ describe('decideAcceptanceScreening', () => {
   ] as const)('customer %s', (status, state, message) => expectDecision({ ...clearRun, customer: { status } }, state, message));
 
   it('customer null', () => expectDecision({ ...clearRun, customer: null }, S.NOT_PASSED, 'CUSTOMER_NOT_SCREENED'));
-
-  it('tells staff without biosecurity access to find someone who has it', () => {
-    const blocked = decide(null, { callerCanScreen: false });
-    expect(blocked.message).toBe(ACCEPTANCE_MESSAGES.NOT_RUN + ACCEPTANCE_MESSAGES.NO_BIOSECURITY_ACCESS);
-    expect(decide(clearRun, { callerCanScreen: false }).message).toBeNull();
-  });
 
   it('no message names a finding, a filename or a column', () => {
     const run = { ...clearRun, unscreenedNotes: ['Plate: secret.csv has no column “Insert”'], detail: 'Ricin' };

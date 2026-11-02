@@ -221,8 +221,7 @@ function screeningHarness(overrides: { created?: { _id: string; name: string }; 
   };
   const activityService: any = { createEvent: jest.fn(async () => undefined) };
   const keycloakService: any = {
-    resolveCustomerCategoryForUser: jest.fn(async () => undefined),
-    userShowsBiosecurity: jest.fn(async () => true)
+    resolveCustomerCategoryForUser: jest.fn(async () => undefined)
   };
   const notificationDispatch: any = { dispatch: jest.fn() };
   const screenJobInBackground = jest.fn();
@@ -355,7 +354,7 @@ function kycHarness(job: any): {
     };
   });
   const jobScreeningService: any = { screenJob, screenJobInBackground, recordAclidRefresh, readAclidVerdict, refreshCustomerLeg };
-  const keycloakService: any = { userShowsBiosecurity: jest.fn(async () => true) };
+  const keycloakService: any = {};
   const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, keycloakService, {} as any, jobScreeningService, aclidService);
   return {
     resolver,
@@ -439,14 +438,6 @@ describe('JobResolver.startJobCustomerVerification', () => {
 
     const staff = kycHarness(screenedJob());
     await expect(staff.resolver.startJobCustomerVerification('job-1', technician)).resolves.toEqual({ url: expect.any(String) });
-  });
-
-  it('refuses an account that cannot see biosecurity, without touching Aclid', async () => {
-    const { resolver, createVerificationUrl } = kycHarness(screenedJob());
-    (resolver as any).keycloakService.userShowsBiosecurity.mockResolvedValue(false);
-
-    await expect(resolver.startJobCustomerVerification('job-1', owner)).rejects.toThrow('Biosecurity is not enabled for this account');
-    expect(createVerificationUrl).not.toHaveBeenCalled();
   });
 
   it('refuses a stranger without touching Aclid', async () => {
@@ -623,13 +614,22 @@ describe('JobResolver.refreshJobAclidScreening', () => {
         startedAt: new Date('2026-09-01T00:00:00Z')
       })
     );
-    // The owner is not staff, so the response names submission and not the decision.
-    expect(updated.aclidScreening?.verificationStatus).toBe('submitted');
-    expect(updated.aclidScreening?.decisionStatus).toBeUndefined();
+    // The owner lacks jobs:view-all, so every screening field is removed.
+    expect(updated.aclidScreening).toBeUndefined();
     expect(updated.homologyScreening).toBeUndefined();
     // A refresh is a read of Aclid's state, never a new screen.
     expect(screenJob).not.toHaveBeenCalled();
     expect(screenJobInBackground).not.toHaveBeenCalled();
+  });
+
+  it('returns the full record to jobs:view-all on refresh (behaviour 17)', async () => {
+    const { resolver, getScreen, refreshCustomerLeg } = kycHarness(screenedJob());
+    getScreen.mockResolvedValue(approvedScreen);
+    refreshCustomerLeg.mockResolvedValue(HomologyScreeningStatus.PASSED);
+
+    const updated = await resolver.refreshJobAclidScreening('job-1', technician);
+
+    expect(updated.aclidScreening?.decisionStatus).toBe('approved');
   });
 
   it('records a rejection as FAILED for the customer and a controlled verdict as FAILED homology', async () => {
@@ -878,6 +878,35 @@ describe('JobResolver — client ownership consequences (B29, B31)', () => {
     expect(claimSubIfPrimary).toHaveBeenCalledWith(job, client);
   });
 
+  it('ownJobById hides every screening field from a client, and gives staff the customer view', async () => {
+    const job: any = { ...screenedJob(), email: 'client@bu.edu', clientEmail: 'client@bu.edu' };
+    const claimSubIfPrimary = jest.fn(async (j: any) => j);
+    const make = (): JobResolver =>
+      new JobResolver(
+        { findById: async () => job, claimSubIfPrimary } as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any
+      );
+    const asClient = await make().ownJobById('job-1', client);
+    expect(asClient?.aclidScreening).toBeUndefined();
+    expect(asClient?.homologyScreening).toBeUndefined();
+
+    const member: any = { sub: 'tech-1', email: 'client@bu.edu', preferred_username: 'Tech', realm_access: { roles: [Role.Technician] } };
+    const asStaff = await make().ownJobById('job-1', member);
+    expect(asStaff?.homologyScreening).toBeUndefined();
+    expect(asStaff?.aclidScreening?.screenId).toBe('scr_123');
+  });
+
   it('refuses the staff submitter on ownJobById — submittedBy grants nothing (B28)', async () => {
     const job: any = { _id: 'job-1', sub: 'client-kc', email: 'client@bu.edu', clientEmail: 'client@bu.edu', submittedBy: { sub: 'admin-1', email: 'tech@bu.edu' } };
     const resolver = new JobResolver(
@@ -1122,9 +1151,8 @@ describe('JobResolver.reviewJob — owner notification (F4)', () => {
     expect(dispatch.mock.calls[0][0].title).toBeTruthy();
   });
 
-  it('reviewJob tells the review service whether the caller can see biosecurity, for ACCEPT only', async () => {
+  it('reviewJob passes no biosecurity flag (behaviour 18)', async () => {
     const reviewJob = jest.fn(async () => ({ _id: 'job-1', name: 'Job' }));
-    const userShowsBiosecurity = jest.fn(async () => false);
     const resolver = new JobResolver(
       {} as any,
       {} as any,
@@ -1135,7 +1163,7 @@ describe('JobResolver.reviewJob — owner notification (F4)', () => {
       {} as any,
       {} as any,
       { reviewJob } as any,
-      { userShowsBiosecurity } as any,
+      {} as any,
       { dispatch: jest.fn() } as any,
       {} as any,
       {} as any
@@ -1143,12 +1171,7 @@ describe('JobResolver.reviewJob — owner notification (F4)', () => {
     const staff: any = { sub: 'staff-1', email: 's@bu.edu', preferred_username: 'Staff', realm_access: { roles: [Role.DamplabStaff] } };
 
     await resolver.reviewJob({ operationId: 'op-b1', jobId: 'job-1', decision: 'ACCEPT' } as any, staff);
-    expect(reviewJob).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ showsBiosecurity: false }));
-    expect(userShowsBiosecurity).toHaveBeenCalledTimes(1);
-
-    await resolver.reviewJob({ operationId: 'op-b2', jobId: 'job-1', decision: 'REQUEST_EDITS', message: 'x' } as any, staff);
-    expect(userShowsBiosecurity).toHaveBeenCalledTimes(1);
-    expect((reviewJob.mock.calls as any[][])[1][1].showsBiosecurity).toBeUndefined();
+    expect((reviewJob.mock.calls as any[][])[0][1]).not.toHaveProperty('showsBiosecurity');
   });
 
   it('does not notify when the review fails', async () => {

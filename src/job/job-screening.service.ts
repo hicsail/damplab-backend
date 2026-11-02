@@ -47,7 +47,7 @@ import { columnSlugs, fileRecordSliceName, multiValueSliceName, screeningSliceNa
 /**
  * Submission and resubmission start a screen in the background when this is true. It is off:
  * staff's "Run screening" / "Rerun screening" is what starts screening, and the only trigger
- * that also runs the customer leg. Pairs with BIOSECURITY_ENABLED in the UI's ClientView.tsx.
+ * that also runs the customer leg. Customers never see screening, so nothing on the client page pairs with it.
  */
 export const AUTO_SCREENING_ENABLED = false;
 
@@ -157,17 +157,16 @@ export class JobScreeningService {
    * Whether screening lets this job be accepted. Reads nothing for a job that is not gated. Never throws:
    * a check that cannot be made reads as NOT_PASSED, so the gate fails closed.
    */
-  async acceptanceScreening(job: Job, options: { callerCanScreen?: boolean } = {}): Promise<JobAcceptanceScreening> {
-    const callerCanScreen = options.callerCanScreen ?? true;
+  async acceptanceScreening(job: Job): Promise<JobAcceptanceScreening> {
     try {
-      if (!isAcceptanceGatedState(job.state)) return decideAcceptanceScreening({ jobState: job.state, newestRun: null, currentFingerprint: '', callerCanScreen });
+      if (!isAcceptanceGatedState(job.state)) return decideAcceptanceScreening({ jobState: job.state, newestRun: null, currentFingerprint: '' });
       const newestRun = await this.screeningRuns.findNewestForJob(String(job._id));
       const currentFingerprint = await this.screeningFingerprint(job);
-      return decideAcceptanceScreening({ jobState: job.state, newestRun, currentFingerprint, callerCanScreen });
+      return decideAcceptanceScreening({ jobState: job.state, newestRun, currentFingerprint });
     } catch (error) {
       // Fails closed: a check that cannot be made must not read as a pass.
       this.logger.error(`Could not check acceptance screening for job ${String(job?._id)}: ${messageOf(error)}`);
-      return { state: JobAcceptanceScreeningState.NOT_PASSED, message: ACCEPTANCE_MESSAGES.CHECK_FAILED + (callerCanScreen ? '' : ACCEPTANCE_MESSAGES.NO_BIOSECURITY_ACCESS) };
+      return { state: JobAcceptanceScreeningState.NOT_PASSED, message: ACCEPTANCE_MESSAGES.CHECK_FAILED };
     }
   }
 

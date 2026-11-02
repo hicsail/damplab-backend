@@ -11,7 +11,7 @@ import { HomologyScreeningStatus } from './job.model';
  *
  * A collection of its own, not an array on the job: jobs are read whole on every page, and a
  * raw Aclid report per run would bloat each read. Read only through `ScreeningRunResolver`,
- * which is `jobs:view-all` + `showBiosecurity`.
+ * which is `jobs:view-all` only.
  */
 export enum ScreeningRunTrigger {
   /** Screening on submission (when AUTO_SCREENING_ENABLED is on), and the KYC path's on-demand screen. */
@@ -166,7 +166,7 @@ export class ScreeningRunSecureDnaLeg {
 export const ScreeningRunSecureDnaLegSchema = SchemaFactory.createForClass(ScreeningRunSecureDnaLeg);
 
 @Schema({ collection: 'screening_runs', timestamps: true, minimize: false })
-@ObjectType({ description: 'One biosecurity screening of a job, both providers. Staff with showBiosecurity only.' })
+@ObjectType({ description: 'One biosecurity screening of a job, both providers. `jobs:view-all` only.' })
 export class ScreeningRun {
   @Field(() => ID, { name: 'id' })
   _id: mongoose.Types.ObjectId;

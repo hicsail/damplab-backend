@@ -43,7 +43,6 @@ import { assertParameterAnswersValid } from './parameter-answer-gate';
 import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
-import { assertShowsBiosecurity, callerShowsBiosecurity } from './biosecurity-gate';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
 import { redactJobBiosecurity } from './biosecurity-view';
@@ -256,11 +255,8 @@ export class JobResolver {
 
   @Query(() => Job, { nullable: true })
   @RequirePermission(Permission.JobsViewAll)
-  async jobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
-    const job = await this.jobService.findById(id);
-    if (!job) return null;
-    if (!(await this.callerShowsBiosecurity(user))) return redactJobBiosecurity(job, 'hidden');
-    return job;
+  async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
+    return this.jobService.findById(id);
   }
 
   @Query(() => Job, { nullable: true })
@@ -268,8 +264,7 @@ export class JobResolver {
     const job = await this.jobService.findById(id);
     if (!job || !isJobMember(job, user)) return null;
     const claimed = await this.jobService.claimSubIfPrimary(job, user);
-    const mode = (await this.callerShowsBiosecurity(user)) ? 'customer' : 'hidden';
-    return redactJobBiosecurity(claimed, mode);
+    return redactJobBiosecurity(claimed, hasPermission(user, Permission.JobsViewAll) ? 'customer' : 'hidden');
   }
 
   @Query(() => Job)
@@ -390,7 +385,6 @@ export class JobResolver {
   @Mutation(() => Job, { description: 'Staff-only. Re-run SecureDNA homology screening on a job and return the recorded verdict.' })
   @RequirePermission(Permission.JobsViewAll)
   async rerunJobHomologyScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
-    await this.assertShowsBiosecurity(user);
     const job = await this.jobService.findById(jobId);
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
@@ -404,9 +398,10 @@ export class JobResolver {
    * the caller is on their own job page, so "not found" is the honest answer
    * to a stale id, and "forbidden" the honest answer to someone else's.
    *
-   * Both KYC mutations are gated on the baseline `jobs:view`, so this is where
+   * The refresh mutation is gated on the baseline `jobs:view`, so this is where
    * scope is enforced — the owner, the client named on a staff-submitted job,
-   * or anyone holding `jobs:view-all`.
+   * or anyone holding `jobs:view-all`. The staff-only start is already
+   * `jobs:view-all`, so it passes through here unchanged.
    */
   private async jobForVerificationAccess(jobId: string, user: User): Promise<Job> {
     const job = await this.jobService.findById(jobId);
@@ -416,7 +411,6 @@ export class JobResolver {
     if (!callerMayAccessJob(job, user, hasPermission(user, Permission.JobsViewAll))) {
       throw new ForbiddenException('You do not have permission to access this job');
     }
-    await this.assertShowsBiosecurity(user);
     return job;
   }
 
@@ -454,9 +448,9 @@ export class JobResolver {
    * run, and never from here.
    */
   @Mutation(() => CustomerVerificationSession, {
-    description: "Mint an Aclid hosted-KYC session for this job's screen. Requires being on the job (owner, named client, or jobs:view-all)."
+    description: "Staff-only (jobs:view-all). Mint an Aclid hosted-KYC session for this job's screen, for staff's Copy verification link."
   })
-  @RequirePermission(Permission.JobsView)
+  @RequirePermission(Permission.JobsViewAll)
   async startJobCustomerVerification(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<CustomerVerificationSession> {
     const { screenId } = await this.jobForCustomerVerification(jobId, user);
     const redirectUrl = `${process.env.APP_BASE_URL?.replace(/\/+$/, '') || ''}/client_view/${jobId}`;
@@ -534,23 +528,9 @@ export class JobResolver {
     return this.presentBiosecurity(failed ?? updated ?? job, user);
   }
 
-  /**
-   * The Biosecurity block is per account, stored as a Keycloak attribute.
-   * A missing method (unit harnesses that never construct Keycloak) reads as shown.
-   */
-  private callerShowsBiosecurity(user: User): Promise<boolean> {
-    return callerShowsBiosecurity(this.keycloakService, user);
-  }
-
-  private assertShowsBiosecurity(user: User): Promise<void> {
-    return assertShowsBiosecurity(this.keycloakService, user);
-  }
-
-  /** Staff with the flag see the full record. Everyone else sees the customer view, or nothing. */
-  private async presentBiosecurity(job: Job, user: User): Promise<Job> {
-    if (!(await this.callerShowsBiosecurity(user))) return redactJobBiosecurity(job, 'hidden');
-    if (hasPermission(user, Permission.JobsViewAll)) return job;
-    return redactJobBiosecurity(job, 'customer');
+  /** `jobs:view-all` sees the full record. Everyone else sees no screening field at all. */
+  private presentBiosecurity(job: Job, user: User): Job {
+    return hasPermission(user, Permission.JobsViewAll) ? job : redactJobBiosecurity(job, 'hidden');
   }
 
   @Mutation(() => Job, {
@@ -914,9 +894,7 @@ export class JobResolver {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
       email: user.email,
-      claims: user.realm_access?.roles ?? [],
-      // Only ACCEPT is gated by screening, so only ACCEPT pays for the Keycloak read.
-      showsBiosecurity: input.decision === JobReviewDecision.ACCEPT ? await this.callerShowsBiosecurity(user) : undefined
+      claims: user.realm_access?.roles ?? []
     });
     const title = JobResolver.REVIEW_NOTIFICATION_TITLES[input.decision] ?? 'Your job was reviewed';
     // Keyed on the review's own operation id, so a retried review makes one
