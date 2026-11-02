@@ -13,6 +13,8 @@ export interface FlaggedAnswer {
   nodeId: string;
   paramId: string;
   values: unknown[];
+  /** A Table's screening columns: they decide which of the file's columns a screen sends. */
+  screeningFields?: string[];
 }
 
 const trimmed = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
@@ -41,10 +43,23 @@ export function flaggedAnswerValue(paramType: string, value: unknown): unknown[]
   return [];
 }
 
+/** Trimmed, de-duplicated and sorted, so reordering the same columns is not a change. */
+export function normalizeScreeningFields(fields: unknown): string[] {
+  if (!Array.isArray(fields)) return [];
+  return [
+    ...new Set(
+      fields
+        .filter((f): f is string => typeof f === 'string')
+        .map((f) => f.trim())
+        .filter((f) => f !== '')
+    )
+  ].sort();
+}
+
 export function computeScreeningFingerprint(answers: FlaggedAnswer[], customer: ScreeningCustomerDetails): string {
   const sorted = [...answers].sort((a, b) => (a.nodeId < b.nodeId ? -1 : a.nodeId > b.nodeId ? 1 : a.paramId < b.paramId ? -1 : a.paramId > b.paramId ? 1 : 0));
   const canonical = JSON.stringify({
-    answers: sorted.map(({ nodeId, paramId, values }) => ({ nodeId, paramId, values })),
+    answers: sorted.map(({ nodeId, paramId, values, screeningFields }) => ({ nodeId, paramId, values, screeningFields: normalizeScreeningFields(screeningFields) })),
     customer: { name: customer.name, company: customer.company, email: customer.email }
   });
   return createHash('sha256').update(canonical).digest('hex');

@@ -231,15 +231,18 @@ export class JobService {
    * A write carrying a screen id owns the whole subdocument: it is a new screen,
    * and the verification that belonged to the old one is legitimately orphaned.
    *
-   * A write without one — an Aclid error, or a run with nothing eligible to
-   * screen — is merged instead, keeping the screen id and the KYC fields the
-   * customer earned. Staff "Run screening" is a normal rail action, and a
+   * A write without one — an Aclid error, or a non-rerun run with nothing eligible to screen — is merged
+   * instead, keeping the screen id and the KYC fields the customer earned. The exception is a
+   * staff rerun (`options.rerun`) with nothing to screen: it leaves no screen, and the record
+   * is replaced. Staff "Run screening" is a normal rail action, and a
    * transient Aclid failure during it must not unlearn a completed
    * verification: the screen still exists, and without its id the customer
    * cannot reach it again.
    */
-  async setAclidScreening(jobId: string, aclidScreening: AclidScreening): Promise<Job | null> {
-    const next = aclidScreening.screenId ? aclidScreening : await this.mergeAclidScreening(jobId, aclidScreening);
+  async setAclidScreening(jobId: string, aclidScreening: AclidScreening, options: { rerun?: boolean } = {}): Promise<Job | null> {
+    // A staff rerun that produced no screen replaces the record outright: the job must not keep
+    // pointing at an older screen the newest run knows nothing about.
+    const next = aclidScreening.screenId || options.rerun ? aclidScreening : await this.mergeAclidScreening(jobId, aclidScreening);
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { aclidScreening: next } }, { new: true }).exec();
   }
 

@@ -22,6 +22,13 @@ describe('screening fingerprint', () => {
       expect(computeScreeningFingerprint([insert], { ...customer, ...change })).not.toBe(base);
     }
   });
+  it('covers the Table screening columns: order and blanks do not matter, membership does', () => {
+    const table: FlaggedAnswer = { nodeId: 'n3', paramId: 'plate', values: [{ key: 'k', filename: 'f.csv' }], screeningFields: ['insert', 'vector'] };
+    const base = computeScreeningFingerprint([table], customer);
+    expect(computeScreeningFingerprint([{ ...table, screeningFields: ['vector', ' insert ', 'insert', ''] }], customer)).toBe(base);
+    expect(computeScreeningFingerprint([{ ...table, screeningFields: ['insert'] }], customer)).not.toBe(base);
+    expect(computeScreeningFingerprint([{ ...table, screeningFields: ['insert', 'vector', 'primer'] }], customer)).not.toBe(base);
+  });
   it('flaggedAnswerValue: Text is the trimmed strings; blank is no value', () => {
     expect(flaggedAnswerValue('string', '  ATGC ')).toEqual(['ATGC']);
     expect(flaggedAnswerValue('string', ['A', ' ', 'B'])).toEqual(['A', 'B']);

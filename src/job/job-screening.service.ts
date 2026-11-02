@@ -19,7 +19,7 @@ import { ACCEPTANCE_MESSAGES, decideAcceptanceScreening, isAcceptanceGatedState 
 import { headerIndexesFor, readTableRecords, TABLE_FILE_MAX_BYTES, TableRecords } from '../workflow/utils/table-file';
 import { TABLE_UPLOAD_KEY_PREFIX } from '../workflow/utils/table-answers';
 import { fileRecord, flattenValues, hasParentSegment, isTableType, sampleSheetKeyOf } from '../workflow/utils/sample-sheet.util';
-import { computeScreeningFingerprint, FlaggedAnswer, flaggedAnswerValue, screeningCustomerDetails } from './screening-fingerprint.util';
+import { computeScreeningFingerprint, FlaggedAnswer, flaggedAnswerValue, normalizeScreeningFields, screeningCustomerDetails } from './screening-fingerprint.util';
 import {
   FlaggedParam,
   isScreenedParameter,
@@ -55,7 +55,7 @@ export interface ScreenJobOptions {
  * Aclid that produced no verdict; `both` runs them independently and rolls the
  * two verdicts into one Homology row; `securedna` keeps the Homology row
  * SecureDNA's alone but still creates an Aclid screen when Aclid is keyed,
- * because KYC needs one.
+ * because the customer leg and the customer's verification both hang off a screen.
  *
  * While AUTO_SCREENING_ENABLED is off, staff's rerun starts screening. Screening is never
  * awaited by a customer-facing caller — a slow or unreachable provider must not be able to
@@ -159,14 +159,15 @@ export class JobScreeningService {
 
   /**
    * A fingerprint of what a screen would cover: every flagged answer that has a value, and the
-   * customer details sent to Aclid. A table is fingerprinted by file key and name, never read.
+   * customer details sent to Aclid. A table is fingerprinted by file key and name, never read,
+   * plus its screening columns: adding one changes what a screen sends.
    * A thrown read propagates; callers decide.
    */
   async screeningFingerprint(job: Job): Promise<string> {
     const answers: FlaggedAnswer[] = [];
     for await (const { nodeId, param, value } of this.flaggedParameters(job)) {
       const values = flaggedAnswerValue(param.type, value);
-      if (values.length > 0) answers.push({ nodeId, paramId: param.id, values });
+      if (values.length > 0) answers.push({ nodeId, paramId: param.id, values, screeningFields: isTableType(param.type) ? normalizeScreeningFields(param.screeningFields) : [] });
     }
     return computeScreeningFingerprint(answers, screeningCustomerDetails(job));
   }
@@ -278,14 +279,18 @@ export class JobScreeningService {
     if (targets.length === 0) {
       let aclidRun: ScreeningRunAclidLeg | null = null;
       if (this.aclidService.isConfigured()) {
-        await this.recordAclid(jobId, {
-          screenId: null,
-          homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
-          sequenceCount: 0,
-          startedAt: new Date(),
-          completedAt: new Date(),
-          detail: 'No screenable sequences'
-        });
+        await this.recordAclid(
+          jobId,
+          {
+            screenId: null,
+            homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+            sequenceCount: 0,
+            startedAt: new Date(),
+            completedAt: new Date(),
+            detail: 'No screenable sequences'
+          },
+          { rerun: options.trigger === ScreeningRunTrigger.RERUN }
+        );
         aclidRun = { screenId: null, homologyStatus: HomologyScreeningStatus.UNAVAILABLE, detail: 'No screenable sequences' };
       }
       const recorded = await this.record(jobId, {
@@ -328,7 +333,8 @@ export class JobScreeningService {
       ? await this.runAclid(
           jobId,
           targets.filter((t) => isAclidLengthEligible(t.seq)),
-          startedAt
+          startedAt,
+          options.trigger === ScreeningRunTrigger.RERUN
         )
       : null;
 
@@ -379,17 +385,21 @@ export class JobScreeningService {
    * row needs from this leg. Only `outcome: 'verdict'` means Aclid answered; the
    * other outcomes are never Passed or Failed.
    */
-  private async runAclid(jobId: string, aclidTargets: ScreeningTarget[], startedAt: Date): Promise<AclidLeg> {
+  private async runAclid(jobId: string, aclidTargets: ScreeningTarget[], startedAt: Date, rerun: boolean): Promise<AclidLeg> {
     if (aclidTargets.length === 0) {
       const detail = `Sequences shorter than ${ACLID_MIN_SEQUENCE_LENGTH} bp`;
-      await this.recordAclid(jobId, {
-        screenId: null,
-        homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
-        sequenceCount: 0,
-        startedAt,
-        completedAt: new Date(),
-        detail
-      });
+      await this.recordAclid(
+        jobId,
+        {
+          screenId: null,
+          homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+          sequenceCount: 0,
+          startedAt,
+          completedAt: new Date(),
+          detail
+        },
+        { rerun }
+      );
       return {
         outcome: 'no-eligible-sequences',
         homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
@@ -721,12 +731,17 @@ export class JobScreeningService {
   }
 
   /** `customerStatus` is stored, not resolved, so the UI reads one field. */
-  private async recordAclid(jobId: string, screening: Omit<AclidScreening, 'customerStatus'>): Promise<void> {
-    await this.jobService.setAclidScreening(jobId, {
-      ...screening,
-      // Until the customer leg writes it (a staff rerun only).
-      customerStatus: HomologyScreeningStatus.UNAVAILABLE
-    });
+  private async recordAclid(jobId: string, screening: Omit<AclidScreening, 'customerStatus'>, options: { rerun?: boolean } = {}): Promise<void> {
+    await this.jobService.setAclidScreening(
+      jobId,
+      {
+        ...screening,
+        // Until the customer leg writes it (a staff rerun only).
+        customerStatus: HomologyScreeningStatus.UNAVAILABLE
+      },
+      // Only a staff rerun says so: it left no screen, so the job must not keep pointing at the old one.
+      options.rerun ? { rerun: true } : undefined
+    );
   }
 }
 

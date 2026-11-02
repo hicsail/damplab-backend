@@ -440,6 +440,16 @@ describe('JobResolver.startJobCustomerVerification', () => {
     expect(createVerificationUrl).not.toHaveBeenCalled();
   });
 
+  it('does not open a screen from the server while automatic screening is off (M3)', async () => {
+    const unscreened = screenedJob();
+    delete unscreened.aclidScreening;
+    const { resolver, screenJob, createVerificationUrl } = kycHarness(unscreened);
+
+    await expect(resolver.startJobCustomerVerification('job-1', owner)).rejects.toThrow(new BadRequestException('No Aclid screen on this job'));
+    expect(screenJob).not.toHaveBeenCalled();
+    expect(createVerificationUrl).not.toHaveBeenCalled();
+  });
+
   it('refuses a job that was never screened by Aclid', async () => {
     const unscreened = screenedJob();
     delete unscreened.aclidScreening;
@@ -519,19 +529,6 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     await harness.resolver.refreshJobAclidScreening('job-1', owner);
     expect(order).toEqual(['leg', 'row', 'run']);
     expect(harness.setAclidScreening).toHaveBeenCalledWith('job-1', expect.objectContaining({ customerStatus: HomologyScreeningStatus.FAILED }));
-  });
-
-  it('startJobCustomerVerification still screens when there is no screen', async () => {
-    const job = screenedJob();
-    job.aclidScreening.screenId = null;
-    const harness = kycHarness(job);
-    harness.isConfigured.mockReturnValue(true);
-    const screened = screenedJob();
-    screened.aclidScreening.screenId = 'scr_9';
-    (harness.resolver as any).jobService.findById.mockResolvedValueOnce(job).mockResolvedValueOnce(screened);
-    await harness.resolver.startJobCustomerVerification('job-1', owner);
-    expect(harness.screenJob).toHaveBeenCalledTimes(1);
-    expect((harness.screenJob.mock.calls[0] as any[])[2]?.trigger).toBeUndefined();
   });
 
   it('re-reads the screen and rewrites the KYC fields, homology and customer status', async () => {

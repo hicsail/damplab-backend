@@ -31,7 +31,7 @@ import { WorkflowNodeService } from '../workflow/services/node.service';
 import { JobFeedStatus } from './job-feed-status.model';
 import { ActivityService } from '../activity/activity.service';
 import { ActivityEventType } from '../activity/activity-event.model';
-import { JobScreeningService } from './job-screening.service';
+import { AUTO_SCREENING_ENABLED, JobScreeningService } from './job-screening.service';
 import { AddWorkflowInput, AddWorkflowInputFull, AddWorkflowInputPipe } from '../workflow/dtos/add-workflow.input';
 import { JobVersion, JobVersionAuthorRole } from '../job-version/job-version.model';
 import { jobVersionAuthorOrg } from '../job-version/author-org';
@@ -426,16 +426,17 @@ export class JobResolver {
   }
 
   /**
-   * A verification URL needs an Aclid screen. Submission creates one in the
-   * background; a job opened before that finishes, or one whose DNA lives on
-   * a step we only just started reading, still has none. Screen once, now,
-   * and use the id if Aclid stored one.
+   * A verification URL needs the job's Aclid screen. While AUTO_SCREENING_ENABLED is off, staff's
+   * "Run screening" is what creates one, so a job without a screen is refused here: the
+   * customer's call must not spend Aclid calls or write a screening run. Once automatic
+   * screening is on, a job that still has no screen is screened once, now, and the id used if
+   * Aclid stored one.
    */
   private async ensureAclidScreen(job: Job, user: User): Promise<{ job: Job; screening: AclidScreening; screenId: string }> {
     if (job.aclidScreening?.screenId) {
       return { job, screening: job.aclidScreening, screenId: job.aclidScreening.screenId };
     }
-    if (!this.aclidService.isConfigured?.()) {
+    if (!AUTO_SCREENING_ENABLED || !this.aclidService.isConfigured?.()) {
       throw new BadRequestException('No Aclid screen on this job');
     }
     await this.jobScreeningService.screenJob(String((job as { _id?: unknown })._id), user.sub ?? '');
@@ -448,9 +449,10 @@ export class JobResolver {
   }
 
   /**
-   * Mint Aclid's hosted verification page for this job's screen. KYC is Aclid's
-   * flow end to end — we never create Aclid customers ourselves — so all that
-   * is ours is the screen id and where to send the customer afterwards.
+   * Mint Aclid's hosted verification page for this job's screen. The verification itself is
+   * Aclid's flow; what is ours is the screen id and where to send the customer afterwards.
+   * Staff's rerun is what creates Aclid customer records, for the customer leg of a screening
+   * run, and never from here.
    */
   @Mutation(() => CustomerVerificationSession, {
     description: "Mint an Aclid hosted-KYC session for this job's screen. Requires being on the job (owner, named client, or jobs:view-all)."

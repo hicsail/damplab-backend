@@ -730,6 +730,18 @@ describe('screening runs (biosecurity-update behaviour 6)', () => {
     expect(closing(screeningRuns)).toMatchObject({ status: 'UNAVAILABLE', detail: 'No screenable DNA sequences on this job; 1 value skipped: not DNA' });
   });
 
+  it('tells the job a staff rerun with nothing to screen produced no screen (M9)', async () => {
+    const nothing = [{ id: 'n1', serviceName: GIBSON_ASSEMBLY_SERVICE_NAME, formData: [{ id: 'insert', value: 'TBD later' }] }];
+    const rerun = harness(nothing, { aclidConfigured: true });
+    await rerun.service.screenJob('job-1', 'user-1', { trigger: ScreeningRunTrigger.RERUN, triggeredBy: 'Staff' });
+    expect(rerun.setAclidScreening.mock.calls.at(-1)?.[2]).toEqual({ rerun: true });
+
+    // Any other path leaves the merge to keep the old screen id.
+    const other = harness(nothing, { aclidConfigured: true });
+    await other.service.screenJob('job-1', 'user-1');
+    expect(other.setAclidScreening.mock.calls.at(-1)?.[2]).toBeUndefined();
+  });
+
   it('closes the run when collection itself fails', async () => {
     const { service, screeningRuns } = harness(gibson);
     jest.spyOn(service, 'collectScreeningTargets').mockRejectedValueOnce(new Error('mongo down'));
@@ -1046,6 +1058,27 @@ describe('screeningFingerprint', () => {
       ])
     );
     expect(await before.service.screeningFingerprint(before.job!)).not.toBe(await flagged.service.screeningFingerprint(flagged.job!));
+  });
+
+  describe('screening columns of a flagged Table (I1)', () => {
+    const value = JSON.stringify({ filename: 'plate.csv', key: 'workflow-parameters/user-1/abc-plate.csv' });
+    const withFields = (screeningFields: string[]): ReturnType<typeof harness> =>
+      harness([{ id: 'n1', serviceName: 'Plates', parameters: [{ id: 'plate', name: 'Plate map', type: 'table', screening: true, screeningFields }], formData: [{ id: 'plate', value }] }]);
+
+    it('changes when a screening column is added or removed', async () => {
+      const one = withFields(['insert']);
+      const two = withFields(['insert', 'vector']);
+      const none = withFields([]);
+      const base = await one.service.screeningFingerprint(one.job!);
+      expect(await two.service.screeningFingerprint(two.job!)).not.toBe(base);
+      expect(await none.service.screeningFingerprint(none.job!)).not.toBe(base);
+    });
+
+    it('does not change when the same columns are reordered', async () => {
+      const a = withFields(['insert', 'vector']);
+      const b = withFields(['vector', 'insert']);
+      expect(await a.service.screeningFingerprint(a.job!)).toBe(await b.service.screeningFingerprint(b.job!));
+    });
   });
 
   it('does not change when a flagged parameter has no value', async () => {
