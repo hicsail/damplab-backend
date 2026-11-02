@@ -210,6 +210,10 @@ export class InventoryItem {
   @Prop({ required: false })
   @Field({ nullable: true, description: 'Username or sub of whoever last created or modified this item.' })
   lastModifiedBy?: string;
+
+  @Prop({ required: false })
+  @Field({ nullable: true, description: 'S3 object key for the equipment image. Use the imageUrl resolver field to get a temporary download URL.' })
+  imageKey?: string;
 }
 
 export type InventoryItemDocument = InventoryItem & mongoose.Document;
