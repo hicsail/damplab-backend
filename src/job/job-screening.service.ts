@@ -9,7 +9,16 @@ import { SecureDnaService } from '../securedna/securedna.service';
 import { Region } from '../securedna/region';
 import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
 import { ACLID_TERMINAL_STATUSES, AclidCustomerPendingError, AclidCustomerRecord, AclidFeatureNotEnabledError, AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
-import { ACLID_MIN_SEQUENCE_LENGTH, homologyStatusFromAclidScreen, isAclidLengthEligible, jobCustomerStatusFromLeg, parseHomologyMode, rollupHomologyStatuses } from '../aclid/aclid-status.util';
+import {
+  ACLID_MIN_SEQUENCE_LENGTH,
+  aclidResultsUnread,
+  effectiveAclidRegulatoryStatus,
+  homologyStatusFromAclidScreen,
+  isAclidLengthEligible,
+  jobCustomerStatusFromLeg,
+  parseHomologyMode,
+  rollupHomologyStatuses
+} from '../aclid/aclid-status.util';
 import { getMultiValueParamIds } from '../workflow/utils/form-data.util';
 import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
 import { ScreeningRunPatch, ScreeningRunService } from './screening-run.service';
@@ -459,19 +468,55 @@ export class JobScreeningService {
       };
     }
 
-    const homologyStatus = homologyStatusFromAclidScreen(screen);
+    // The verdict is taken with the screen's per-sequence details in hand: Aclid leaves the
+    // top-level regulatory status empty on a screen full of controlled sequences.
+    const { details, error: detailsError } = await this.aclidDetails(screen);
+    const homologyStatus = homologyStatusFromAclidScreen(screen, details);
+    const regulatoryStatus = effectiveAclidRegulatoryStatus(screen, homologyStatus);
 
-    // `failed`, `deleted`, and `archived` can resolve with no regulatory
-    // status, and a status we do not recognise is not an answer either. Those
-    // still want the SecureDNA backup. A succeeded screen does not.
+    // A succeeded screen whose results could not be read has no verdict yet. It is recorded like
+    // a screen still running, so a refresh can settle it; it never reads as a pass.
+    if (aclidResultsUnread(screen, details)) {
+      const detail = unreadResultsDetail(detailsError);
+      await this.recordAclid(jobId, {
+        screenId: screen.id,
+        homologyStatus: HomologyScreeningStatus.IN_PROGRESS,
+        regulatoryStatus: screen.regulatoryStatus,
+        verificationStatus: screen.verificationStatus,
+        decisionStatus: screen.decisionStatus,
+        verificationCompletedAt: parseTimestamp(screen.verificationCompletedAt),
+        sequenceCount: aclidTargets.length,
+        startedAt,
+        completedAt: null,
+        detail
+      });
+      return {
+        outcome: 'error',
+        homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+        detail,
+        error: detail,
+        sequenceCount: aclidTargets.length,
+        run: { ...aclidLegFields(screen, HomologyScreeningStatus.IN_PROGRESS), details: null, detail }
+      };
+    }
+
+    // `failed`, `deleted`, and `archived` can resolve with no regulatory status, and a status we
+    // do not recognise is not an answer either. Those still want the SecureDNA backup. A
+    // succeeded screen whose details were read does not.
     const answered = homologyStatus !== HomologyScreeningStatus.UNAVAILABLE;
     const reason = screen.regulatoryStatus ? `screen ${screen.status} reported ${screen.regulatoryStatus}` : `screen ${screen.status} without a regulatory status`;
-    const verdictLine = answered ? (screen.regulatoryStatus ? `Aclid ${screen.regulatoryStatus}` : 'Aclid passed') : `Aclid ${reason}`;
+    const verdictLine = answered
+      ? homologyStatus === HomologyScreeningStatus.FAILED
+        ? 'Aclid controlled'
+        : screen.regulatoryStatus
+        ? `Aclid ${screen.regulatoryStatus}`
+        : 'Aclid passed'
+      : `Aclid ${reason}`;
 
     await this.recordAclid(jobId, {
       screenId: screen.id,
       homologyStatus,
-      regulatoryStatus: screen.regulatoryStatus,
+      regulatoryStatus,
       verificationStatus: screen.verificationStatus,
       decisionStatus: screen.decisionStatus,
       verificationCompletedAt: parseTimestamp(screen.verificationCompletedAt),
@@ -481,8 +526,6 @@ export class JobScreeningService {
       detail: answered ? null : verdictLine
     });
 
-    const { details, error: detailsError } = await this.aclidDetails(screen);
-
     return {
       outcome: answered ? 'verdict' : 'error',
       homologyStatus,
@@ -491,6 +534,7 @@ export class JobScreeningService {
       sequenceCount: aclidTargets.length,
       run: {
         ...aclidLegFields(screen, homologyStatus),
+        regulatoryStatus,
         details,
         detail: [answered ? null : verdictLine, detailsError].filter((part): part is string => !!part).join('; ') || null
       }
@@ -566,24 +610,58 @@ export class JobScreeningService {
   }
 
   /**
+   * The verdict for a screen Aclid has just reported, taken with its details in hand. Fetches
+   * the details unless the caller has them or the top level already says `controlled`, which
+   * fails without them. `unread` is a succeeded screen whose results could not be read: no
+   * verdict yet, never a pass.
+   */
+  async readAclidVerdict(
+    screen: AclidScreenRecord,
+    known?: Record<string, unknown> | null
+  ): Promise<{
+    homologyStatus: HomologyScreeningStatus;
+    regulatoryStatus: string | null;
+    details: Record<string, unknown> | null;
+    detailsError: string | null;
+    unread: boolean;
+    detail: string | null;
+  }> {
+    const fetch = !known && screen.regulatoryStatus !== 'controlled';
+    const { details, error } = fetch ? await this.aclidDetails(screen) : { details: known ?? null, error: null };
+    const homologyStatus = homologyStatusFromAclidScreen(screen, details);
+    const unread = aclidResultsUnread(screen, details);
+    return { homologyStatus, regulatoryStatus: effectiveAclidRegulatoryStatus(screen, homologyStatus), details, detailsError: error, unread, detail: unread ? unreadResultsDetail(error) : null };
+  }
+
+  /**
    * `refreshJobAclidScreening` read the job's screen again: bring the run that sent it up to
    * date — the verdict fields, the raw report, and the details once the screen has succeeded
    * and the run has none yet. Updates that run, never a new one; a screen no run carries (a
    * job screened before runs existed) is left alone. Best-effort, like every run write.
    */
-  async recordAclidRefresh(screen: AclidScreenRecord): Promise<void> {
+  async recordAclidRefresh(screen: AclidScreenRecord, verdict?: Awaited<ReturnType<JobScreeningService['readAclidVerdict']>>): Promise<void> {
     try {
       const run = await this.screeningRuns.findByAclidScreenId(screen.id);
       if (!run) return;
-      const homologyStatus = homologyStatusFromAclidScreen(screen);
-      // A screen that has not finished is still running, not "without a regulatory status".
-      const running = homologyStatus === HomologyScreeningStatus.UNAVAILABLE && !ACLID_TERMINAL_STATUSES.has(String(screen.status));
+      const read = verdict ?? (await this.readAclidVerdict(screen, run.aclid?.details ?? null));
+      const homologyStatus = read.homologyStatus;
+      // A screen that has not finished is still running, not "without a regulatory status". A
+      // succeeded one whose results could not be read waits the same way.
+      const running = read.unread || (homologyStatus === HomologyScreeningStatus.UNAVAILABLE && !ACLID_TERMINAL_STATUSES.has(String(screen.status)));
       const leg: Partial<ScreeningRunAclidLeg> = {
         ...aclidLegFields(screen, running ? HomologyScreeningStatus.IN_PROGRESS : homologyStatus),
-        detail: running ? 'Aclid screen still running' : homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null
+        regulatoryStatus: read.regulatoryStatus,
+        detail: read.unread
+          ? read.detail
+          : running
+          ? 'Aclid screen still running'
+          : homologyStatus === HomologyScreeningStatus.UNAVAILABLE
+          ? `Aclid screen ${screen.status} without a regulatory status`
+          : null
       };
-      const fitted = fitAclidLeg({ ...(run.aclid ?? {}), ...leg } as ScreeningRunAclidLeg);
-      const write: Partial<ScreeningRunAclidLeg> = { ...leg, raw: fitted.raw, detail: fitted.detail };
+      const newDetails = !run.aclid?.details && read.details ? read.details : null;
+      const fitted = fitAclidLeg({ ...(run.aclid ?? {}), ...leg, ...(newDetails ? { details: newDetails } : {}) } as ScreeningRunAclidLeg);
+      const write: Partial<ScreeningRunAclidLeg> = { ...leg, raw: fitted.raw, detail: fitted.detail, ...(newDetails ? { details: fitted.details } : {}) };
       // Only a new FAILED lowers the run. A slow screen that now passes lifts a run that was only
       // waiting on it, and never one SecureDNA failed or one SecureDNA alone decides.
       const lift =
@@ -595,8 +673,9 @@ export class JobScreeningService {
       const patch: ScreeningRunPatch = homologyStatus === HomologyScreeningStatus.FAILED ? { status: HomologyScreeningStatus.FAILED } : lift ? { status: HomologyScreeningStatus.PASSED } : {};
       const runId = String((run as { _id?: unknown })._id);
       await this.screeningRuns.updateAclidLeg(runId, write, patch);
-      // The details call can take 30 s; the verdict is already written, so it runs behind the caller.
-      if (screen.status === 'succeeded' && !run.aclid?.details) void this.backfillAclidDetails(runId, screen, { ...(run.aclid ?? {}), ...write } as ScreeningRunAclidLeg);
+      // Only a controlled top level skips the details read above. The call can take 30 s and the
+      // verdict is already written, so that one runs behind the caller.
+      if (screen.status === 'succeeded' && !run.aclid?.details && !read.details) void this.backfillAclidDetails(runId, screen, { ...(run.aclid ?? {}), ...write } as ScreeningRunAclidLeg);
     } catch (error) {
       this.logger.error(`Could not update the screening run for Aclid screen ${screen.id}: ${messageOf(error)}`);
     }
@@ -781,6 +860,11 @@ function backupLine(aclid: AclidLeg): string {
 }
 
 /** The verdict fields of an Aclid leg, from a screen record. */
+/** The run and card line for a succeeded screen whose per-sequence results could not be read. */
+function unreadResultsDetail(error: string | null): string {
+  return `Aclid results could not be read yet; refresh results to retry${error ? ` (${error})` : ''}`;
+}
+
 function aclidLegFields(screen: AclidScreenRecord, homologyStatus: HomologyScreeningStatus): ScreeningRunAclidLeg {
   return {
     screenId: screen.id,

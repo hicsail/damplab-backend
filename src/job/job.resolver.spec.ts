@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, NotFoundException } from '@nes
 import { JobResolver } from './job.resolver';
 import { CustomerCategory, HomologyScreeningStatus, JobState } from './job.model';
 import { Role } from '../auth/roles/roles.enum';
+import { aclidResultsUnread, effectiveAclidRegulatoryStatus, homologyStatusFromAclidScreen } from '../aclid/aclid-status.util';
 
 describe('JobResolver.saveJobWorkflows customer edit gate', () => {
   const user: any = {
@@ -320,6 +321,8 @@ function kycHarness(job: any): {
   screenJob: jest.Mock;
   screenJobInBackground: jest.Mock;
   recordAclidRefresh: jest.Mock;
+  readAclidVerdict: jest.Mock;
+  getScreenDetails: jest.Mock;
   refreshCustomerLeg: jest.Mock;
   isConfigured: jest.Mock;
 } {
@@ -335,10 +338,39 @@ function kycHarness(job: any): {
   const screenJobInBackground = jest.fn();
   const recordAclidRefresh = jest.fn(async () => undefined);
   const refreshCustomerLeg = jest.fn(async () => HomologyScreeningStatus.UNAVAILABLE);
-  const jobScreeningService: any = { screenJob, screenJobInBackground, recordAclidRefresh, refreshCustomerLeg };
+  // Stands in for JobScreeningService.readAclidVerdict (pinned in its own spec): same util, details
+  // from `getScreenDetails`, which a test sets. Unset, the details are an empty, readable object.
+  const getScreenDetails = jest.fn(async (): Promise<Record<string, unknown> | null> => ({}));
+  const readAclidVerdict = jest.fn(async (screen: any) => {
+    const details = screen.regulatoryStatus === 'controlled' ? null : await getScreenDetails();
+    const homologyStatus = homologyStatusFromAclidScreen(screen, details);
+    const unread = aclidResultsUnread(screen, details);
+    return {
+      homologyStatus,
+      regulatoryStatus: effectiveAclidRegulatoryStatus(screen, homologyStatus),
+      details,
+      detailsError: null,
+      unread,
+      detail: unread ? 'Aclid results could not be read yet; refresh results to retry' : null
+    };
+  });
+  const jobScreeningService: any = { screenJob, screenJobInBackground, recordAclidRefresh, readAclidVerdict, refreshCustomerLeg };
   const keycloakService: any = { userShowsBiosecurity: jest.fn(async () => true) };
   const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, keycloakService, {} as any, jobScreeningService, aclidService);
-  return { resolver, createVerificationUrl, getScreen, setAclidScreening, setHomologyScreening, screenJob, screenJobInBackground, recordAclidRefresh, refreshCustomerLeg, isConfigured };
+  return {
+    resolver,
+    createVerificationUrl,
+    getScreen,
+    setAclidScreening,
+    setHomologyScreening,
+    screenJob,
+    screenJobInBackground,
+    recordAclidRefresh,
+    readAclidVerdict,
+    getScreenDetails,
+    refreshCustomerLeg,
+    isConfigured
+  };
 }
 
 const screenedJob = (): any => ({
@@ -470,12 +502,49 @@ describe('JobResolver.refreshJobAclidScreening', () => {
     findings: null
   };
 
+  describe('controlled sequences (aclid-customer-screening wave 3)', () => {
+    const emptyTopLevel = { ...approvedScreen, regulatoryStatus: null };
+    const controlledGroup = {
+      seq_a: { matches: [{ regulatory_status: 'controlled', findings: { us_select_agent: { reason_code: 'virus', regulatory_status: 'controlled' } } }], regulatory_status: 'controlled' }
+    };
+
+    it('fails the Homology row when a sequence in the details is controlled, though the top level is empty', async () => {
+      const harness = kycHarness(screenedJob());
+      harness.getScreen.mockResolvedValue(emptyTopLevel);
+      harness.getScreenDetails.mockResolvedValue(controlledGroup);
+      await harness.resolver.refreshJobAclidScreening('job-1', owner);
+      expect(harness.setAclidScreening).toHaveBeenCalledWith('job-1', expect.objectContaining({ homologyStatus: HomologyScreeningStatus.FAILED, regulatoryStatus: 'controlled' }));
+      expect(harness.setHomologyScreening).toHaveBeenCalledWith('job-1', expect.objectContaining({ status: HomologyScreeningStatus.FAILED }));
+    });
+
+    it('passes when every sequence is not_controlled', async () => {
+      const harness = kycHarness(screenedJob());
+      harness.getScreen.mockResolvedValue(emptyTopLevel);
+      harness.getScreenDetails.mockResolvedValue({ seq_a: { matches: [], regulatory_status: 'not_controlled' } });
+      await harness.resolver.refreshJobAclidScreening('job-1', owner);
+      expect(harness.setAclidScreening).toHaveBeenCalledWith('job-1', expect.objectContaining({ homologyStatus: HomologyScreeningStatus.PASSED, detail: null }));
+      expect(harness.setHomologyScreening).not.toHaveBeenCalled();
+    });
+
+    it('does not pass a succeeded screen whose details could not be read', async () => {
+      const harness = kycHarness(screenedJob());
+      harness.getScreen.mockResolvedValue(emptyTopLevel);
+      harness.getScreenDetails.mockResolvedValue(null);
+      await harness.resolver.refreshJobAclidScreening('job-1', owner);
+      expect(harness.setAclidScreening).toHaveBeenCalledWith(
+        'job-1',
+        expect.objectContaining({ homologyStatus: HomologyScreeningStatus.IN_PROGRESS, detail: expect.stringContaining('could not be read') })
+      );
+      expect(harness.setHomologyScreening).not.toHaveBeenCalled();
+    });
+  });
+
   it('hands the screen it read to the screening-run history (biosecurity-update behaviour 6)', async () => {
     const harness = kycHarness(screenedJob());
     const screen = { id: 'scr_123', status: 'succeeded', regulatoryStatus: 'not_controlled', verificationStatus: 'verified', decisionStatus: null, verificationCompletedAt: null, findings: null };
     harness.getScreen.mockResolvedValueOnce(screen);
     await harness.resolver.refreshJobAclidScreening('job-1', owner);
-    expect(harness.recordAclidRefresh).toHaveBeenCalledWith(screen);
+    expect(harness.recordAclidRefresh).toHaveBeenCalledWith(screen, expect.objectContaining({ homologyStatus: HomologyScreeningStatus.PASSED }));
   });
 
   it("writes the job row before the run (the run write never rejects, but must not delay the customer's row)", async () => {

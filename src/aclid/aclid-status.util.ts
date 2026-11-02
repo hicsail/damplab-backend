@@ -31,19 +31,50 @@ export function homologyStatusFromAclidRegulatory(regulatoryStatus: string | nul
 }
 
 /**
- * A finished Aclid screen is a verdict.
+ * True when any sequence's verdict in a screen's `details` is `controlled`.
  *
- * `controlled` fails. `not_controlled` passes. A screen whose status is
- * `succeeded` and whose `regulatory_status` is empty also passes: that is how
- * Aclid reports a clear screen, and it is not a reason to ask SecureDNA.
- * `failed`, `deleted`, and `archived` with no regulatory status are still no
- * verdict.
+ * Aclid puts the verdict on each sequence (`MatchGroup.regulatory_status`, keyed by the name the
+ * sequence was sent under), and on every `Match` and `Finding` inside it; the screen's own
+ * top-level `regulatory_status` can stay empty while all of those say `controlled`. So this walks
+ * the whole object rather than trusting one level of the shape.
  */
-export function homologyStatusFromAclidScreen(screen: { status?: string | null; regulatoryStatus?: string | null }): HomologyScreeningStatus {
-  const regulatory = homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
-  if (regulatory !== HomologyScreeningStatus.UNAVAILABLE) return regulatory;
-  if (!screen.regulatoryStatus && screen.status === 'succeeded') return HomologyScreeningStatus.PASSED;
-  return HomologyScreeningStatus.UNAVAILABLE;
+export function aclidDetailsControlled(details: unknown): boolean {
+  if (Array.isArray(details)) return details.some(aclidDetailsControlled);
+  if (details === null || typeof details !== 'object') return false;
+  return Object.entries(details as Record<string, unknown>).some(([key, value]) => (key === 'regulatory_status' && value === 'controlled') || aclidDetailsControlled(value));
+}
+
+/**
+ * A succeeded screen whose per-sequence results have not been read has no verdict yet: the top
+ * level cannot clear it, because Aclid leaves it empty on a screen full of controlled sequences.
+ * A controlled or unrecognised top level is decided without them.
+ */
+export function aclidResultsUnread(screen: { status?: string | null; regulatoryStatus?: string | null }, details: Record<string, unknown> | null | undefined): boolean {
+  return screen.status === 'succeeded' && (!screen.regulatoryStatus || screen.regulatoryStatus === 'not_controlled') && !details;
+}
+
+/**
+ * A finished Aclid screen is a verdict, taken with its `details` in hand.
+ *
+ * `controlled` fails: on the screen, or on any sequence, match or finding in `details`. A
+ * `succeeded` screen passes only when its details were read and nothing in them is controlled.
+ * Without them it has no verdict yet (UNAVAILABLE), whatever the top level says. `failed`,
+ * `deleted`, and `archived` with no regulatory status are no verdict either.
+ */
+export function homologyStatusFromAclidScreen(screen: { status?: string | null; regulatoryStatus?: string | null }, details?: Record<string, unknown> | null): HomologyScreeningStatus {
+  if (screen.regulatoryStatus === 'controlled' || aclidDetailsControlled(details)) return HomologyScreeningStatus.FAILED;
+  if (screen.status === 'succeeded') {
+    // A status we do not recognise is not an answer, whatever the details say.
+    if (screen.regulatoryStatus && screen.regulatoryStatus !== 'not_controlled') return HomologyScreeningStatus.UNAVAILABLE;
+    return details ? HomologyScreeningStatus.PASSED : HomologyScreeningStatus.UNAVAILABLE;
+  }
+  return homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
+}
+
+/** The regulatory status to store: `controlled` when the verdict came from the details. */
+export function effectiveAclidRegulatoryStatus(screen: { regulatoryStatus?: string | null }, homologyStatus: HomologyScreeningStatus): string | null {
+  if (homologyStatus === HomologyScreeningStatus.FAILED) return 'controlled';
+  return screen.regulatoryStatus ?? null;
 }
 
 /**

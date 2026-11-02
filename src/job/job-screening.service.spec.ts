@@ -94,7 +94,7 @@ function harness(
     isConfigured: () => overrides.aclidConfigured ?? false,
     screenInline,
     getScreen: jest.fn(),
-    getScreenDetails: jest.fn(async () => null),
+    getScreenDetails: jest.fn(async (): Promise<Record<string, unknown> | null> => ({})),
     createCustomer,
     pollCustomer,
     getCustomer
@@ -827,15 +827,75 @@ describe('screening runs (biosecurity-update behaviour 6)', () => {
     });
   });
 
-  it('keeps the verdict and notes it when the details call fails; a 204 stores no details (behaviour 13)', async () => {
+  it('keeps a controlled verdict and notes it when the details call fails (wave 3)', async () => {
     process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
-    const { service, screeningRuns, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline: jest.fn(async () => aclidScreen()) });
+    const { service, screeningRuns, setAclidScreening } = harness(gibson, { aclidConfigured: true, screenInline: jest.fn(async () => aclidScreen({ regulatoryStatus: 'controlled' })) });
     (service as any).aclidService.getScreenDetails = jest.fn(async () => {
       throw new Error('Aclid returned 500');
     });
     await service.screenJob('job-1', 'user-1');
-    expect(closing(screeningRuns).aclid).toMatchObject({ homologyStatus: 'PASSED', details: null, detail: 'Aclid details unavailable: Aclid returned 500' });
-    expect(lastCall(setAclidScreening).homologyStatus).toBe(HomologyScreeningStatus.PASSED);
+    expect(closing(screeningRuns).aclid).toMatchObject({ homologyStatus: 'FAILED', details: null, detail: 'Aclid details unavailable: Aclid returned 500' });
+    expect(lastCall(setAclidScreening).homologyStatus).toBe(HomologyScreeningStatus.FAILED);
+  });
+
+  // The real screen from the human's test: succeeded, top-level regulatory_status null, every
+  // sequence controlled in the details. One group's shape, sequence trimmed.
+  const controlledDetails = {
+    [`${WORKFLOW_ID}_n1_insert`]: {
+      matches: [{ query: 'q', sseqid: 'AJ564621.1', regulatory_status: 'controlled', findings: { us_select_agent: { reason_code: 'virus', regulatory_status: 'controlled' } } }],
+      findings: { us_select_agent: { reason_code: 'virus', regulatory_status: 'controlled' } },
+      regulatory_status: 'controlled'
+    }
+  };
+
+  it('fails the run, the Aclid leg and the job row when a sequence is controlled but the top level is empty (wave 3)', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const screenSequences = jest.fn(async () => granted);
+    const { service, screeningRuns, setAclidScreening, setHomologyScreening } = harness(gibson, {
+      aclidConfigured: true,
+      screenInline: jest.fn(async () => aclidScreen({ regulatoryStatus: null })),
+      screenSequences
+    });
+    (service as any).aclidService.getScreenDetails = jest.fn(async () => controlledDetails);
+    await service.screenJob('job-1', 'user-1');
+    expect(closing(screeningRuns).status).toBe('FAILED');
+    expect(closing(screeningRuns).aclid).toMatchObject({ homologyStatus: 'FAILED', regulatoryStatus: 'controlled', details: controlledDetails });
+    expect(lastCall(setAclidScreening)).toMatchObject({ homologyStatus: HomologyScreeningStatus.FAILED, regulatoryStatus: 'controlled' });
+    expect(lastStatus(setHomologyScreening).status).toBe('FAILED');
+    expect(screenSequences).not.toHaveBeenCalled();
+  });
+
+  it('passes when every sequence in the details is not_controlled (wave 3)', async () => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const clear = { [`${WORKFLOW_ID}_n1_insert`]: { matches: [], findings: null, regulatory_status: 'not_controlled' } };
+    const { service, screeningRuns } = harness(gibson, { aclidConfigured: true, screenInline: jest.fn(async () => aclidScreen({ regulatoryStatus: null })) });
+    (service as any).aclidService.getScreenDetails = jest.fn(async () => clear);
+    await service.screenJob('job-1', 'user-1');
+    expect(closing(screeningRuns).status).toBe('PASSED');
+    expect(closing(screeningRuns).aclid).toMatchObject({ homologyStatus: 'PASSED', details: clear });
+  });
+
+  it.each([
+    ['a 204 (no details yet)', async (): Promise<null> => null],
+    [
+      'an error',
+      async (): Promise<never> => {
+        throw new Error('Aclid returned 500');
+      }
+    ]
+  ])('does not pass a succeeded screen with an empty top level when its details come back as %s (wave 3)', async (_label, getDetails) => {
+    process.env.BIOSECURITY_HOMOLOGY_MODE = 'aclid';
+    const { service, screeningRuns, setAclidScreening, setHomologyScreening } = harness(gibson, {
+      aclidConfigured: true,
+      screenInline: jest.fn(async () => aclidScreen({ regulatoryStatus: null })),
+      screenSequences: jest.fn(async () => ({ ...granted, synthesisPermission: 'denied' }))
+    });
+    (service as any).aclidService.getScreenDetails = jest.fn(getDetails);
+    await service.screenJob('job-1', 'user-1');
+    expect(closing(screeningRuns).aclid).toMatchObject({ screenId: 'scr_1', homologyStatus: 'IN_PROGRESS', details: null, detail: expect.stringContaining('could not be read') });
+    expect(lastCall(setAclidScreening)).toMatchObject({ homologyStatus: HomologyScreeningStatus.IN_PROGRESS, screenId: 'scr_1' });
+    expect(closing(screeningRuns).status).not.toBe('PASSED');
+    expect(lastStatus(setHomologyScreening).status).not.toBe('PASSED');
   });
 
   it('records a pending Aclid screen on the run so a refresh can finish it', async () => {
@@ -912,6 +972,44 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
     expect(screeningRuns.updateAclidLeg).not.toHaveBeenCalled();
   });
 
+  describe('the verdict is taken with the details (wave 3)', () => {
+    const controlled = { seq_a: { matches: [{ regulatory_status: 'controlled' }], regulatory_status: 'controlled' } };
+    const setup = (aclid: Record<string, unknown>, getDetails: () => Promise<unknown>): any => {
+      const screeningRuns = {
+        create: jest.fn(),
+        update: jest.fn(),
+        findByAclidScreenId: jest.fn(async () => ({ _id: 'run-1', status: 'UNAVAILABLE', aclid: { screenId: 'scr_1', homologyStatus: 'IN_PROGRESS', details: null, ...aclid } })),
+        updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
+      };
+      const { service } = harness([], { screeningRuns, aclidConfigured: true });
+      (service as any).aclidService.getScreenDetails = jest.fn(getDetails);
+      return { service, screeningRuns };
+    };
+
+    it('fails the run when the details hold a controlled sequence and the top level is empty, writing the details with it', async () => {
+      const { service, screeningRuns } = setup({}, async () => controlled);
+      await service.recordAclidRefresh(aclidScreen({ regulatoryStatus: null }) as any);
+      const [, leg, patch] = screeningRuns.updateAclidLeg.mock.calls[0];
+      expect(leg).toMatchObject({ homologyStatus: 'FAILED', regulatoryStatus: 'controlled', details: controlled });
+      expect(patch).toEqual({ status: 'FAILED' });
+      expect(screeningRuns.updateAclidLeg).toHaveBeenCalledTimes(1);
+    });
+
+    it('lifts a waiting run only when the details were read and are clear', async () => {
+      const { service, screeningRuns } = setup({}, async () => ({ seq_a: { regulatory_status: 'not_controlled' } }));
+      await service.recordAclidRefresh(aclidScreen({ regulatoryStatus: null }) as any);
+      expect(screeningRuns.updateAclidLeg.mock.calls[0][2]).toEqual({ status: 'PASSED' });
+    });
+
+    it('keeps the leg waiting, with a detail, and never passes when the details come back empty (204)', async () => {
+      const { service, screeningRuns } = setup({}, async () => null);
+      await service.recordAclidRefresh(aclidScreen({ regulatoryStatus: null }) as any);
+      const [, leg, patch] = screeningRuns.updateAclidLeg.mock.calls[0];
+      expect(leg).toMatchObject({ homologyStatus: 'IN_PROGRESS', detail: expect.stringContaining('could not be read') });
+      expect(patch).toEqual({});
+    });
+  });
+
   describe('lifting a slow screen', () => {
     const originalMode = process.env.BIOSECURITY_HOMOLOGY_MODE;
     afterEach(() => {
@@ -952,7 +1050,7 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
     it('a passing screen never lifts a FAILED run', async () => {
       expect(await firstPatch(pendingRun({ status: 'FAILED' }))).toEqual({});
     });
-    it('resolves without waiting for the details call', async () => {
+    it('a controlled screen resolves without waiting for the details call', async () => {
       const screeningRuns = {
         create: jest.fn(),
         update: jest.fn(),
@@ -961,7 +1059,10 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
       };
       const { service } = harness([], { screeningRuns });
       (service as any).aclidService.getScreenDetails = jest.fn(() => new Promise(() => undefined));
-      const result = await Promise.race([service.recordAclidRefresh(aclidScreen() as any).then(() => 'done'), new Promise((resolve) => setTimeout(() => resolve('timed out'), 200))]);
+      const result = await Promise.race([
+        service.recordAclidRefresh(aclidScreen({ regulatoryStatus: 'controlled' }) as any).then(() => 'done'),
+        new Promise((resolve) => setTimeout(() => resolve('timed out'), 200))
+      ]);
       expect(result).toBe('done');
       expect(screeningRuns.updateAclidLeg).toHaveBeenCalledTimes(1);
     });

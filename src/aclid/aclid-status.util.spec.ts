@@ -3,6 +3,7 @@ import { CustomerScreeningStatus } from '../job/screening-run.model';
 import {
   parseHomologyMode,
   homologyStatusFromAclidRegulatory,
+  aclidResultsUnread,
   homologyStatusFromAclidScreen,
   customerScreeningStatus,
   jobCustomerStatusFromLeg,
@@ -42,16 +43,46 @@ describe('homologyStatusFromAclidRegulatory', () => {
 });
 
 describe('homologyStatusFromAclidScreen', () => {
-  it('passes a succeeded screen that has no regulatory status', () => {
-    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null })).toBe(HomologyScreeningStatus.PASSED);
+  // Shaped like a real `GET /v2/screens/{id}/details` body (one group, trimmed).
+  const controlledGroup = {
+    seq_a: {
+      matches: [{ query: 'seq_a', sseqid: 'AJ564621.1', regulatory_status: 'controlled', findings: { us_select_agent: { reason_code: 'virus', regulatory_status: 'controlled' } } }],
+      findings: { us_select_agent: { reason_code: 'virus', regulatory_status: 'controlled' } },
+      regulatory_status: 'controlled'
+    }
+  };
+  const clearGroup = { seq_a: { matches: [], findings: null, regulatory_status: 'not_controlled' } };
+
+  it('fails a succeeded screen with an empty top level when one sequence is controlled', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, { ...clearGroup, ...controlledGroup })).toBe(HomologyScreeningStatus.FAILED);
   });
 
-  it('still fails a succeeded screen that is controlled', () => {
-    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: 'controlled' })).toBe(HomologyScreeningStatus.FAILED);
+  it('fails on a controlled match or finding inside a group that does not say so itself', () => {
+    const match = { seq_a: { matches: [{ regulatory_status: 'controlled' }], regulatory_status: 'not_controlled' } };
+    const finding = { seq_a: { matches: [], findings: { x: { regulatory_status: 'controlled' } }, regulatory_status: null } };
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, match)).toBe(HomologyScreeningStatus.FAILED);
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, finding)).toBe(HomologyScreeningStatus.FAILED);
+  });
+
+  it('passes a succeeded screen whose details are all not_controlled', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, clearGroup)).toBe(HomologyScreeningStatus.PASSED);
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: 'not_controlled' }, clearGroup)).toBe(HomologyScreeningStatus.PASSED);
+  });
+
+  it('gives no verdict to a succeeded screen whose details were not read', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, null)).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null })).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: 'not_controlled' }, null)).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(aclidResultsUnread({ status: 'succeeded', regulatoryStatus: null }, null)).toBe(true);
+  });
+
+  it('fails a controlled top level without needing the details', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: 'controlled' }, null)).toBe(HomologyScreeningStatus.FAILED);
+    expect(aclidResultsUnread({ status: 'succeeded', regulatoryStatus: 'controlled' }, null)).toBe(false);
   });
 
   it('does not treat a failed screen with no regulatory status as a pass', () => {
-    expect(homologyStatusFromAclidScreen({ status: 'failed', regulatoryStatus: null })).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(homologyStatusFromAclidScreen({ status: 'failed', regulatoryStatus: null }, null)).toBe(HomologyScreeningStatus.UNAVAILABLE);
   });
 });
 

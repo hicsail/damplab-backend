@@ -46,7 +46,6 @@ import { JobReviewService } from './job-review.service';
 import { assertShowsBiosecurity, callerShowsBiosecurity } from './biosecurity-gate';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
-import { homologyStatusFromAclidScreen } from '../aclid/aclid-status.util';
 import { redactJobBiosecurity } from './biosecurity-view';
 
 @Resolver(() => Job)
@@ -487,20 +486,24 @@ export class JobResolver {
       throw new BadRequestException('No Aclid screen on this job');
     }
     const screen = await this.aclidService.getScreen(screenId);
-    const homologyStatus = homologyStatusFromAclidScreen(screen);
+    // The verdict is taken with the screen's per-sequence details in hand: Aclid leaves the
+    // top-level status empty on a controlled screen. A succeeded screen whose results could not
+    // be read has no verdict yet, so it reads In Progress and a later refresh settles it.
+    const verdict = await this.jobScreeningService.readAclidVerdict(screen);
+    const homologyStatus = verdict.unread ? HomologyScreeningStatus.IN_PROGRESS : verdict.homologyStatus;
     // Re-read the customer leg Aclid holds: a review resolved there clears without a new screen.
     const customerStatus = await this.jobScreeningService.refreshCustomerLeg(jobId);
     const verificationCompletedAt = screen.verificationCompletedAt ? new Date(screen.verificationCompletedAt) : null;
     const updated = await this.jobService.setAclidScreening(jobId, {
       ...existing,
       homologyStatus,
-      regulatoryStatus: screen.regulatoryStatus,
+      regulatoryStatus: verdict.regulatoryStatus,
       verificationStatus: screen.verificationStatus,
       decisionStatus: screen.decisionStatus,
       verificationCompletedAt: verificationCompletedAt && !Number.isNaN(verificationCompletedAt.getTime()) ? verificationCompletedAt : null,
       // Same wording the screening run writes: a verdict clears the line, no
       // verdict names what Aclid did say.
-      detail: homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null,
+      detail: verdict.unread ? verdict.detail : homologyStatus === HomologyScreeningStatus.UNAVAILABLE ? `Aclid screen ${screen.status} without a regulatory status` : null,
       customerStatus
     });
 
@@ -508,7 +511,7 @@ export class JobResolver {
     // After the customer's own row. The verdict write is awaited so the gate and the card read it
     // right after the click; only the details call (up to 30 s) runs in the background. It never
     // rejects; the catch is belt and braces.
-    await this.jobScreeningService.recordAclidRefresh(screen).catch((err) => this.logger.error(`Aclid refresh run write failed for jobId=${jobId}`, err instanceof Error ? err.stack : err));
+    await this.jobScreeningService.recordAclidRefresh(screen, verdict).catch((err) => this.logger.error(`Aclid refresh run write failed for jobId=${jobId}`, err instanceof Error ? err.stack : err));
 
     // The Homology row is a stored rollup, and SecureDNA's leg cannot be read
     // back out of it. So this is one-directional: a screen that had no verdict
