@@ -50,14 +50,27 @@ export function aclidDetailsControlled(details: unknown): boolean {
  * A controlled or unrecognised top level is decided without them.
  */
 export function aclidResultsUnread(screen: { status?: string | null; regulatoryStatus?: string | null }, details: Record<string, unknown> | null | undefined): boolean {
-  return screen.status === 'succeeded' && (!screen.regulatoryStatus || screen.regulatoryStatus === 'not_controlled') && !details;
+  return screen.status === 'succeeded' && (!screen.regulatoryStatus || screen.regulatoryStatus === 'not_controlled') && !aclidDetailsControlled(details) && !aclidDetailsClear(details);
+}
+
+/**
+ * True when `details` carries a readable answer and nothing in it is controlled: at least one
+ * group, and every group has a `regulatory_status` of `controlled` or `not_controlled`. `{}`, a
+ * non-object, or a group with a null or unknown status is an answer we have not read.
+ */
+export function aclidDetailsClear(details: unknown): boolean {
+  if (details === null || typeof details !== 'object' || Array.isArray(details)) return false;
+  const groups = Object.values(details as Record<string, unknown>);
+  if (groups.length === 0) return false;
+  const known = groups.every((g) => g !== null && typeof g === 'object' && ['controlled', 'not_controlled'].includes((g as Record<string, unknown>).regulatory_status as string));
+  return known && !aclidDetailsControlled(details);
 }
 
 /**
  * A finished Aclid screen is a verdict, taken with its `details` in hand.
  *
  * `controlled` fails: on the screen, or on any sequence, match or finding in `details`. A
- * `succeeded` screen passes only when its details were read and nothing in them is controlled.
+ * `succeeded` screen passes only when its details were read (see `aclidDetailsClear`).
  * Without them it has no verdict yet (UNAVAILABLE), whatever the top level says. `failed`,
  * `deleted`, and `archived` with no regulatory status are no verdict either.
  */
@@ -66,7 +79,7 @@ export function homologyStatusFromAclidScreen(screen: { status?: string | null; 
   if (screen.status === 'succeeded') {
     // A status we do not recognise is not an answer, whatever the details say.
     if (screen.regulatoryStatus && screen.regulatoryStatus !== 'not_controlled') return HomologyScreeningStatus.UNAVAILABLE;
-    return details ? HomologyScreeningStatus.PASSED : HomologyScreeningStatus.UNAVAILABLE;
+    return aclidDetailsClear(details) ? HomologyScreeningStatus.PASSED : HomologyScreeningStatus.UNAVAILABLE;
   }
   return homologyStatusFromAclidRegulatory(screen.regulatoryStatus);
 }

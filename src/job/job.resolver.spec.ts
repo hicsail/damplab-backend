@@ -339,8 +339,8 @@ function kycHarness(job: any): {
   const recordAclidRefresh = jest.fn(async () => undefined);
   const refreshCustomerLeg = jest.fn(async () => HomologyScreeningStatus.UNAVAILABLE);
   // Stands in for JobScreeningService.readAclidVerdict (pinned in its own spec): same util, details
-  // from `getScreenDetails`, which a test sets. Unset, the details are an empty, readable object.
-  const getScreenDetails = jest.fn(async (): Promise<Record<string, unknown> | null> => ({}));
+  // from `getScreenDetails`, which a test sets. Unset, the details are one clear group.
+  const getScreenDetails = jest.fn(async (): Promise<Record<string, unknown> | null> => ({ seq_a: { matches: [], findings: null, regulatory_status: 'not_controlled' } }));
   const readAclidVerdict = jest.fn(async (screen: any) => {
     const details = screen.regulatoryStatus === 'controlled' ? null : await getScreenDetails();
     const homologyStatus = homologyStatusFromAclidScreen(screen, details);

@@ -76,6 +76,28 @@ describe('homologyStatusFromAclidScreen', () => {
     expect(aclidResultsUnread({ status: 'succeeded', regulatoryStatus: null }, null)).toBe(true);
   });
 
+  it.each([
+    ['an empty body', {}],
+    ['a group with a null status', { seq_a: { matches: [], findings: null, regulatory_status: null } }],
+    ['a group with no status', { seq_a: { matches: [] } }],
+    ['a group with an unknown status', { seq_a: { matches: [], regulatory_status: 'maybe' } }],
+    ['a clear group beside one with a null status', { ...clearGroup, seq_b: { matches: [], regulatory_status: null } }],
+    ['a non-object group', { seq_a: 'x' }]
+  ])('gives no verdict to %s', (_label, details) => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, details)).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(aclidResultsUnread({ status: 'succeeded', regulatoryStatus: null }, details)).toBe(true);
+  });
+
+  it('gives no verdict to details that are not an object', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, [] as any)).toBe(HomologyScreeningStatus.UNAVAILABLE);
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, 'ok' as any)).toBe(HomologyScreeningStatus.UNAVAILABLE);
+  });
+
+  it('fails one controlled group beside a not_controlled one, and passes one not_controlled group', () => {
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, { ...clearGroup, ...{ seq_b: controlledGroup.seq_a } })).toBe(HomologyScreeningStatus.FAILED);
+    expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: null }, clearGroup)).toBe(HomologyScreeningStatus.PASSED);
+  });
+
   it('fails a controlled top level without needing the details', () => {
     expect(homologyStatusFromAclidScreen({ status: 'succeeded', regulatoryStatus: 'controlled' }, null)).toBe(HomologyScreeningStatus.FAILED);
     expect(aclidResultsUnread({ status: 'succeeded', regulatoryStatus: 'controlled' }, null)).toBe(false);
