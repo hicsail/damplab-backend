@@ -2,6 +2,8 @@ import { HttpException, HttpStatus } from '@nestjs/common';
 import { AclidCustomerPendingError, AclidFeatureNotEnabledError, AclidScreenPendingError } from '../aclid/aclid.service';
 import { AUTO_SCREENING_ENABLED, JobScreeningService } from './job-screening.service';
 import { HomologyScreeningStatus, Job, JobState } from './job.model';
+import { ObjectTooLargeError } from '../workflow/services/workflow-parameter-files.service';
+import { fileRecordSliceName } from './job-screening-name.util';
 import { CustomerScreeningStatus, JobAcceptanceScreeningState, ScreeningRunTrigger } from './screening-run.model';
 import { ACCEPTANCE_MESSAGES, decideAcceptanceScreening } from './screening-acceptance.util';
 
@@ -1576,5 +1578,81 @@ describe('acceptanceScreening', () => {
     const edited = harness(nodes(DNA_B), { job: jobIn(JobState.SUBMITTED), screeningRuns: withNewest(before.screeningRuns, runFor(fingerprint)) });
 
     await expect(edited.service.acceptanceScreening(edited.job!)).resolves.toEqual({ state: JobAcceptanceScreeningState.STALE, message: ACCEPTANCE_MESSAGES.STALE });
+  });
+});
+
+describe('collectScreeningTargets from flagged files (biosecurity-tweaks)', () => {
+  const PROTEIN = 'MKTAYIAKQRQISFVKSHFSRQLEEPMKTAYIAKQR';
+  const fileParam = { id: 'seqs', name: 'Sequences', type: 'file', allowMultipleValues: true, screening: true };
+  const stored = (name: string): string => JSON.stringify({ filename: name, key: `workflow-parameters/user-1/${name}` });
+  const node = (value: unknown, param: any = fileParam): Array<{ id: string; serviceName: string; parameters: any[]; formData: unknown }> => [
+    { id: 'n1', serviceName: 'Cloning', parameters: [param], formData: [{ id: 'seqs', value }] }
+  ];
+
+  it('labels every record of every file: 2 + 3 = 5 (behaviour 12)', async () => {
+    const bodies: Record<string, string> = {
+      'workflow-parameters/user-1/a.fasta': `>a1\n${DNA_A}\n>a2\n${DNA_B}\n`,
+      'workflow-parameters/user-1/b.fasta': `>b1\n${DNA_A}\n> \n${DNA_B}\n>b3\n${DNA_A}\n`
+    };
+    const readObject = jest.fn(async (key: string) => Buffer.from(bodies[key]));
+    const { service, job } = harness(node([stored('a.fasta'), stored('b.fasta')]), { readObject });
+    const { targets, notes } = await service.collectScreeningTargets(job!);
+    expect(readObject).toHaveBeenCalledWith('workflow-parameters/user-1/a.fasta', 10 * 1024 * 1024);
+    expect(targets.map((t) => [t.name, t.label])).toEqual([
+      [`${WORKFLOW_ID}_n1_seqs_f1_s1`, 'Cloning › Sequences › a.fasta › a1'],
+      [`${WORKFLOW_ID}_n1_seqs_f1_s2`, 'Cloning › Sequences › a.fasta › a2'],
+      [`${WORKFLOW_ID}_n1_seqs_f2_s1`, 'Cloning › Sequences › b.fasta › b1'],
+      [`${WORKFLOW_ID}_n1_seqs_f2_s2`, 'Cloning › Sequences › b.fasta › record 2'],
+      [`${WORKFLOW_ID}_n1_seqs_f2_s3`, 'Cloning › Sequences › b.fasta › b3']
+    ]);
+    expect(notes).toEqual([]);
+  });
+
+  it('skips and counts a protein record, and a too-short one (behaviour 13)', async () => {
+    const readObject = jest.fn(async () => Buffer.from(`>d\n${DNA_A}\n>p\n${PROTEIN}\n>short\nATGCATGC\n`));
+    const { service, job } = harness(node(stored('m.fasta')), { readObject });
+    const { targets, skippedCount, notes } = await service.collectScreeningTargets(job!);
+    expect(targets.map((t) => t.seq)).toEqual([DNA_A]);
+    expect(skippedCount).toBe(2);
+    expect(notes).toEqual([]);
+  });
+
+  it('notes a missing, oversized, unparseable or DNA-less file by name (behaviour 14)', async () => {
+    const readObject = jest.fn(async (key: string) => {
+      if (key.endsWith('big.fasta')) throw new ObjectTooLargeError();
+      if (key.endsWith('notes.txt')) return Buffer.from('The quick brown fox jumps over the lazy dog.\nHello world.\n');
+      return Buffer.from(`>p\n${PROTEIN}\n`);
+    });
+    const climbing = JSON.stringify({ filename: 'up.fasta', key: 'workflow-parameters/../x.fasta' });
+    const { service, job } = harness(node([climbing, stored('big.fasta'), stored('notes.txt'), stored('prot.fasta')]), { readObject });
+    const { targets, notes } = await service.collectScreeningTargets(job!);
+    expect(targets).toEqual([]);
+    expect(notes).toEqual([
+      'Cloning › Sequences: up.fasta was not uploaded, so it was not screened',
+      'Cloning › Sequences: could not read big.fasta (The stored object is larger than the read limit.)',
+      'Cloning › Sequences: notes.txt is not a sequence file we can read',
+      'Cloning › Sequences: prot.fasta has no DNA sequence in it'
+    ]);
+  });
+
+  it('an unanswered flagged file adds nothing (Review Focus 3)', async () => {
+    const readObject = jest.fn();
+    const { service, job } = harness(node(null), { readObject });
+    expect(await service.collectScreeningTargets(job!)).toEqual({ targets: [], skippedCount: 0, notes: [] });
+    expect(readObject).not.toHaveBeenCalled();
+  });
+
+  it('replacing a flagged file changes the fingerprint, without reading it (behaviour 15)', async () => {
+    const readObject = jest.fn();
+    const a = harness(node(stored('a.fasta')), { readObject });
+    const b = harness(node(stored('b.fasta')), { readObject });
+    expect(await a.service.screeningFingerprint(a.job!)).not.toBe(await b.service.screeningFingerprint(b.job!));
+    expect(readObject).not.toHaveBeenCalled();
+  });
+
+  it('fileRecordSliceName stays within 200 characters and keeps its suffix', () => {
+    const name = fileRecordSliceName(WORKFLOW_ID, 'n'.repeat(300), 'seqs', 12, 345);
+    expect(name).toHaveLength(200);
+    expect(name.endsWith('_f12_s345')).toBe(true);
   });
 });

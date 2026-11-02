@@ -10,6 +10,10 @@ Nothing until a catalog editor flags it. In the Catalog Editor's parameter edito
 **Requires screening** on a Text parameter (its value is a sequence) or a Table parameter (then
 pick its **Screening columns**: every cell in those columns of the uploaded file is screened). The
 workbook's Parameter List sheet has `screening` (Y/N) and `screeningFields` (`; ` list) columns.
+A **File Upload** parameter can be flagged too: every DNA or RNA record in each uploaded sequence
+file is screened. Any format seqparse reads counts: FASTA, GenBank, ApE, SnapGene `.dna`, `.seq`,
+SeqBuilder, SBOL, JBEI, Benchling JSON, plain DNA text. Protein records are skipped and counted.
+The customer's file is refused at upload when it is not a sequence file or has no DNA.
 Values that do not look like DNA are skipped and counted on the run.
 
 ## Environment variables (backend `.env`)
@@ -26,7 +30,7 @@ Values that do not look like DNA are skipped and counted on the run.
 
 With none of the three set, Aclid is skipped (not failed), homology runs on SecureDNA only, and the Customer card reads *Not run*. The first non-empty one is chosen by `resolveAclidApiKey` in `src/aclid/aclid.service.ts`. On boot the backend logs `Aclid: key from <VARIABLE>` or `Aclid: not configured`, never the key.
 
-Screening a **Table** reads the customer's uploaded file from S3, so it also needs the
+Screening a **Table** or a **File Upload** reads the customer's uploaded file from S3, so it also needs the
 parameter-file bucket that uploads use: `AWS_REGION`, `WORKFLOW_PARAMETER_FILES_BUCKET` (falls back
 to `JOB_ATTACHMENTS_BUCKET`), and `AWS_S3_ENDPOINT` for MinIO/local S3. Without a bucket the file
 cannot be read and the run's detail says so; text parameters still screen. Locally, `/dev-run` starts
@@ -47,10 +51,10 @@ documentation describes.
 Staff cannot accept a job until the newest screening run for it has completed, its homology is
 cleared, its customer screening is Passed, Not available or Not run, and nothing screened has
 changed since. A job with nothing to screen still needs one run: press **Run screening** once, and
-a completed run with zero sequences clears it. A changed flagged value, a replaced table file, a
+a completed run with zero sequences clears it. A changed flagged value, a replaced table file, a replaced sequence file, a
 newly flagged parameter with a value, or changed customer details means **Rerun screening**.
 Customer screening In progress or Needs review: resolve it at Aclid and press **Refresh results**.
-A flagged table that could not be read blocks, even when other sequences passed. Staff without
+A flagged table or sequence file that could not be read blocks, even when other sequences passed. Staff without
 `showBiosecurity` are blocked too and are told someone with biosecurity access must screen first.
 Staff with `showBiosecurity` can tick **Override screening and accept anyway** in the Review modal
 to accept regardless of screening; the job's history and activity then read *Accepted with

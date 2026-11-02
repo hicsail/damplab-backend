@@ -4,7 +4,7 @@ export interface ScreeningTarget {
   /** Slice name sent to the provider; see job-screening-name.util. */
   name: string;
   seq: string;
-  /** For people: `<service> › <parameter>[ › value <n> | › row <n> › <column>]`. */
+  /** For people: `<service> › <parameter>[ › value <n> | › row <n> › <column> | › <filename> › <record name or "record <k>">]`. */
   label: string;
 }
 
