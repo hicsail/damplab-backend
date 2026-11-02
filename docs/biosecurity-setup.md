@@ -16,11 +16,15 @@ Values that do not look like DNA are skipped and counted on the run.
 
 | Variable | Required | Default | What it does |
 |---|---|---|---|
-| `ACLID_API_KEY` | For Aclid and customer screening | unset | Aclid API key, sent raw in `Authorization`. Local and staging use Aclid's test key; production uses its prod key; `ACLID_API_URL` is the same for both. Unset: Aclid is skipped (not failed), homology runs on SecureDNA only, and no customer screening runs: the Customer card reads *Not run*. Read in `src/aclid/aclid.service.ts`. |
+| `ACLID_PROD_API_KEY` | Production | unset | Aclid's prod API key, sent raw in `Authorization`. Wins when set. Passed only by `damplab-ui/ops/docker-compose.prod.yml`. |
+| `ACLID_TEST_API_KEY` | Local and staging | unset | Aclid's test API key, sent raw in `Authorization`. Passed only by `docker-compose.staging.yml`; local `.env` sets it. `ACLID_API_URL` is the same for both. |
+| `ACLID_API_KEY` | No (legacy) | unset | Read only when neither of the above is set. Rename it to `ACLID_TEST_API_KEY` or `ACLID_PROD_API_KEY`. |
 | `ACLID_API_URL` | No | `https://api.aclid.bio` | Aclid's origin; trailing slashes are trimmed. |
-| `BIOSECURITY_HOMOLOGY_MODE` | No | `aclid` when `ACLID_API_KEY` is set, else `securedna` | `aclid`: SecureDNA runs only when Aclid gives no verdict. `securedna`: the Homology row is SecureDNA's alone, but an Aclid screen is still created for customer screening when keyed. `both`: both always run and Homology fails if either denies. Anything else reads as the default; unkeyed, the mode is always `securedna`. Read in `src/job/job-screening.service.ts` via `parseHomologyMode` in `src/aclid/aclid-status.util.ts`. |
+| `BIOSECURITY_HOMOLOGY_MODE` | No | `aclid` when an Aclid key is set, else `securedna` | `aclid`: SecureDNA runs only when Aclid gives no verdict. `securedna`: the Homology row is SecureDNA's alone, but an Aclid screen is still created for customer screening when keyed. `both`: both always run and Homology fails if either denies. Anything else reads as the default; unkeyed, the mode is always `securedna`. Read in `src/job/job-screening.service.ts` via `parseHomologyMode` in `src/aclid/aclid-status.util.ts`. |
 | `SECUREDNA_API_URL` | For SecureDNA | unset | Origin of a SecureDNA synthclient (the backend appends `/v1/screen`), e.g. `http://127.0.0.1:8787`. Unset: a SecureDNA leg records Unavailable. Read in `src/securedna/securedna.service.ts`. |
 | `SECUREDNA_REQUEST_TIMEOUT_MS` | No | `120000` | Per-request timeout for the synthclient, in ms. A non-number or <= 0 uses the default. |
+
+With none of the three set, Aclid is skipped (not failed), homology runs on SecureDNA only, and the Customer card reads *Not run*. The first non-empty one is chosen by `resolveAclidApiKey` in `src/aclid/aclid.service.ts`. On boot the backend logs `Aclid: key from <VARIABLE>` or `Aclid: not configured`, never the key.
 
 Screening a **Table** reads the customer's uploaded file from S3, so it also needs the
 parameter-file bucket that uploads use: `AWS_REGION`, `WORKFLOW_PARAMETER_FILES_BUCKET` (falls back
@@ -80,7 +84,7 @@ tiers; see `docs/access-matrix.md`). Customers never see screening results. `BIO
 
 ## Verify it works
 
-1. With `ACLID_API_URL` and `ACLID_API_KEY` both in `.env` (the script, unlike the backend, has no
+1. With `ACLID_API_URL` and `ACLID_TEST_API_KEY` both in `.env` (the script, unlike the backend, has no
    default URL), from `damplab-backend/`:
    `npx ts-node --transpile-only aclid-screen.ts` - it screens a benign default sequence and prints
    Aclid's verdict. A 401/403 means the key is wrong; a connection error means the URL is.
