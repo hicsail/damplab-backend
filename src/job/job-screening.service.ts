@@ -11,6 +11,8 @@ import { MAX_SECUREDNA_SEQUENCE_BATCH } from '../securedna/securedna.constants';
 import { ACLID_TERMINAL_STATUSES, AclidCustomerPendingError, AclidCustomerRecord, AclidFeatureNotEnabledError, AclidScreenPendingError, AclidScreenRecord, AclidService } from '../aclid/aclid.service';
 import {
   ACLID_MIN_SEQUENCE_LENGTH,
+  aclidDetailsClear,
+  aclidDetailsControlled,
   aclidResultsUnread,
   effectiveAclidRegulatoryStatus,
   homologyStatusFromAclidScreen,
@@ -649,7 +651,9 @@ export class JobScreeningService {
     try {
       const run = await this.screeningRuns.findByAclidScreenId(screen.id);
       if (!run) return;
-      const read = verdict ?? (await this.readAclidVerdict(screen, run.aclid?.details ?? null));
+      // Stored details count only once they were read; an unread body is fetched again.
+      const storedRead = aclidDetailsClear(run.aclid?.details) || aclidDetailsControlled(run.aclid?.details);
+      const read = verdict ?? (await this.readAclidVerdict(screen, storedRead ? run.aclid?.details ?? null : null));
       const homologyStatus = read.homologyStatus;
       // A screen that has not finished is still running, not "without a regulatory status". A
       // succeeded one whose results could not be read waits the same way.
@@ -665,7 +669,7 @@ export class JobScreeningService {
           ? `Aclid screen ${screen.status} without a regulatory status`
           : null
       };
-      const newDetails = !run.aclid?.details && read.details ? read.details : null;
+      const newDetails = !storedRead && !read.unread && read.details ? read.details : null;
       const fitted = fitAclidLeg({ ...(run.aclid ?? {}), ...leg, ...(newDetails ? { details: newDetails } : {}) } as ScreeningRunAclidLeg);
       const write: Partial<ScreeningRunAclidLeg> = { ...leg, raw: fitted.raw, detail: fitted.detail, ...(newDetails ? { details: fitted.details } : {}) };
       // Only a new FAILED lowers the run. A slow screen that now passes lifts a run that was only
@@ -681,7 +685,7 @@ export class JobScreeningService {
       await this.screeningRuns.updateAclidLeg(runId, write, patch);
       // Only a controlled top level skips the details read above. The call can take 30 s and the
       // verdict is already written, so that one runs behind the caller.
-      if (screen.status === 'succeeded' && !run.aclid?.details && !read.details) void this.backfillAclidDetails(runId, screen, { ...(run.aclid ?? {}), ...write } as ScreeningRunAclidLeg);
+      if (screen.status === 'succeeded' && !storedRead && !read.details) void this.backfillAclidDetails(runId, screen, { ...(run.aclid ?? {}), ...write } as ScreeningRunAclidLeg);
     } catch (error) {
       this.logger.error(`Could not update the screening run for Aclid screen ${screen.id}: ${messageOf(error)}`);
     }
@@ -719,7 +723,9 @@ export class JobScreeningService {
   /** Fetch and store a succeeded screen's details after the verdict write. Never rejects. */
   private async backfillAclidDetails(runId: string, screen: AclidScreenRecord, written: ScreeningRunAclidLeg): Promise<void> {
     try {
-      const { details, error } = await this.aclidDetails(screen);
+      const { details: fetched, error } = await this.aclidDetails(screen);
+      // An unread body is not stored, so a later read can replace it.
+      const details = aclidResultsUnread(screen, fetched) ? null : fetched;
       const base = written.detail ?? null;
       const fitted = fitAclidLeg({ ...written, details, detail: error ? (base ? `${base}; ${error}` : error) : base });
       await this.screeningRuns.updateAclidLeg(runId, { details: fitted.details, raw: fitted.raw, detail: fitted.detail });

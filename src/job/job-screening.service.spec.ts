@@ -979,7 +979,7 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
     const screeningRuns = {
       create: jest.fn(),
       update: jest.fn(),
-      findByAclidScreenId: jest.fn(async () => run({ screenId: 'scr_1', details: { a: {} } })),
+      findByAclidScreenId: jest.fn(async () => run({ screenId: 'scr_1', details: { a: { matches: [], findings: null, regulatory_status: 'not_controlled' } } })),
       updateAclidLeg: jest.fn<Promise<void>, [string, Record<string, unknown>, Record<string, unknown>]>(async () => undefined)
     };
     const { service } = harness([], { screeningRuns });
@@ -1037,6 +1037,35 @@ describe('recordAclidRefresh (biosecurity-update behaviour 6, 13)', () => {
       const { service, screeningRuns } = setup({}, async () => ({ seq_a: { regulatory_status: 'not_controlled' } }));
       await service.recordAclidRefresh(aclidScreen({ regulatoryStatus: null }) as any);
       expect(screeningRuns.updateAclidLeg.mock.calls[0][2]).toEqual({ status: 'PASSED' });
+    });
+
+    it('stores details only once they are read: an unread body is replaced by a later controlled one (W4-m2)', async () => {
+      const stored: Record<string, any> = { _id: 'run-1', status: 'UNAVAILABLE', aclid: { screenId: 'scr_1', homologyStatus: 'IN_PROGRESS', details: null } };
+      const screeningRuns = {
+        create: jest.fn(),
+        update: jest.fn(),
+        findByAclidScreenId: jest.fn(async () => stored),
+        updateAclidLeg: jest.fn(async (_id: string, leg: Record<string, unknown>, patch: Record<string, unknown>) => {
+          stored.aclid = { ...stored.aclid, ...leg };
+          Object.assign(stored, patch);
+        })
+      };
+      const { service } = harness([], { screeningRuns, aclidConfigured: true });
+      let body: unknown = {};
+      (service as any).aclidService.getScreenDetails = jest.fn(async () => body);
+      await service.recordAclidRefresh(aclidScreen({ regulatoryStatus: null }) as any);
+      expect(stored.aclid.details ?? null).toBeNull();
+      expect(stored.status).toBe('UNAVAILABLE');
+      body = controlled;
+      await service.recordAclidRefresh(aclidScreen({ regulatoryStatus: null }) as any);
+      expect(stored.aclid.details).toEqual(controlled);
+      expect(stored.status).toBe('FAILED');
+    });
+
+    it('does not trust stored unread details: a refresh without a verdict fetches again (W4-m2)', async () => {
+      const { service, screeningRuns } = setup({ details: {} }, async () => controlled);
+      await service.recordAclidRefresh(aclidScreen({ regulatoryStatus: null }) as any);
+      expect(screeningRuns.updateAclidLeg.mock.calls[0][1]).toMatchObject({ homologyStatus: 'FAILED', details: controlled });
     });
 
     it('keeps the leg waiting, with a detail, and never passes when the details come back empty (204)', async () => {
