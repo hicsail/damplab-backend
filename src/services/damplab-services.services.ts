@@ -1,4 +1,7 @@
 import { BadRequestException, Injectable, Optional } from '@nestjs/common';
+import { expectedColumns, isTableType, parametersById, tableDefinitionError, templateKeyOf } from '../workflow/utils/sample-sheet.util';
+import { WorkflowParameterFilesService } from '../workflow/services/workflow-parameter-files.service';
+import { missingColumns, readTableFile, TABLE_FILE_MAX_BYTES } from '../workflow/utils/table-file';
 import { DampLabService, DampLabServiceDocument, ServicePricingMode } from './models/damplab-service.model';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -18,7 +21,8 @@ export class DampLabServices {
   constructor(
     @InjectModel(DampLabService.name) private readonly dampLabServiceModel: Model<DampLabServiceDocument>,
     private readonly inventoryService: InventoryService,
-    @Optional() @InjectModel(ParameterSet.name) private readonly parameterSetModel?: Model<ParameterSetDocument>
+    @Optional() @InjectModel(ParameterSet.name) private readonly parameterSetModel?: Model<ParameterSetDocument>,
+    @Optional() private readonly files?: WorkflowParameterFilesService
   ) {}
 
   /**
@@ -232,12 +236,47 @@ export class DampLabServices {
     if (violation) throw new BadRequestException(violation);
   }
 
-  /** A parameter's validation must parse, its display must fit its type and its “show only if” must be a well-formed, loop-free tree — refused here so no save path can store one that is not. */
-  private assertParameterDefinitionsValid(parameters: unknown): void {
+  /**
+   * A parameter's validation must parse, its display must fit its type, its “show only if” must be a well-formed, loop-free tree, and a Table
+   * must have a column or a staff template — refused here so no save path can store one that is not. `stored` is the operation's own
+   * parameters before this write: a Table is only held to its rule when this write is what changes it.
+   */
+  private assertParameterDefinitionsValid(parameters: unknown, stored: unknown = []): void {
     if (!Array.isArray(parameters)) return;
+    const previous = parametersById(stored);
     for (const parameter of parameters) {
-      const error = parameterDefinitionError(parameter) ?? conditionDefinitionError(parameter, parameters);
+      const error =
+        parameterDefinitionError(parameter) ?? conditionDefinitionError(parameter, parameters) ?? tableDefinitionError(parameter, previous.get((parameter as { id?: string } | null)?.id ?? ''));
       if (error) throw new BadRequestException(error);
+    }
+  }
+
+  /**
+   * Behaviour 4's last rule: a flagged Table defined only by a staff template must name
+   * screening columns its template's header carries. Checked only when the template can be
+   * read — storage unconfigured (local dev), a missing object or an unreadable file skips the
+   * check, because a screen reports a missing column on the run anyway. Public: parameter
+   * sets call it too.
+   */
+  async assertScreeningTemplatesMatch(parameters: unknown): Promise<void> {
+    if (!Array.isArray(parameters) || !this.files?.isConfigured) return;
+    for (const parameter of parameters) {
+      const p = parameter as { id?: unknown; name?: unknown; type?: unknown; screening?: unknown; screeningFields?: unknown } | null;
+      if (!p || p.screening !== true || !isTableType(p.type) || expectedColumns(p).length > 0) continue;
+      const key = templateKeyOf(p);
+      if (!key) continue;
+      let header: string[];
+      try {
+        header = (await readTableFile(await this.files.readObject(key, TABLE_FILE_MAX_BYTES))).header;
+      } catch {
+        continue;
+      }
+      const fields = Array.isArray(p.screeningFields) ? p.screeningFields.filter((field): field is string => typeof field === 'string' && field.trim() !== '') : [];
+      const missing = missingColumns(header, fields);
+      if (missing.length > 0) {
+        const label = typeof p.name === 'string' && p.name.trim() !== '' ? p.name.trim() : String(p.id ?? '');
+        throw new BadRequestException(`Parameter “${label}”: screening column “${missing[0]}” is not in the template's header.`);
+      }
     }
   }
 
@@ -248,7 +287,10 @@ export class DampLabServices {
     const write: Record<string, unknown> = { ...(changes as any) };
     if (Object.prototype.hasOwnProperty.call(write, 'parameters')) {
       write.parameters = stripSetDerivedParameters(write.parameters);
-      this.assertParameterDefinitionsValid(write.parameters);
+      // The operation's own stored parameters, never the effective list: a
+      // same-id parameter that arrived from a set is not this one's history.
+      this.assertParameterDefinitionsValid(write.parameters, stripSetDerivedParameters((service as any).ownParameters ?? service.parameters ?? []));
+      await this.assertScreeningTemplatesMatch(write.parameters);
     }
     if (Array.isArray(write.parameterSetIds)) await this.assertParameterSetsCompatible(write.parameterSetIds);
     const mergedEquipmentUse = (changes as any).equipmentUse ?? (service as any).equipmentUse;
@@ -280,6 +322,7 @@ export class DampLabServices {
       await this.assertParameterSetsCompatible((service as any).parameterSetIds);
     }
     this.assertParameterDefinitionsValid(stripSetDerivedParameters((service as any).parameters ?? []));
+    await this.assertScreeningTemplatesMatch(stripSetDerivedParameters((service as any).parameters ?? []));
     // Ensure deliverables defaults to empty array if not provided
     const serviceData = {
       ...service,

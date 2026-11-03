@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { parametersById, tableDefinitionError } from '../workflow/utils/sample-sheet.util';
 import { parameterDefinitionError } from '../services/parameter-validation';
 import { conditionDefinitionError } from '../services/parameter-conditions';
 import { PROVENANCE_KEYS } from '../services/effective-parameters';
@@ -13,9 +14,10 @@ export function normalizeSetName(raw: unknown): string {
 /** paramGroupId is never stored on a set; the provenance keys mark set-derived parameters and never originate here. */
 const DROPPED_KEYS: readonly string[] = ['paramGroupId', ...PROVENANCE_KEYS];
 
-export function normalizeSetParameters(raw: unknown): any[] {
+export function normalizeSetParameters(raw: unknown, previous: unknown = []): any[] {
   if (!Array.isArray(raw)) throw new BadRequestException('parameters must be a list.');
   const seen = new Set<string>();
+  const stored = parametersById(previous);
   const parameters = raw.map((p, i) => {
     if (!p || typeof p !== 'object' || typeof (p as any).id !== 'string' || !(p as any).id.trim()) {
       throw new BadRequestException(`Parameter ${i + 1} has no id.`);
@@ -25,7 +27,7 @@ export function normalizeSetParameters(raw: unknown): any[] {
     seen.add(id);
     const copy: Record<string, unknown> = { ...(p as Record<string, unknown>), id };
     for (const key of DROPPED_KEYS) delete copy[key];
-    const error = parameterDefinitionError(copy);
+    const error = parameterDefinitionError(copy) ?? tableDefinitionError(copy, stored.get(id));
     if (error) throw new BadRequestException(error);
     return copy;
   });

@@ -1,6 +1,6 @@
 import { Injectable, Logger, Inject, forwardRef, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { AclidScreening, CustomerActionRequired, HomologyScreening, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
+import { AclidScreening, CustomerActionRequired, HomologyScreening, HomologyScreeningStatus, Job, JobAttachment, JobDocument, JobState, CustomerCategory } from './job.model';
 import { Model } from 'mongoose';
 import mongoose from 'mongoose';
 import { CreateJobFull } from './job.dto';
@@ -178,6 +178,25 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: job._id }, { $set: statePatch }, { new: true }).exec();
   }
 
+  /** Closes a job, recording where it was closed from (and the customer action it carried) so it can be reopened there. */
+  async markClosed(job: Job): Promise<Job | null> {
+    return this.jobModel
+      .findOneAndUpdate(
+        { _id: job._id },
+        { $set: { state: JobState.CLOSED, customerActionRequired: null, closedFromState: job.state, closedFromCustomerAction: job.customerActionRequired ?? null } },
+        { new: true }
+      )
+      .exec();
+  }
+
+  /** Puts a closed job back in `state` and forgets where it was closed from. Only a job still CLOSED is changed. */
+  async reopen(jobId: string, state: JobState, customerActionRequired: CustomerActionRequired | null): Promise<Job | null> {
+    const action = state === JobState.CHANGES_REQUESTED ? customerActionRequired ?? CustomerActionRequired.REPLY : null;
+    return this.jobModel
+      .findOneAndUpdate({ _id: jobId, state: JobState.CLOSED }, { $set: { state, customerActionRequired: action }, $unset: { closedFromState: '', closedFromCustomerAction: '' } }, { new: true })
+      .exec();
+  }
+
   /**
    * Records the spec staff just accepted. Re-accepting overwrites, which is how
    * a send re-locked by a later job edit gets released.
@@ -212,16 +231,28 @@ export class JobService {
    * A write carrying a screen id owns the whole subdocument: it is a new screen,
    * and the verification that belonged to the old one is legitimately orphaned.
    *
-   * A write without one — an Aclid error, or a run with nothing eligible to
-   * screen — is merged instead, keeping the screen id and the KYC fields the
-   * customer earned. Staff "Run screening" is a normal rail action, and a
+   * A write without one — an Aclid error, or a non-rerun run with nothing eligible to screen — is merged
+   * instead, keeping the screen id and the KYC fields the customer earned. The exception is a
+   * staff rerun (`options.rerun`) with nothing to screen: it leaves no screen, and the record
+   * is replaced. Staff "Run screening" is a normal rail action, and a
    * transient Aclid failure during it must not unlearn a completed
    * verification: the screen still exists, and without its id the customer
    * cannot reach it again.
    */
-  async setAclidScreening(jobId: string, aclidScreening: AclidScreening): Promise<Job | null> {
-    const next = aclidScreening.screenId ? aclidScreening : await this.mergeAclidScreening(jobId, aclidScreening);
+  async setAclidScreening(jobId: string, aclidScreening: AclidScreening, options: { rerun?: boolean } = {}): Promise<Job | null> {
+    // A staff rerun that produced no screen replaces the record outright: the job must not keep
+    // pointing at an older screen the newest run knows nothing about.
+    const next = aclidScreening.screenId || options.rerun ? aclidScreening : await this.mergeAclidScreening(jobId, aclidScreening);
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { aclidScreening: next } }, { new: true }).exec();
+  }
+
+  /**
+   * Set only `aclidScreening.customerStatus`. The filter keeps it off a job with no Aclid row:
+   * `$set` on a dotted path there would create a partial object missing the non-null
+   * `homologyStatus`, `startedAt` and `sequenceCount`.
+   */
+  async setAclidCustomerStatus(jobId: string, status: HomologyScreeningStatus): Promise<void> {
+    await this.jobModel.updateOne({ _id: jobId, aclidScreening: { $ne: null } }, { $set: { 'aclidScreening.customerStatus': status } }).exec();
   }
 
   private async mergeAclidScreening(jobId: string, incoming: AclidScreening): Promise<AclidScreening> {
@@ -237,7 +268,7 @@ export class JobService {
       verificationStatus: existing.verificationStatus ?? null,
       decisionStatus: existing.decisionStatus ?? null,
       verificationCompletedAt: existing.verificationCompletedAt ?? null,
-      customerStatus: existing.customerStatus ?? incoming.customerStatus
+      customerStatus: incoming.customerStatus
     };
   }
 

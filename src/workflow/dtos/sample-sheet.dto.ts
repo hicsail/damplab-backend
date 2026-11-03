@@ -21,7 +21,7 @@ export class SampleSheetTemplateUpload {
   key: string;
 }
 
-@InputType({ description: 'An uploaded samples spreadsheet: the key createWorkflowParameterUploadUrls minted for it, and the count read from it.' })
+@InputType({ description: 'An uploaded table file: the key createWorkflowParameterUploadUrls minted for it. The server reads the file to check its columns and count its rows.' })
 export class SampleSheetFileInput {
   @Field()
   key: string;
@@ -35,7 +35,7 @@ export class SampleSheetFileInput {
   @Field(() => Int)
   size: number;
 
-  @Field(() => Int, { description: 'Rows below the header row, as counted when the file was picked.' })
+  @Field(() => Int, { description: 'Ignored. The server reads the uploaded file and stores its own row count; this field is kept so existing clients keep working.' })
   sampleCount: number;
 }
 

@@ -54,7 +54,7 @@ export class InventoryResolver {
   async publicInventoryItems(): Promise<InventoryItem[]> {
     const items = await this.inventoryService.findAllActive();
     return items.map((item) => {
-      const doc = { ...item } as any;
+      const doc = (item as any).toObject ? (item as any).toObject() : { ...item };
       doc.uniqueId = undefined;
       doc.serialNumber = undefined;
       return doc;

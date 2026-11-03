@@ -12,6 +12,16 @@ describe('normalizeSetName', () => {
 });
 
 describe('normalizeSetParameters', () => {
+  it('refuses a new Table with no columns and no staff template (table-upload rule 12)', () => {
+    expect(() => normalizeSetParameters([{ id: 'plate', name: 'Plate map', type: 'table' }])).toThrow('Parameter “Plate map”: a Table needs at least one column.');
+    expect(() => normalizeSetParameters([{ id: 'plate', name: 'Plate map', type: 'table' }])).toThrow(BadRequestException);
+  });
+  it('lets a stored unconfigured Table through an unrelated edit, and refuses the edit that unconfigures one', () => {
+    const bare = { id: 'plate', name: 'Plate map', type: 'sampleSheet' };
+    expect(normalizeSetParameters([{ ...bare, type: 'table', required: true }], [bare])).toEqual([{ ...bare, type: 'table', required: true }]);
+    const configured = { ...bare, tableData: { columns: [{ header: 'A', field: 'a' }] } };
+    expect(() => normalizeSetParameters([bare], [configured])).toThrow('Parameter “Plate map”: a Table needs at least one column.');
+  });
   it('strips paramGroupId and provenance keys', () => {
     expect(normalizeSetParameters([{ id: 'a', name: 'A', paramGroupId: 'g', fromParameterSetId: 'x', fromParameterSetName: 'y' }])).toEqual([{ id: 'a', name: 'A' }]);
   });
@@ -54,4 +64,10 @@ describe('normalizeSetParameters', () => {
     const b = { id: 'b', name: 'B', showIf: { parameterId: 'a', op: 'eq', value: 'x' } };
     expect(() => normalizeSetParameters([a, b])).toThrow('Parameter “A”: “Show only if” forms a loop with another parameter’s condition.');
   });
+});
+
+it('refuses a set parameter whose screening flag breaks the rules (biosecurity-update)', () => {
+  expect(() => normalizeSetParameters([{ id: 'n', name: 'Cycles', type: 'number', screening: true }])).toThrow(
+    'Parameter “Cycles”: Only Text, Table and File Upload parameters can require screening.'
+  );
 });

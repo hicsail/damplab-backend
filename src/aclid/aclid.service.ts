@@ -1,5 +1,7 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
-import { ACLID_POLL_INTERVAL_MS, ACLID_POLL_TIMEOUT_MS, ACLID_REQUEST_TIMEOUT_MS } from './aclid.constants';
+import { HttpException, HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { CustomerScreeningStatus } from '../job/screening-run.model';
+import { customerScreeningStatus } from './aclid-status.util';
+import { ACLID_CUSTOMER_POLL_TIMEOUT_MS, ACLID_DETAILS_MAX_MATCHES_PER_REGION, ACLID_POLL_INTERVAL_MS, ACLID_POLL_TIMEOUT_MS, ACLID_REQUEST_TIMEOUT_MS } from './aclid.constants';
 
 /**
  * Talks to Aclid (https://api.aclid.bio) over HTTP.
@@ -12,9 +14,11 @@ import { ACLID_POLL_INTERVAL_MS, ACLID_POLL_TIMEOUT_MS, ACLID_REQUEST_TIMEOUT_MS
  * screening as unavailable. Only a real regulatory / decision status from Aclid
  * is a verdict.
  *
- * Aclid authenticates with the raw API key in `Authorization` (no `Bearer`).
- * This service never creates customers: KYC is done through Aclid's hosted
- * verification URL, minted per screen by `createVerificationUrl`.
+ * Aclid authenticates with the raw API key in `Authorization` (no `Bearer`). The key comes from
+ * the first non-empty of `ACLID_PROD_API_KEY`, `ACLID_TEST_API_KEY`, then legacy `ACLID_API_KEY`.
+ * Customer screening goes through `POST /v2/customers` and
+ * `GET /v2/customers/{requester_id}`. Hosted KYC remains for the customer page:
+ * the verification URL is minted per screen by `createVerificationUrl`.
  */
 
 export const ACLID_DEFAULT_API_URL = 'https://api.aclid.bio';
@@ -30,6 +34,16 @@ export interface AclidScreenRecord {
   decisionStatus: string | null;
   verificationCompletedAt: string | null;
   findings: Record<string, unknown> | null;
+  /** `match_count`: alignments across every sequence in the screen. */
+  matchCount: number | null;
+  /** `material_count`: unique controlled materials. */
+  materialCount: number | null;
+  /** `length`: cumulative length of every sequence. */
+  totalLength: number | null;
+  /** `material_summary`: material name → MaterialSummary. */
+  materialSummary: Record<string, unknown> | null;
+  /** The body exactly as Aclid sent it (`ReportMetadata`), kept on the screening run. */
+  raw: Record<string, unknown>;
 }
 
 export interface AclidInlineSequence {
@@ -47,6 +61,23 @@ export interface AclidVerificationUrlArgs {
   redirectUrl?: string;
 }
 
+export interface AclidCustomerRecord {
+  requesterId: string;
+  status: CustomerScreeningStatus;
+  verdict: string | null;
+  decisionStatus: string | null;
+  checks: unknown[] | null;
+  counts: Record<string, unknown> | null;
+  raw: Record<string, unknown>;
+}
+
+export interface AclidCreateCustomerArgs {
+  name: string;
+  company: string;
+  email?: string | null;
+  screenId: string;
+}
+
 type JsonObject = Record<string, unknown>;
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -55,6 +86,10 @@ function isJsonObject(value: unknown): value is JsonObject {
 
 function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 /** Aclid's snake_case screen body → our camelCase record. Missing fields are null, never undefined. */
@@ -69,7 +104,12 @@ export function mapAclidScreen(raw: unknown): AclidScreenRecord {
     verificationStatus: stringOrNull(raw.verification_status),
     decisionStatus: stringOrNull(raw.decision_status),
     verificationCompletedAt: stringOrNull(raw.verification_completed_at),
-    findings: isJsonObject(raw.findings) ? raw.findings : null
+    findings: isJsonObject(raw.findings) ? raw.findings : null,
+    matchCount: numberOrNull(raw.match_count),
+    materialCount: numberOrNull(raw.material_count),
+    totalLength: numberOrNull(raw.length),
+    materialSummary: isJsonObject(raw.material_summary) ? raw.material_summary : null,
+    raw
   };
 }
 
@@ -92,26 +132,80 @@ export class AclidScreenPendingError extends HttpException {
   }
 }
 
+/** Aclid answered 403 because the organization does not have the `sanctions` feature switched on. */
+export class AclidFeatureNotEnabledError extends HttpException {
+  constructor(detail: string) {
+    super(`Aclid: ${detail}`, HttpStatus.BAD_GATEWAY);
+  }
+}
+
+/**
+ * A customer Aclid created that has not reached a verdict inside the poll budget.
+ * Carries the latest record so the caller keeps the requester id.
+ */
+export class AclidCustomerPendingError extends HttpException {
+  constructor(readonly customer: AclidCustomerRecord) {
+    super(`Aclid customer ${customer.requesterId} did not finish within ${ACLID_CUSTOMER_POLL_TIMEOUT_MS} ms`, HttpStatus.SERVICE_UNAVAILABLE);
+  }
+}
+
+function mapAclidCustomer(raw: unknown): AclidCustomerRecord {
+  if (!isJsonObject(raw) || typeof raw.requester_id !== 'string' || raw.requester_id.length === 0) {
+    throw new HttpException('Aclid customer response did not include a requester_id', HttpStatus.BAD_GATEWAY);
+  }
+  const review = isJsonObject(raw.review) ? raw.review : null;
+  const verdict = stringOrNull(review?.verdict);
+  const decisionStatus = stringOrNull(raw.decision_status);
+  return {
+    requesterId: raw.requester_id,
+    status: customerScreeningStatus(verdict, decisionStatus),
+    verdict,
+    decisionStatus,
+    checks: Array.isArray(review?.checks) ? review.checks : null,
+    counts: isJsonObject(review?.counts) ? review.counts : null,
+    raw
+  };
+}
+
 /** Time left on a deadline, clamped so a request always gets a live signal. */
 function remainingMs(deadline: number): number {
   return Math.max(1, Math.min(ACLID_REQUEST_TIMEOUT_MS, deadline - Date.now()));
 }
 
+/** Key variables in precedence order: production wins, then the test key, then the legacy name. */
+export const ACLID_KEY_VARIABLES = ['ACLID_PROD_API_KEY', 'ACLID_TEST_API_KEY', 'ACLID_API_KEY'] as const;
+export type AclidKeyVariable = typeof ACLID_KEY_VARIABLES[number];
+
+/** The first non-empty (trimmed) Aclid key and the variable it came from, or null when none is set. */
+export function resolveAclidApiKey(env: NodeJS.ProcessEnv = process.env): { key: string; source: AclidKeyVariable } | null {
+  for (const source of ACLID_KEY_VARIABLES) {
+    const key = env[source]?.trim();
+    if (key) return { key, source };
+  }
+  return null;
+}
+
 @Injectable()
-export class AclidService {
+export class AclidService implements OnModuleInit {
   private readonly logger = new Logger(AclidService.name);
+
+  /** Says which variable supplies the key, never the key itself. */
+  onModuleInit(): void {
+    const resolved = resolveAclidApiKey();
+    this.logger.log(resolved ? `Aclid: key from ${resolved.source}` : 'Aclid: not configured');
+  }
 
   /** True when an API key is configured at all. Without one, Aclid is skipped, not failed. */
   isConfigured(): boolean {
-    return Boolean(process.env.ACLID_API_KEY?.trim());
+    return resolveAclidApiKey() !== null;
   }
 
   private apiKey(): string {
-    const key = process.env.ACLID_API_KEY?.trim();
-    if (!key) {
-      throw new HttpException('Aclid is not configured: set ACLID_API_KEY', HttpStatus.SERVICE_UNAVAILABLE);
+    const resolved = resolveAclidApiKey();
+    if (!resolved) {
+      throw new HttpException('Aclid is not configured: set ACLID_TEST_API_KEY or ACLID_PROD_API_KEY', HttpStatus.SERVICE_UNAVAILABLE);
     }
-    return key;
+    return resolved.key;
   }
 
   private baseUrl(): string {
@@ -148,6 +242,17 @@ export class AclidService {
     const text = await res.text().catch(() => '');
     if (!res.ok) {
       this.logger.warn(`Aclid ${method} ${path} returned ${res.status}`);
+      if (res.status === 403) {
+        let detail: unknown;
+        try {
+          detail = (JSON.parse(text) as JsonObject | null)?.detail;
+        } catch {
+          // Not JSON: an ordinary 403.
+        }
+        if (typeof detail === 'string' && detail.includes('is not enabled for your organization')) {
+          throw new AclidFeatureNotEnabledError(detail);
+        }
+      }
       throw new HttpException(`Aclid returned ${res.status}${text ? `: ${text.slice(0, 500)}` : ''}`, HttpStatus.BAD_GATEWAY);
     }
     if (!text) {
@@ -164,6 +269,18 @@ export class AclidService {
   async getScreen(screenId: string, timeoutMs?: number): Promise<AclidScreenRecord> {
     const raw = await this.request('GET', `/v2/screens/${encodeURIComponent(screenId)}`, undefined, timeoutMs);
     return mapAclidScreen(raw);
+  }
+
+  /**
+   * `GET /v2/screens/{id}/details` — each sequence's matches, findings and regulatory
+   * status, keyed by the name it was sent under (`MatchGroup`). Null while the screen is not
+   * complete: Aclid answers 204 with no body, which `request` returns as null.
+   */
+  async getScreenDetails(screenId: string): Promise<Record<string, unknown> | null> {
+    const raw = await this.request('GET', `/v2/screens/${encodeURIComponent(screenId)}/details?max_match_count_per_region=${ACLID_DETAILS_MAX_MATCHES_PER_REGION}`);
+    if (raw === null) return null;
+    if (!isJsonObject(raw)) throw new HttpException('Aclid returned screen details that are not an object', HttpStatus.BAD_GATEWAY);
+    return raw;
   }
 
   /**
@@ -222,8 +339,8 @@ export class AclidService {
 
   /**
    * `POST /v2/verification_url/` — mint Aclid's hosted KYC page for one screen.
-   * The customer completes verification there; we never create Aclid customers
-   * ourselves.
+   * The customer completes verification there. Creating the Aclid customer for a
+   * job is a separate call, `createCustomer`.
    */
   async createVerificationUrl(args: AclidVerificationUrlArgs): Promise<string> {
     const body: JsonObject = { screen_id: args.screenId };
@@ -236,5 +353,43 @@ export class AclidService {
       throw new HttpException('Aclid verification_url response did not include a url', HttpStatus.BAD_GATEWAY);
     }
     return url;
+  }
+
+  /** `POST /v2/customers` — start sanctions / watchlist screening of one customer, tied to a screen. */
+  async createCustomer(args: AclidCreateCustomerArgs): Promise<{ requesterId: string; status: string }> {
+    const body: JsonObject = { name: args.name, company: args.company, screen_id: args.screenId };
+    if (args.email?.trim()) {
+      body.email = args.email.trim();
+    }
+    const raw = await this.request('POST', '/v2/customers', body);
+    if (!isJsonObject(raw) || typeof raw.requester_id !== 'string' || raw.requester_id.length === 0) {
+      throw new HttpException('Aclid customer response did not include a requester_id', HttpStatus.BAD_GATEWAY);
+    }
+    return { requesterId: raw.requester_id, status: stringOrNull(raw.status) ?? 'unknown' };
+  }
+
+  /** `GET /v2/customers/{requester_id}` — the customer's current review. */
+  async getCustomer(requesterId: string, timeoutMs?: number): Promise<AclidCustomerRecord> {
+    const raw = await this.request('GET', `/v2/customers/${encodeURIComponent(requesterId)}`, undefined, timeoutMs);
+    return mapAclidCustomer(raw);
+  }
+
+  /**
+   * Read the customer until its status is not IN_PROGRESS, for at most
+   * ACLID_CUSTOMER_POLL_TIMEOUT_MS. The first read is immediate. A read error
+   * propagates; running out of budget raises `AclidCustomerPendingError`.
+   */
+  async pollCustomer(requesterId: string): Promise<AclidCustomerRecord> {
+    const deadline = Date.now() + ACLID_CUSTOMER_POLL_TIMEOUT_MS;
+    for (;;) {
+      const latest = await this.getCustomer(requesterId, remainingMs(deadline));
+      if (latest.status !== CustomerScreeningStatus.IN_PROGRESS) {
+        return latest;
+      }
+      if (Date.now() + ACLID_POLL_INTERVAL_MS > deadline) {
+        throw new AclidCustomerPendingError(latest);
+      }
+      await sleep(ACLID_POLL_INTERVAL_MS);
+    }
   }
 }

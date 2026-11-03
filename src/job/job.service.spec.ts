@@ -35,7 +35,7 @@ describe('setAclidScreening', () => {
    * already verified, and Aclid is briefly unreachable. The failing run has no
    * screen id to offer, and it must not take the one we have with it.
    */
-  it('keeps the screen id and the KYC decision when a failed run has no screen of its own', async () => {
+  it('keeps the screen id and the KYC decision, and takes customerStatus from the run', async () => {
     const jobId = '000000000000000000000002';
     const verifiedAt = new Date('2026-09-14T10:00:00.000Z');
     const existing = {
@@ -70,10 +70,43 @@ describe('setAclidScreening', () => {
     expect(written.decisionStatus).toBe('approved');
     expect(written.verificationStatus).toBe('completed');
     expect(written.verificationCompletedAt).toBe(verifiedAt);
-    expect(written.customerStatus).toBe(HomologyScreeningStatus.PASSED);
+    expect(written.customerStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
     // This run genuinely got no homology answer, and says so.
     expect(written.homologyStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
     expect(written.detail).toBe('Aclid unavailable: fetch failed');
+  });
+
+  it('drops the old screen id when a staff rerun produced no screen (M9)', async () => {
+    const jobId = '000000000000000000000004';
+    const existing = {
+      screenId: 'screen-1',
+      homologyStatus: HomologyScreeningStatus.PASSED,
+      verificationStatus: 'completed',
+      decisionStatus: 'approved',
+      sequenceCount: 2,
+      startedAt: new Date('2026-09-14T09:00:00.000Z'),
+      customerStatus: HomologyScreeningStatus.PASSED
+    };
+    const findOneAndUpdate: jest.Mock = jest.fn(() => ({ exec: jest.fn(async () => ({ _id: jobId })) }));
+    const jobModel: any = { findOneAndUpdate, findById: jest.fn(async () => ({ _id: jobId, aclidScreening: existing })) };
+    const service = new JobService(jobModel, {} as any, {} as any, {} as any);
+
+    await service.setAclidScreening(
+      jobId,
+      {
+        screenId: null,
+        homologyStatus: HomologyScreeningStatus.UNAVAILABLE,
+        sequenceCount: 0,
+        startedAt: new Date(),
+        detail: 'No screenable sequences',
+        customerStatus: HomologyScreeningStatus.UNAVAILABLE
+      } as any,
+      { rerun: true }
+    );
+
+    const written = findOneAndUpdate.mock.calls[0][1].$set.aclidScreening;
+    expect(written.screenId).toBeNull();
+    expect(written.customerStatus).toBe(HomologyScreeningStatus.UNAVAILABLE);
   });
 
   it('replaces the record outright when the new run has a screen of its own', async () => {
@@ -95,6 +128,17 @@ describe('setAclidScreening', () => {
     // nothing to read back and nothing to keep.
     expect(findById).not.toHaveBeenCalled();
     expect(findOneAndUpdate.mock.calls[0][1].$set.aclidScreening.screenId).toBe('screen-2');
+  });
+});
+
+describe('setAclidCustomerStatus', () => {
+  it('sets only that field, and only on a job that has an Aclid row', async () => {
+    const updateOne = jest.fn(() => ({ exec: jest.fn(async () => ({ modifiedCount: 1 })) }));
+    const service = new JobService({ updateOne } as any, {} as any, {} as any, {} as any);
+
+    await service.setAclidCustomerStatus('job-1', HomologyScreeningStatus.PASSED);
+
+    expect(updateOne).toHaveBeenCalledWith({ _id: 'job-1', aclidScreening: { $ne: null } }, { $set: { 'aclidScreening.customerStatus': 'PASSED' } });
   });
 });
 

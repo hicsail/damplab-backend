@@ -10,6 +10,7 @@ import { RequirePermission } from '../auth/permissions/permissions.decorator';
 import { Permission } from '../auth/permissions/permission.enum';
 import { normalizeScreeningBatchForGraphql } from './screening-batch-graphql.util';
 
+/** `jobs:view-all` (Administrator, Technician) is the whole gate; there is no per-account switch. */
 @Injectable()
 @Resolver(() => Sequence)
 @UseGuards(AuthRolesGuard)

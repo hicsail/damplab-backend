@@ -179,3 +179,27 @@ the homepage button, `AppBreadcrumbs`' `STATIC` map, and the page's own heading.
 | `createJob` | refuses a node whose operation is hidden from clients unless the caller holds `catalog-editor:read` |
 | `createJob` | refuses, for every caller, a number that breaks its parameter's validation and an "Other" answer with blank text (op-catalog-enhances) |
 | `saveJobWorkflows` | when the caller writes as a customer (no `damplab-staff` role): refuses a number that save changes to a value breaking its parameter's validation, and an "Other" answer that save leaves with blank text. Unchanged answers are not checked; staff saves and `restoreJobVersion` are not checked (op-catalog-enhances) |
+
+## Biosecurity resolver gates (biosecurity-update, biosecurity-tweaks)
+
+Biosecurity belongs to `jobs:view-all` (Administrator, Technician) and to nobody else. There is no
+per-account switch: the `showBiosecurity` Keycloak attribute was retired 2026-11-02 and is ignored.
+A caller without the permission gets FORBIDDEN, and job reads drop `homologyScreening`,
+`aclidScreening` and `screeningBatchIds`. The UI mirrors it with the Screener entry and route, the
+Biosecurity card, and the Review override.
+
+| Operation | Gate |
+|---|---|
+| `jobScreeningRuns(jobId)`, `screeningRun(id)` | `jobs:view-all` |
+| `screeningBatch(id)`, `screeningBatches` | `jobs:view-all` |
+| `createSequencesBatch`, `screenSequencesBatch` | `jobs:view-all` |
+| `rerunJobHomologyScreening` | `jobs:view-all` |
+| `jobAcceptanceScreening(jobId)` | `jobs:view-all`: state and message only, never results |
+| `startJobCustomerVerification` | `jobs:view-all` (was `jobs:view` + membership, 2026-11-02) |
+| `refreshJobAclidScreening` | `jobs:view-all` (was `jobs:view` + membership, 2026-11-02). Never starts a screen or posts a customer. |
+| `jobById` | `jobs:view-all`: the full record |
+| `Job.homologyScreening`, `Job.aclidScreening`, `Job.screeningBatchIds` | field-gated on `jobs:view-all` on every path (`jobsForViewer`, member mutations, nested Jobs); null for anyone else |
+| `ownJobById` | membership; screening fields are removed without `jobs:view-all`, staff get the customer view |
+| `reviewJob` ACCEPT | `@Roles(DamplabStaff)` plus the screening gate, with no role exemption (2026-11-01). Mirrored by the Review modal. Request-changes decisions and a job currently ACCEPTED are not gated. |
+| `reviewJob` with `overrideScreening` | `@Roles(DamplabStaff)`: every Administrator (2026-11-02) |
+| Saving `screening` / `screeningFields` on a parameter | the existing catalog-edit gates of `updateService` / `createService` and the parameter-set mutations; no new gate |

@@ -44,14 +44,17 @@
     "@nestjs/mongoose": "^11.0.3",
     "@nestjs/platform-express": "^11.1.9",
     "@nestjs/terminus": "^11.0.0",
+    "exceljs": "4.4.0",
     "graphql": "^16.6.0",
     "graphql-type-json": "^0.3.2",
     "jsonwebtoken": "^9.0.2",
+    "jszip": "^3.10.2",
     "jwks-rsa": "^3.2.0",
     "mongoose": "^8.20.2",
     "reflect-metadata": "^0.1.13",
     "rimraf": "^6.1.2",
     "rxjs": "^7.2.0",
+    "seqparse": "^0.2.2",
     "uuid": "^11.0.3"
   },
   "devDependencies": {

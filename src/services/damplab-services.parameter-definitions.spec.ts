@@ -10,7 +10,7 @@ const query = <T>(value: T): any => {
 
 const op = (): any => ({ _id: 'op1', name: 'PCR', parameters: [], parameterSetIds: [], allowedConnections: [], protocolIds: [], deliverables: [] });
 
-const build = (): { svc: DampLabServices; model: any } => {
+const build = (files?: any): { svc: DampLabServices; model: any } => {
   const model: any = {
     find: jest.fn(() => query([op()])),
     findById: jest.fn(() => query(op())),
@@ -20,7 +20,7 @@ const build = (): { svc: DampLabServices; model: any } => {
   };
   const inventory = { findByIds: jest.fn().mockResolvedValue([]) };
   const sets = { find: jest.fn(() => query([])) };
-  return { svc: new DampLabServices(model, inventory as any, sets as any), model };
+  return { svc: new DampLabServices(model, inventory as any, sets as any, files), model };
 };
 
 describe('DampLabServices refuses a bad parameter definition', () => {
@@ -95,5 +95,98 @@ describe('DampLabServices refuses a bad “show only if” (show-only-if rule 34
     const input: any = { name: 'New', parameters: [{ id: 'k', name: 'Kit', type: 'string', showIf: { parameterId: 'k', op: 'eq', value: 'x' } }] };
     await expect(svc.create(input)).rejects.toThrow('Parameter “Kit”: “Show only if” cannot refer to the parameter itself.');
     expect(model.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('DampLabServices refuses a Table with no columns and no staff template (table-upload rule 12)', () => {
+  const bare = { id: 'plate', name: 'Plate map', type: 'table' };
+  const MESSAGE = 'Parameter “Plate map”: a Table needs at least one column.';
+
+  it('update: a new unconfigured Table is refused before anything is written', async () => {
+    const { svc, model } = build();
+    await expect(svc.update(op(), { parameters: [bare] } as any)).rejects.toThrow(BadRequestException);
+    await expect(svc.update(op(), { parameters: [bare] } as any)).rejects.toThrow(MESSAGE);
+    expect(model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('update: one already stored that way still saves when the write does not change its type, columns or template', async () => {
+    const { svc, model } = build();
+    const stored = { ...op(), parameters: [bare], ownParameters: [bare] };
+    const parameters = [
+      { ...bare, description: 'now described' },
+      { id: 'n', name: 'Cycles', type: 'number' }
+    ];
+    await svc.update(stored, { parameters } as any);
+    expect(model.updateOne).toHaveBeenCalledWith({ _id: 'op1' }, { parameters });
+  });
+
+  it('update: compares against the operation’s own parameters, not a same-id parameter that came from a set', async () => {
+    const { svc } = build();
+    const fromSet = { ...bare, fromParameterSetId: 'set1' };
+    const stored = { ...op(), parameters: [fromSet], ownParameters: [] };
+    await expect(svc.update(stored, { parameters: [bare] } as any)).rejects.toThrow(MESSAGE);
+  });
+
+  it('update: removing the last column is refused', async () => {
+    const { svc } = build();
+    const configured = { ...bare, tableData: { columns: [{ header: 'A', field: 'a' }] } };
+    const stored = { ...op(), parameters: [configured], ownParameters: [configured] };
+    await expect(svc.update(stored, { parameters: [{ ...bare, tableData: { columns: [] } }] } as any)).rejects.toThrow(MESSAGE);
+  });
+
+  it('update: a Table with columns, and a legacy sample sheet with a staff template, are written', async () => {
+    const { svc, model } = build();
+    const parameters = [
+      { ...bare, tableData: { columns: [{ header: 'Inducer', field: 'inducer' }] } },
+      { id: 'sheet', name: 'Samples', type: 'sampleSheet', templateFile: { key: 'sample-sheet-templates/a.xlsx' } }
+    ];
+    await svc.update(op(), { parameters } as any);
+    expect(model.updateOne).toHaveBeenCalledWith({ _id: 'op1' }, { parameters });
+  });
+
+  it('create: an unconfigured Table is refused', async () => {
+    const { svc, model } = build();
+    await expect(svc.create({ name: 'New', parameters: [bare] } as any)).rejects.toThrow(MESSAGE);
+    expect(model.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('DampLabServices screening rules (biosecurity-update behaviour 4)', () => {
+  const templateOnly = (fields: string[]): any => ({
+    id: 't',
+    name: 'Plate',
+    type: 'table',
+    templateFile: { key: 'sample-sheet-templates/plate.csv' },
+    screening: true,
+    screeningFields: fields
+  });
+
+  it('update: refuses the flag on a Number before anything is written', async () => {
+    const { svc, model } = build();
+    await expect(svc.update(op(), { parameters: [{ id: 'n', name: 'Cycles', type: 'number', screening: true }] } as any)).rejects.toThrow(
+      'Parameter “Cycles”: Only Text, Table and File Upload parameters can require screening.'
+    );
+    expect(model.updateOne).not.toHaveBeenCalled();
+  });
+
+  it('update: a template-only Table is checked against the template header when it can be read', async () => {
+    const files = { isConfigured: true, readObject: jest.fn(async () => Buffer.from('Well,Insert\nA1,ATGC\n')) };
+    const { svc, model } = build(files);
+    await svc.update(op(), { parameters: [templateOnly(['insert'])] } as any);
+    expect(files.readObject).toHaveBeenCalledWith('sample-sheet-templates/plate.csv', 10 * 1024 * 1024);
+    expect(model.updateOne).toHaveBeenCalled();
+    await expect(svc.update(op(), { parameters: [templateOnly(['Vector'])] } as any)).rejects.toThrow("Parameter “Plate”: screening column “Vector” is not in the template's header.");
+  });
+
+  it('create: the template check skips when storage is unconfigured or the read fails', async () => {
+    await expect(build({ isConfigured: false, readObject: jest.fn() }).svc.create({ name: 'New', parameters: [templateOnly(['Vector'])] } as any)).resolves.toBeDefined();
+    const failing = {
+      isConfigured: true,
+      readObject: jest.fn(async () => {
+        throw new Error('NoSuchKey');
+      })
+    };
+    await expect(build(failing).svc.create({ name: 'New', parameters: [templateOnly(['Vector'])] } as any)).resolves.toBeDefined();
+    await expect(build().svc.create({ name: 'New', parameters: [templateOnly(['Vector'])] } as any)).resolves.toBeDefined();
   });
 });

@@ -4,3 +4,7 @@ export const ACLID_POLL_INTERVAL_MS = 3000;
 export const ACLID_POLL_TIMEOUT_MS = 120_000;
 /** Per-request ceiling, so one hung socket cannot eat the whole poll budget. */
 export const ACLID_REQUEST_TIMEOUT_MS = 30_000;
+/** `max_match_count_per_region` on `GET /v2/screens/{id}/details` (Aclid's default and our ask). */
+export const ACLID_DETAILS_MAX_MATCHES_PER_REGION = 25;
+/** The budget for polling one customer to a verdict. */
+export const ACLID_CUSTOMER_POLL_TIMEOUT_MS = 60_000;

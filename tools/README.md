@@ -12,7 +12,8 @@ The five things behind `PrivateRouteCatalogEditor` (`/edit`), plus one dependenc
 
 | Exported | Local collection |
 |---|---|
-| Operations (services) | `damplabservices` |
+| Operations (services) — own parameters + `parameterSetIds` | `damplabservices` |
+| Parameter Sets | `parametersets` |
 | Categories | `categories` |
 | Bundles | `bundles` |
 | Inventory | `inventoryitems` |

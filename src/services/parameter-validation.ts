@@ -88,8 +88,12 @@ export function effectiveValidation(param: unknown): string {
 /** Why a parameter definition may not be saved, or null. Checks only the fields this module owns. */
 export function parameterDefinitionError(param: unknown): string | null {
   if (!param || typeof param !== 'object') return null;
-  const p = param as { id?: unknown; name?: unknown; type?: unknown; validation?: unknown; display?: unknown; allowMultipleValues?: unknown };
+  const p = param as { id?: unknown; name?: unknown; type?: unknown; validation?: unknown; display?: unknown; allowMultipleValues?: unknown; matrix?: unknown };
   const label = typeof p.name === 'string' && p.name.trim() !== '' ? p.name.trim() : String(p.id ?? '');
+  // Answers are stored under the parameter's id, and a file is uploaded only for a parameter that has one.
+  if ((p.type === 'file' || p.type === 'table' || p.type === 'sampleSheet') && (typeof p.id !== 'string' || p.id.trim() === '')) {
+    return `Parameter “${label}”: a File Upload or Table parameter needs an id.`;
+  }
   const validation = typeof p.validation === 'string' ? p.validation.trim() : '';
   if (validation !== '') {
     if (p.type !== 'number') return `Parameter “${label}”: only Number parameters can have a validation.`;
@@ -97,8 +101,53 @@ export function parameterDefinitionError(param: unknown): string | null {
     if ('error' in parsed) return `Parameter “${label}”: ${parsed.error}`;
   }
   if (p.display !== undefined && p.display !== null) {
-    if (p.display !== 'checkboxes') return `Parameter “${label}”: unknown display “${String(p.display)}”.`;
-    if (p.type !== 'dropdown' || p.allowMultipleValues !== true) return `Parameter “${label}”: “checkboxes” needs a dropdown that allows multiple values.`;
+    // Both are a multi-value dropdown: tick-boxes, or one list in which several options are chosen.
+    if (p.display !== 'checkboxes' && p.display !== 'multiselect') return `Parameter “${label}”: unknown display “${String(p.display)}”.`;
+    if (p.type !== 'dropdown' || p.allowMultipleValues !== true) return `Parameter “${label}”: “${p.display}” needs a dropdown that allows multiple values.`;
   }
+  // "Matrix": `<name>;<column>`, laid out in a grid on the order form. Mirrors damplab-ui/src/utils/parameterMatrix.ts.
+  if (p.matrix !== undefined && p.matrix !== null && !(typeof p.matrix === 'string' && p.matrix.trim() === '')) {
+    const match = typeof p.matrix === 'string' ? /^([^;]+);\s*(\d+)$/.exec(p.matrix.trim()) : null;
+    if (!match || !match[1].trim() || Number(match[2]) < 1) return `Parameter “${label}”: write the matrix as name;column, e.g. matrixA;2 (the column is 1 or more).`;
+    if (p.type === 'table' || p.type === 'sampleSheet') return `Parameter “${label}”: a Table cannot be placed in a matrix.`;
+  }
+  const screening = screeningRuleViolation(param);
+  if (screening) return `Parameter “${label}”: ${screening}`;
   return null;
+}
+
+const isTableTypeName = (type: unknown): boolean => type === 'table' || type === 'sampleSheet';
+
+/** A Table's column headers, trimmed, blanks dropped: the same rule as sample-sheet.util's `expectedColumns`. */
+const expectedColumns = (param: unknown): string[] => {
+  const columns = (param as { tableData?: { columns?: unknown } | null } | null)?.tableData?.columns;
+  if (!Array.isArray(columns)) return [];
+  return columns.map((c) => (c && typeof c === 'object' && typeof (c as { header?: unknown }).header === 'string' ? (c as { header: string }).header.trim() : '')).filter((h) => h !== '');
+};
+
+/**
+ * The screening flag's rules (biosecurity-update). `screening: true` marks a Text whose value
+ * is a sequence, a File Upload whose file holds sequences, or a Table whose `screeningFields` columns hold sequences. A Table defined
+ * only by a staff template has no columns here: `DampLabServices.assertScreeningTemplatesMatch`
+ * checks it against the template's header instead.
+ *
+ * Mirrored in damplab-ui/src/utils/parameterValidation.ts (same sentences). Keep the two in step.
+ */
+export function screeningRuleViolation(param: unknown): string | null {
+  if (!param || typeof param !== 'object') return null;
+  const p = param as { type?: unknown; screening?: unknown; screeningFields?: unknown };
+  const isTable = isTableTypeName(p.type);
+  if (p.screening !== undefined && p.screening !== null && typeof p.screening !== 'boolean') return '“Requires screening” must be true or false.';
+  if (p.screening === true && p.type !== 'string' && p.type !== 'file' && !isTable) return 'Only Text, Table and File Upload parameters can require screening.';
+  const hasFields = p.screeningFields !== undefined && p.screeningFields !== null;
+  if (hasFields && !isTable) return 'Only a Table has screening columns.';
+  if (hasFields && (!Array.isArray(p.screeningFields) || p.screeningFields.some((field) => typeof field !== 'string'))) return 'Screening columns must be a list of column names.';
+  if (p.screening !== true || !isTable) return null;
+  const fields = ((p.screeningFields as string[] | undefined) ?? []).map((field) => field.trim()).filter((field) => field !== '');
+  if (fields.length === 0) return 'A Table that requires screening needs at least one screening column.';
+  const columns = expectedColumns(param);
+  if (columns.length === 0) return null;
+  const known = new Set(columns.map((column) => column.toLowerCase()));
+  const unknown = fields.find((field) => !known.has(field.toLowerCase()));
+  return unknown ? `Screening column “${unknown}” is not one of this Table's columns.` : null;
 }

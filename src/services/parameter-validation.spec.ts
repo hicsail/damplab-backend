@@ -1,4 +1,4 @@
-import { checkValue, effectiveValidation, parameterDefinitionError, parseValidation, ruleMessage, ValidationRule } from './parameter-validation';
+import { checkValue, effectiveValidation, parameterDefinitionError, parseValidation, ruleMessage, screeningRuleViolation, ValidationRule } from './parameter-validation';
 
 const rules = (text: string): ValidationRule[] => {
   const parsed = parseValidation(text);
@@ -98,6 +98,13 @@ describe('effectiveValidation (rule 24)', () => {
 });
 
 describe('parameterDefinitionError', () => {
+  // An answer is stored under its parameter's id; a file parameter without one would never have its file uploaded.
+  it.each(['file', 'table', 'sampleSheet'])('refuses a %s parameter with no id', (type) => {
+    expect(parameterDefinitionError({ name: 'Plasmid map', type })).toBe('Parameter “Plasmid map”: a File Upload or Table parameter needs an id.');
+    expect(parameterDefinitionError({ id: '  ', name: 'Plasmid map', type })).toBe('Parameter “Plasmid map”: a File Upload or Table parameter needs an id.');
+    expect(parameterDefinitionError({ id: 'map', name: 'Plasmid map', type })).toBeNull();
+  });
+
   it('accepts a parameter with neither new field', () => {
     expect(parameterDefinitionError({ id: 'a', name: 'A', type: 'string' })).toBeNull();
   });
@@ -110,6 +117,25 @@ describe('parameterDefinitionError', () => {
   it('refuses a validation on a non-number', () => {
     expect(parameterDefinitionError({ id: 't', name: 'Notes', type: 'string', validation: '>0' })).toBe('Parameter “Notes”: only Number parameters can have a validation.');
   });
+  it('accepts a matrix written as name;column, on anything but a Table', () => {
+    expect(parameterDefinitionError({ id: 'd', name: 'AFP Dilution', type: 'dropdown', matrix: 'matrixA;2' })).toBeNull();
+    expect(parameterDefinitionError({ id: 'd', name: 'AFP Dilution', type: 'dropdown', matrix: ' ' })).toBeNull();
+    for (const bad of ['matrixA', 'matrixA;0', ';2', 'matrixA;x', 7]) {
+      expect(parameterDefinitionError({ id: 'd', name: 'AFP Dilution', type: 'dropdown', matrix: bad })).toBe(
+        'Parameter “AFP Dilution”: write the matrix as name;column, e.g. matrixA;2 (the column is 1 or more).'
+      );
+    }
+    expect(parameterDefinitionError({ id: 'd', name: 'Plate', type: 'table', matrix: 'm;1' })).toBe('Parameter “Plate”: a Table cannot be placed in a matrix.');
+  });
+
+  it('accepts multiselect on a multi-value dropdown only', () => {
+    expect(parameterDefinitionError({ id: 'd', name: 'Assays', type: 'dropdown', allowMultipleValues: true, display: 'multiselect' })).toBeNull();
+    expect(parameterDefinitionError({ id: 'd', name: 'Assays', type: 'dropdown', allowMultipleValues: false, display: 'multiselect' })).toBe(
+      'Parameter “Assays”: “multiselect” needs a dropdown that allows multiple values.'
+    );
+    expect(parameterDefinitionError({ id: 'd', name: 'Assays', type: 'dropdown', allowMultipleValues: true, display: 'slider' })).toBe('Parameter “Assays”: unknown display “slider”.');
+  });
+
   it('accepts checkboxes on a multi-value dropdown only', () => {
     expect(parameterDefinitionError({ id: 'd', name: 'Type', type: 'dropdown', allowMultipleValues: true, display: 'checkboxes' })).toBeNull();
     expect(parameterDefinitionError({ id: 'd', name: 'Type', type: 'dropdown', allowMultipleValues: false, display: 'checkboxes' })).toBe(
@@ -124,5 +150,53 @@ describe('parameterDefinitionError', () => {
   });
   it('falls back to the id when the parameter has no name', () => {
     expect(parameterDefinitionError({ id: 'n', type: 'string', validation: '>0' })).toBe('Parameter “n”: only Number parameters can have a validation.');
+  });
+});
+
+describe('screening definition rules (biosecurity-update behaviour 4)', () => {
+  const text = (over: Record<string, unknown> = {}): Record<string, unknown> => ({ id: 'insert', name: 'Insert', type: 'string', ...over });
+  const table = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    id: 'plate',
+    name: 'Plate',
+    type: 'table',
+    tableData: { columns: [{ header: 'Well' }, { header: 'Insert' }] },
+    ...over
+  });
+
+  it('accepts a flagged Text, a flagged Table with known columns, and anything unflagged', () => {
+    expect(screeningRuleViolation(text({ screening: true }))).toBeNull();
+    expect(screeningRuleViolation(table({ screening: true, screeningFields: [' insert '] }))).toBeNull();
+    expect(screeningRuleViolation({ ...table({ screening: true, screeningFields: ['Insert'] }), type: 'sampleSheet' })).toBeNull();
+    expect(screeningRuleViolation({ id: 'f', name: 'Seqs', type: 'file', screening: true })).toBeNull();
+    expect(screeningRuleViolation(text())).toBeNull();
+    expect(screeningRuleViolation(text({ screening: false }))).toBeNull();
+  });
+
+  it('refuses the flag on any other type', () => {
+    expect(screeningRuleViolation({ id: 'n', name: 'Cycles', type: 'number', screening: true })).toBe('Only Text, Table and File Upload parameters can require screening.');
+    expect(screeningRuleViolation({ id: 'f', name: 'Seqs', type: 'file', screening: true, screeningFields: ['Insert'] })).toBe('Only a Table has screening columns.');
+    expect(screeningRuleViolation(text({ screening: 'yes' }))).toBe('“Requires screening” must be true or false.');
+  });
+
+  it('refuses screening columns on a non-table, and a non-list', () => {
+    expect(screeningRuleViolation(text({ screening: true, screeningFields: ['Insert'] }))).toBe('Only a Table has screening columns.');
+    expect(screeningRuleViolation(table({ screening: true, screeningFields: 'Insert' }))).toBe('Screening columns must be a list of column names.');
+  });
+
+  it('refuses a flagged Table with no screening columns', () => {
+    expect(screeningRuleViolation(table({ screening: true }))).toBe('A Table that requires screening needs at least one screening column.');
+    expect(screeningRuleViolation(table({ screening: true, screeningFields: [' '] }))).toBe('A Table that requires screening needs at least one screening column.');
+  });
+
+  it('refuses a screening column the Table does not have, case-insensitively', () => {
+    expect(screeningRuleViolation(table({ screening: true, screeningFields: ['insert', 'Vector'] }))).toBe("Screening column “Vector” is not one of this Table's columns.");
+  });
+
+  it('leaves a template-only Table to the template check', () => {
+    expect(screeningRuleViolation({ id: 't', name: 'T', type: 'table', templateFile: { key: 'sample-sheet-templates/a.xlsx' }, screening: true, screeningFields: ['Anything'] })).toBeNull();
+  });
+
+  it('parameterDefinitionError reports it with the parameter label', () => {
+    expect(parameterDefinitionError({ id: 'n', name: 'Cycles', type: 'number', screening: true })).toBe('Parameter “Cycles”: Only Text, Table and File Upload parameters can require screening.');
   });
 });

@@ -8,7 +8,7 @@ import { hiddenParameterIds } from '../services/parameter-conditions';
  * The server-side twin of the client form's inline errors: a submitted number
  * must obey its parameter's validation, and "Other" needs its text.
  *
- * Runs in `createJob`, beside `assertMaySubmitHiddenServices`, over the
+ * Runs in `createJob`, beside `assertMaySubmitEquipmentUse`, over the
  * already-piped workflows (each node carries its populated service). It applies
  * to every caller. Staff edits of a submitted job (`addWorkflowToJob`, a staff
  * save, a version restore) are not checked: jobs already submitted are never

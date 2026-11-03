@@ -31,6 +31,7 @@ export class ParameterSetsService {
     const name = normalizeSetName(input.name);
     await this.assertNameFree(name);
     const parameters = normalizeSetParameters(input.parameters);
+    await this.dampLabServices.assertScreeningTemplatesMatch(parameters);
     return this.model.create({ name, description: input.description?.trim() || undefined, parameters });
   }
 
@@ -44,7 +45,8 @@ export class ParameterSetsService {
     }
     if (changes.description !== undefined) patch.description = changes.description?.trim() || null;
     if (changes.parameters !== undefined && changes.parameters !== null) {
-      patch.parameters = normalizeSetParameters(changes.parameters);
+      patch.parameters = normalizeSetParameters(changes.parameters, existing.parameters);
+      await this.dampLabServices.assertScreeningTemplatesMatch(patch.parameters);
       await this.assertNoClashOnOperations(existing, patch.parameters as any[], (patch.name as string) ?? existing.name);
     }
     await this.model.updateOne({ _id: id }, { $set: patch }).exec();

@@ -61,6 +61,7 @@ interface KeycloakUser {
   firstName?: string;
   lastName?: string;
   email?: string;
+  attributes?: Record<string, string[]>;
 }
 
 @Injectable()

@@ -1,7 +1,7 @@
 import { ParameterSnapshotEntry } from '../models/parameter-snapshot.model';
 import { getMultiValueParamIds, normalizeFormDataToArray } from './form-data.util';
 import { isEmptyParamValue } from '../../job-version/param-values.util';
-import { SAMPLE_SHEET_PARAM_TYPE } from './sample-sheet.util';
+import { holdsStorageKey, SAMPLE_SHEET_PARAM_TYPE, TABLE_PARAM_TYPE } from './sample-sheet.util';
 import { isOtherTextEntryId, otherLabel, otherTextEntryId, otherTextParentId } from './other-option.util';
 import { hiddenParameterIds } from '../../services/parameter-conditions';
 import {
@@ -24,7 +24,7 @@ const RESERVED_PARAM_NAMES: Readonly<Record<string, string>> = {
 };
 
 const OPTION_TYPES = new Set(['dropdown', 'enum']);
-const FILE_TYPES = new Set(['file', SAMPLE_SHEET_PARAM_TYPE]);
+const FILE_TYPES = new Set(['file', TABLE_PARAM_TYPE, SAMPLE_SHEET_PARAM_TYPE]);
 
 interface ParamDef {
   id: string;
@@ -50,7 +50,9 @@ function fileNameOf(value: unknown): string | undefined {
 
 function displayOne(param: ParamDef | undefined, value: unknown, otherText?: unknown): string {
   if (value === null || value === undefined || value === '') return '';
-  if (param && typeof param.type === 'string' && FILE_TYPES.has(param.type)) return fileNameOf(value) ?? '[File attached]';
+  // A `table` answer is a file only when it holds a storage key; one written before Tables were files displays below as it always did.
+  const isFile = param && typeof param.type === 'string' && FILE_TYPES.has(param.type) && (param.type !== TABLE_PARAM_TYPE || holdsStorageKey(value));
+  if (isFile) return fileNameOf(value) ?? '[File attached]';
   if (param && typeof param.type === 'string' && OPTION_TYPES.has(param.type) && Array.isArray(param.options)) {
     const option = (param.options as Array<{ id?: unknown; name?: unknown }>).find((o) => o && String(o.id) === String(value));
     return option && typeof option.name === 'string' && option.name.trim() !== '' ? otherLabel(option.name, otherText) : String(value);

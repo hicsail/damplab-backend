@@ -333,6 +333,33 @@ describe('saveVersion', () => {
     expect((created as any).sourceJobVersionNumber).toBeUndefined();
   });
 
+  it('writes the periods it is given into the first version and its prose', async () => {
+    // createForJob seeds these from the job's Equipment Use dates; the prose has
+    // to describe them, not the single timeline-derived period.
+    const { service, sow, versions, job } = makeHarness();
+    versions.splice(0);
+    const periods = [
+      { startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: 5, label: 'Confocal' },
+      { startDate: new Date('2026-11-20T00:00:00.000Z'), durationDays: 5, label: 'Flow cytometer' }
+    ];
+
+    const created: any = await service.createInitialVersion(sow, job, staff.sub, { periods });
+
+    expect(created.inputs.periods).toEqual(periods);
+    const prose = created.fields.find((f: any) => f.key === 'periodOfPerformance').value;
+    expect(prose).toContain('Confocal: 5 days, from November 2, 2026 through November 6, 2026');
+    expect(prose).toContain('Flow cytometer: 5 days, from November 20, 2026 through November 24, 2026');
+  });
+
+  it('still derives one period from the timeline when given none', async () => {
+    const { service, sow, versions, job } = makeHarness();
+    versions.splice(0);
+
+    const created: any = await service.createInitialVersion(sow, job, staff.sub);
+
+    expect(created.inputs.periods).toEqual([{ startDate: new Date('2026-03-03T00:00:00.000Z'), durationDays: 14, label: undefined }]);
+  });
+
   it('appends a draft and advances the staff pointer only', async () => {
     const { service, sow } = makeHarness();
     const v = await service.saveVersion(SOW_ID, saveInput(1, 'first pass'), staff);
@@ -399,6 +426,40 @@ describe('saveVersion', () => {
     // through typed and still leave the history entry unlabelled.
     const { service } = makeHarness();
     await expect(service.saveVersion(SOW_ID, saveInput(1, '   '), staff)).rejects.toThrow(BadRequestException);
+  });
+
+  it('refuses a period that ends before it starts, naming it, and writes nothing', async () => {
+    // The server twin of the editor's End picker, which cannot pick an End
+    // before Start. Checked before any billing write, so nothing is left behind.
+    const { service, versions, sow } = makeHarness();
+    const before = versions.length;
+    const input = saveInput(1);
+    input.inputs.periods = [
+      { startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: 14 },
+      { startDate: new Date('2026-11-20T00:00:00.000Z'), durationDays: 0 }
+    ];
+
+    await expect(service.saveVersion(SOW_ID, input, staff)).rejects.toThrow(new BadRequestException('Period 2 ends before it starts.'));
+    expect(versions).toHaveLength(before);
+    expect(sow.currentVersionNumber).toBe(1);
+  });
+
+  it('names a labelled period by its position and label', async () => {
+    const { service } = makeHarness();
+    const input = saveInput(1);
+    input.inputs.periods = [{ startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: -3, label: 'Confocal' }];
+
+    await expect(service.saveVersion(SOW_ID, input, staff)).rejects.toThrow('Period 1 (Confocal) ends before it starts.');
+  });
+
+  it('accepts a one-day period', async () => {
+    const { service } = makeHarness();
+    const input = saveInput(1);
+    input.inputs.periods = [{ startDate: new Date('2026-11-02T00:00:00.000Z'), durationDays: 1 }];
+
+    const saved = await service.saveVersion(SOW_ID, input, staff);
+
+    expect(saved.inputs.periods[0].durationDays).toBe(1);
   });
 
   it('still lets the canned event versions through without an author note', async () => {
