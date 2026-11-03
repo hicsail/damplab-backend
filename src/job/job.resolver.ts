@@ -630,6 +630,19 @@ export class JobResolver {
       this.logger.warn(`Keycloak Admin API not configured; updating job categories for sub=${job.sub} without Keycloak sync`);
     }
 
+    // The accepted fingerprint includes the category, so without a restamp every
+    // accepted job here would fail the send gate's acceptance check for good:
+    // Recalculate-and-save fixes the document, and nothing short of
+    // re-accepting moved this. Only jobs whose figures still matched what was
+    // accepted are carried over — a lock that was already there is about
+    // something else and must survive the category change.
+    const before = job.sub ? await this.jobService.findBySub(job.sub) : [job];
+    const stillAsAccepted = new Set<string>();
+    for (const j of before) {
+      const accepted = (j as any).acceptedBillingFingerprint;
+      if (accepted && (await this.sowService.jobBillingFingerprint(j)) === accepted) stillAsAccepted.add(String(j._id));
+    }
+
     let updatedJobs: Job[];
     if (job.sub) {
       updatedJobs = await this.jobService.updateCustomerCategoryForSub(job.sub, customerCategory);
@@ -638,8 +651,22 @@ export class JobResolver {
       updatedJobs = single ? [single] : [];
     }
 
+    // Each job stands alone. The categories above are already written, so one
+    // SOW that cannot reprice — an old document billing a service since deleted
+    // from the catalog, say — must not abandon every job after it, including
+    // the one staff are working on. That SOW keeps its old figures and is
+    // reported here; its own Recalculate will surface the same error.
     for (const j of updatedJobs) {
-      await this.sowService.syncServicesFromJobWorkflows(String(j._id));
+      try {
+        await this.sowService.syncServicesFromJobWorkflows(String(j._id));
+      } catch (err) {
+        this.logger.warn(`Pricing category change: could not reprice the SOW for job ${String(j._id)}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      // Independent of the sync: the fingerprint is read off the job's own
+      // workflows and category, not off the SOW.
+      if (stillAsAccepted.has(String(j._id))) {
+        await this.jobService.setAcceptedBillingFingerprint(String(j._id), await this.sowService.jobBillingFingerprint(j));
+      }
     }
 
     const updatedJob = updatedJobs.find((j) => String(j._id) === String(jobId)) ?? (await this.jobService.findById(jobId));

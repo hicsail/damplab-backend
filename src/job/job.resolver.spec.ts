@@ -931,7 +931,7 @@ describe('JobResolver — client ownership consequences (B29, B31)', () => {
     const setUserCustomerCategory = jest.fn(async () => undefined);
     const updateCustomerCategoryForSub = jest.fn(async () => [job]);
     const resolver = new JobResolver(
-      { findById: async () => job, updateCustomerCategoryForSub } as any,
+      { findById: async () => job, findBySub: async () => [job], updateCustomerCategoryForSub } as any,
       {} as any,
       {} as any,
       {} as any,
@@ -948,6 +948,81 @@ describe('JobResolver — client ownership consequences (B29, B31)', () => {
     await resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS);
     expect(setUserCustomerCategory).toHaveBeenCalledWith('client-kc', CustomerCategory.INTERNAL_CUSTOMERS);
     expect(updateCustomerCategoryForSub).toHaveBeenCalledWith('client-kc', CustomerCategory.INTERNAL_CUSTOMERS);
+  });
+
+  describe('changeJobCustomerCategory keeps an accepted job sendable', () => {
+    // The fingerprint folds in the category, so the stand-in derives it from the
+    // job's current category the way SOWService.jobBillingFingerprint does.
+    const fingerprintOf = (j: any): string => `lines#${j.customerCategory}`;
+
+    function harness(jobs: any[], failSyncFor: string[] = []): { resolver: JobResolver; setAcceptedBillingFingerprint: jest.Mock; sync: jest.Mock } {
+      const byId = new Map(jobs.map((j) => [j._id, j]));
+      const setAcceptedBillingFingerprint = jest.fn(async () => undefined);
+      const jobService: any = {
+        findById: async (id: string) => byId.get(id),
+        findBySub: async () => jobs.map((j) => ({ ...j })),
+        updateCustomerCategoryForSub: async (_sub: string, customerCategory: string) => jobs.map((j) => ({ ...j, customerCategory })),
+        updateCustomerCategory: async (id: string, customerCategory: string) => ({ ...byId.get(id), customerCategory }),
+        setAcceptedBillingFingerprint
+      };
+      const sync = jest.fn(async (id: string) => {
+        if (failSyncFor.includes(id)) throw new Error('Service with ID dead-service not found');
+      });
+      const sowService: any = { syncServicesFromJobWorkflows: sync, jobBillingFingerprint: async (j: any) => fingerprintOf(j) };
+      const keycloak: any = { isConfigured: () => true, setUserCustomerCategory: async () => undefined };
+      const resolver = new JobResolver(jobService, {} as any, {} as any, {} as any, {} as any, sowService, {} as any, {} as any, {} as any, keycloak, {} as any, {} as any, {} as any);
+      return { resolver, setAcceptedBillingFingerprint, sync };
+    }
+
+    it('one job whose SOW cannot reprice (a deleted catalog service) does not stop the rest of the account', async () => {
+      // The real failure: an old test job's SOW bills a service since deleted from
+      // the catalog, so its sync throws — and it sorted before the job being changed.
+      const broken = { _id: 'old-job', sub: 'client-kc', customerCategory: 'A' };
+      const target = { _id: 'job-1', sub: 'client-kc', customerCategory: 'A', acceptedBillingFingerprint: 'lines#A' };
+      const { resolver, setAcceptedBillingFingerprint, sync } = harness([broken, target], ['old-job']);
+      await expect(resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS)).resolves.toBeDefined();
+      expect(sync.mock.calls.map((c: any[]) => c[0])).toEqual(['old-job', 'job-1']);
+      expect(setAcceptedBillingFingerprint).toHaveBeenCalledWith('job-1', `lines#${CustomerCategory.INTERNAL_CUSTOMERS}`);
+    });
+
+    it('still restamps a job whose own SOW sync fails — the fingerprint comes from the job, not the SOW', async () => {
+      const target = { _id: 'job-1', sub: 'client-kc', customerCategory: 'A', acceptedBillingFingerprint: 'lines#A' };
+      const { resolver, setAcceptedBillingFingerprint } = harness([target], ['job-1']);
+      await resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS);
+      expect(setAcceptedBillingFingerprint).toHaveBeenCalledWith('job-1', `lines#${CustomerCategory.INTERNAL_CUSTOMERS}`);
+    });
+
+    it('restamps the accepted fingerprint with the new category, so a refreshed SOW can be sent', async () => {
+      const job = { _id: 'job-1', sub: 'client-kc', customerCategory: 'EXTERNAL_CUSTOMER_ACADEMIC', acceptedBillingFingerprint: 'lines#EXTERNAL_CUSTOMER_ACADEMIC' };
+      const { resolver, setAcceptedBillingFingerprint } = harness([job]);
+      await resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS);
+      expect(setAcceptedBillingFingerprint).toHaveBeenCalledWith('job-1', `lines#${CustomerCategory.INTERNAL_CUSTOMERS}`);
+    });
+
+    it('restamps every accepted job under the account, and leaves never-accepted jobs alone', async () => {
+      const accepted = { _id: 'job-1', sub: 'client-kc', customerCategory: 'A', acceptedBillingFingerprint: 'lines#A' };
+      const other = { _id: 'job-2', sub: 'client-kc', customerCategory: 'A', acceptedBillingFingerprint: 'lines#A' };
+      const unaccepted = { _id: 'job-3', sub: 'client-kc', customerCategory: 'A' };
+      const { resolver, setAcceptedBillingFingerprint } = harness([accepted, other, unaccepted]);
+      await resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS);
+      expect(setAcceptedBillingFingerprint.mock.calls.map((c: any[]) => c[0]).sort()).toEqual(['job-1', 'job-2']);
+    });
+
+    it('does not launder drift that was already there before the category change', async () => {
+      // Accepted figures no longer match the job before staff touch the category:
+      // that lock is about something else, and must survive.
+      const drifted = { _id: 'job-1', sub: 'client-kc', customerCategory: 'A', acceptedBillingFingerprint: 'other-lines#A' };
+      const { resolver, setAcceptedBillingFingerprint } = harness([drifted]);
+      await resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS);
+      expect(setAcceptedBillingFingerprint).not.toHaveBeenCalled();
+    });
+
+    it('handles a job with no client account (single-job path)', async () => {
+      const job = { _id: 'job-1', customerCategory: 'A', acceptedBillingFingerprint: 'lines#A' };
+      const { resolver, setAcceptedBillingFingerprint } = harness([job]);
+      await resolver.changeJobCustomerCategory('job-1', CustomerCategory.INTERNAL_CUSTOMERS);
+      expect(setAcceptedBillingFingerprint).toHaveBeenCalledWith('job-1', `lines#${CustomerCategory.INTERNAL_CUSTOMERS}`);
+    });
   });
 
   it('staff "created by me" also finds jobs they submitted for a client; a client never gets that widening', async () => {
