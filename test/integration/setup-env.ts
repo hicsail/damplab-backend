@@ -94,5 +94,7 @@ process.env.KEYCLOAK_CLIENT_SECRET = '';
  * would put a developer's key back. An integration run must not call Aclid with the developer's
  * key, and a screening run with no providers configured completes without calling anyone.
  */
+process.env.ACLID_PROD_API_KEY = '';
+process.env.ACLID_TEST_API_KEY = '';
 process.env.ACLID_API_KEY = '';
 process.env.SECUREDNA_API_URL = '';

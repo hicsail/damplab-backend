@@ -3,8 +3,7 @@ import { CustomerScreeningStatus, JobAcceptanceScreening, JobAcceptanceScreening
 
 /**
  * What the acceptance gate tells staff. The wording is a contract with the docs and the UI, and
- * none of it names a finding, a file or a column: a staff member without biosecurity access
- * reads these too.
+ * none of it names a finding, a file or a column.
  */
 export const ACCEPTANCE_MESSAGES = {
   NOT_RUN: 'This job has not been screened. Run screening before accepting it.',
@@ -19,8 +18,7 @@ export const ACCEPTANCE_MESSAGES = {
   CUSTOMER_IN_PROGRESS: 'Customer screening is still in progress. Refresh results, then accept this job.',
   CUSTOMER_UNAVAILABLE: 'Customer screening could not be completed on the last run. Rerun screening before accepting this job.',
   CUSTOMER_NOT_SCREENED: 'Customer screening did not run on the last run. Rerun screening before accepting this job.',
-  CHECK_FAILED: 'Could not check this job’s screening. Try again, or rerun screening.',
-  NO_BIOSECURITY_ACCESS: ' You do not have biosecurity access, so someone who does must screen this job first.'
+  CHECK_FAILED: 'Could not check this job’s screening. Try again, or rerun screening.'
 } as const;
 
 /**
@@ -37,7 +35,6 @@ export interface AcceptanceDecisionInput {
   jobState: JobState;
   newestRun: ScreeningRun | null;
   currentFingerprint: string;
-  callerCanScreen: boolean;
 }
 
 type Blocked = { state: JobAcceptanceScreeningState; message: string };
@@ -47,7 +44,7 @@ export function decideAcceptanceScreening(input: AcceptanceDecisionInput): JobAc
   if (!isAcceptanceGatedState(input.jobState)) return { state: JobAcceptanceScreeningState.NOT_REQUIRED, message: null };
   const blocked = firstBlock(input);
   if (!blocked) return { state: JobAcceptanceScreeningState.CLEAR, message: null };
-  return { state: blocked.state, message: blocked.message + (input.callerCanScreen ? '' : ACCEPTANCE_MESSAGES.NO_BIOSECURITY_ACCESS) };
+  return blocked;
 }
 
 function firstBlock({ newestRun: run, currentFingerprint }: AcceptanceDecisionInput): Blocked | null {

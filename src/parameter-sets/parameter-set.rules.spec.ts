@@ -67,5 +67,7 @@ describe('normalizeSetParameters', () => {
 });
 
 it('refuses a set parameter whose screening flag breaks the rules (biosecurity-update)', () => {
-  expect(() => normalizeSetParameters([{ id: 'n', name: 'Cycles', type: 'number', screening: true }])).toThrow('Parameter “Cycles”: Only Text and Table parameters can require screening.');
+  expect(() => normalizeSetParameters([{ id: 'n', name: 'Cycles', type: 'number', screening: true }])).toThrow(
+    'Parameter “Cycles”: Only Text, Table and File Upload parameters can require screening.'
+  );
 });

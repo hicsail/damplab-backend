@@ -15,7 +15,9 @@
  *
  * Env (see .env):
  *   ACLID_API_URL   e.g. https://api.aclid.bio
- *   ACLID_API_KEY   your Aclid API key (sent as the Authorization header)
+ *   ACLID_PROD_API_KEY / ACLID_TEST_API_KEY / ACLID_API_KEY (legacy)
+ *                   your Aclid API key, the first non-empty of these, in that order
+ *                   (sent as the Authorization header)
  */
 
 import { readFileSync } from 'fs';
@@ -144,7 +146,11 @@ function printSummary(report: ReportMetadata): void {
 async function main(): Promise<void> {
   loadDotEnv();
   const baseUrl = requireEnv('ACLID_API_URL').replace(/\/+$/, '');
-  const apiKey = requireEnv('ACLID_API_KEY');
+  const apiKey = ['ACLID_PROD_API_KEY', 'ACLID_TEST_API_KEY', 'ACLID_API_KEY'].map((name) => process.env[name]?.trim()).find(Boolean);
+  if (!apiKey) {
+    console.error('Missing Aclid key: set ACLID_TEST_API_KEY (or ACLID_PROD_API_KEY) in .env or the shell.');
+    process.exit(1);
+  }
   const { name, sequence } = parseArgs();
 
   if (sequence.length < 30) {

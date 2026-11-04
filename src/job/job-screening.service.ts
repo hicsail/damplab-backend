@@ -41,12 +41,13 @@ import {
   ScreeningTarget,
   screeningStringsFromValue
 } from './job-screening.util';
-import { columnSlugs, multiValueSliceName, screeningSliceName, tableCellSliceName } from './job-screening-name.util';
+import { extractSequenceRecords } from './sequence-file.util';
+import { columnSlugs, fileRecordSliceName, multiValueSliceName, screeningSliceName, tableCellSliceName } from './job-screening-name.util';
 
 /**
  * Submission and resubmission start a screen in the background when this is true. It is off:
  * staff's "Run screening" / "Rerun screening" is what starts screening, and the only trigger
- * that also runs the customer leg. Pairs with BIOSECURITY_ENABLED in the UI's ClientView.tsx.
+ * that also runs the customer leg. Customers never see screening, so nothing on the client page pairs with it.
  */
 export const AUTO_SCREENING_ENABLED = false;
 
@@ -115,6 +116,8 @@ export class JobScreeningService {
         );
       } else if (isTableType(param.type)) {
         await this.collectTableTargets(collection, push, { workflowId, nodeId, param, paramLabel, value });
+      } else if (param.type === 'file') {
+        await this.collectFileTargets(collection, push, { workflowId, nodeId, param, paramLabel, value });
       }
     }
     return collection;
@@ -154,17 +157,16 @@ export class JobScreeningService {
    * Whether screening lets this job be accepted. Reads nothing for a job that is not gated. Never throws:
    * a check that cannot be made reads as NOT_PASSED, so the gate fails closed.
    */
-  async acceptanceScreening(job: Job, options: { callerCanScreen?: boolean } = {}): Promise<JobAcceptanceScreening> {
-    const callerCanScreen = options.callerCanScreen ?? true;
+  async acceptanceScreening(job: Job): Promise<JobAcceptanceScreening> {
     try {
-      if (!isAcceptanceGatedState(job.state)) return decideAcceptanceScreening({ jobState: job.state, newestRun: null, currentFingerprint: '', callerCanScreen });
+      if (!isAcceptanceGatedState(job.state)) return decideAcceptanceScreening({ jobState: job.state, newestRun: null, currentFingerprint: '' });
       const newestRun = await this.screeningRuns.findNewestForJob(String(job._id));
       const currentFingerprint = await this.screeningFingerprint(job);
-      return decideAcceptanceScreening({ jobState: job.state, newestRun, currentFingerprint, callerCanScreen });
+      return decideAcceptanceScreening({ jobState: job.state, newestRun, currentFingerprint });
     } catch (error) {
       // Fails closed: a check that cannot be made must not read as a pass.
       this.logger.error(`Could not check acceptance screening for job ${String(job?._id)}: ${messageOf(error)}`);
-      return { state: JobAcceptanceScreeningState.NOT_PASSED, message: ACCEPTANCE_MESSAGES.CHECK_FAILED + (callerCanScreen ? '' : ACCEPTANCE_MESSAGES.NO_BIOSECURITY_ACCESS) };
+      return { state: JobAcceptanceScreeningState.NOT_PASSED, message: ACCEPTANCE_MESSAGES.CHECK_FAILED };
     }
   }
 
@@ -228,6 +230,46 @@ export class JobScreeningService {
           const cell = (row[index] ?? '').trim();
           if (cell !== '') push(tableCellSliceName(args.workflowId, args.nodeId, fieldId, rowIndex + 1, slugs[c]), cell, `${label} › row ${rowIndex + 1} › ${table.header[index]}`);
         });
+      });
+    }
+  }
+
+  /**
+   * A flagged File Upload's sequence file(s): every DNA record of each is a target, labelled
+   * `<service> › <parameter> › <filename> › <record name>` (`record <k>` when unnamed). Same key
+   * guard and notes as a Table; a file that is missing, unreadable, not a sequence file or without
+   * DNA is noted by name and does not fail the run. Protein records are counted as skipped.
+   */
+  private async collectFileTargets(
+    collection: ScreeningCollection,
+    push: (name: string, seq: string, label: string) => void,
+    args: { workflowId: string; nodeId: string; param: { id: string }; paramLabel: string; value: unknown }
+  ): Promise<void> {
+    const files = flattenValues(args.value).filter((v) => v !== null && v !== undefined && v !== '');
+    for (let f = 0; f < files.length; f++) {
+      const record = fileRecord(files[f]);
+      const filename = typeof record?.filename === 'string' && record.filename !== '' ? record.filename : 'the uploaded file';
+      const key = sampleSheetKeyOf(files[f]);
+      if (!key || !key.startsWith(TABLE_UPLOAD_KEY_PREFIX) || hasParentSegment(key)) {
+        collection.notes.push(`${args.paramLabel}: ${filename} was not uploaded, so it was not screened`);
+        continue;
+      }
+      let buffer: Buffer;
+      try {
+        buffer = await this.files.readObject(key, TABLE_FILE_MAX_BYTES);
+      } catch (error) {
+        collection.notes.push(`${args.paramLabel}: could not read ${filename} (${messageOf(error)})`);
+        continue;
+      }
+      const result = extractSequenceRecords(buffer, filename);
+      if ('error' in result) {
+        collection.notes.push(`${args.paramLabel}: ${filename} ${result.error}`);
+        continue;
+      }
+      collection.skippedCount += result.skipped;
+      result.records.forEach((rec, k) => {
+        const name = rec.name.trim() !== '' ? rec.name.trim() : `record ${k + 1}`;
+        push(fileRecordSliceName(args.workflowId, args.nodeId, args.param.id, f + 1, k + 1), rec.seq, `${args.paramLabel} › ${filename} › ${name}`);
       });
     }
   }

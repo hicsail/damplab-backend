@@ -49,11 +49,6 @@ export class KeycloakUserCustomerManagement {
   })
   accessRoleMapped?: boolean;
 
-  @Field(() => Boolean, {
-    description: 'Whether this account sees the Biosecurity block. True when the Keycloak attribute is absent. False only when an admin has hidden it.'
-  })
-  showBiosecurity: boolean;
-
   /**
    * Pre-attached by the list and search queries (one `$in` lookup per page). Exposed in
    * GraphQL by `CustomerProfileResolver.profile`, which looks it up when absent, so the

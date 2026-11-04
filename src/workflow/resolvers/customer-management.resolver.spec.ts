@@ -84,3 +84,7 @@ describe('searchKeycloakUsersForCustomerManagement', () => {
     expect(out[0].profile?.canBookWithoutApproval).toBe(false);
   });
 });
+
+describe('showBiosecurity retired', () => {
+  it('offers no setUserShowBiosecurity (behaviour 19)', () => expect((CustomerManagementResolver.prototype as any).setUserShowBiosecurity).toBeUndefined());
+});

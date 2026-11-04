@@ -1,5 +1,5 @@
-import { HttpException } from '@nestjs/common';
-import { AclidCustomerPendingError, AclidFeatureNotEnabledError, AclidScreenPendingError, AclidService, mapAclidScreen } from './aclid.service';
+import { HttpException, Logger } from '@nestjs/common';
+import { AclidCustomerPendingError, AclidFeatureNotEnabledError, AclidScreenPendingError, AclidService, mapAclidScreen, resolveAclidApiKey } from './aclid.service';
 import { ACLID_CUSTOMER_POLL_TIMEOUT_MS } from './aclid.constants';
 
 const LONG_SEQUENCE = 'A'.repeat(32);
@@ -21,6 +21,9 @@ describe('AclidService', () => {
 
   beforeEach(() => {
     process.env.ACLID_API_URL = 'https://api.aclid.bio';
+    delete process.env.ACLID_PROD_API_KEY;
+    delete process.env.ACLID_TEST_API_KEY;
+    delete process.env.ACLID_API_KEY;
     process.env.ACLID_API_KEY = 'test-key';
     fetchMock = jest.fn();
     global.fetch = fetchMock as any;
@@ -29,12 +32,52 @@ describe('AclidService', () => {
   afterEach(() => {
     global.fetch = originalFetch;
     delete process.env.ACLID_API_URL;
+    delete process.env.ACLID_PROD_API_KEY;
+    delete process.env.ACLID_TEST_API_KEY;
     delete process.env.ACLID_API_KEY;
   });
 
   it('isConfigured is false without a key', () => {
     delete process.env.ACLID_API_KEY;
     expect(new AclidService().isConfigured()).toBe(false);
+  });
+
+  describe('resolveAclidApiKey (biosecurity-tweaks behaviours 1–3)', () => {
+    it('prefers the prod key, then the test key, then the legacy name, trimming each', () => {
+      expect(resolveAclidApiKey({ ACLID_PROD_API_KEY: ' P ', ACLID_TEST_API_KEY: 'T', ACLID_API_KEY: 'L' })).toEqual({ key: 'P', source: 'ACLID_PROD_API_KEY' });
+      expect(resolveAclidApiKey({ ACLID_TEST_API_KEY: 'T', ACLID_API_KEY: 'L' })).toEqual({ key: 'T', source: 'ACLID_TEST_API_KEY' });
+      expect(resolveAclidApiKey({ ACLID_PROD_API_KEY: '  ', ACLID_API_KEY: 'L' })).toEqual({ key: 'L', source: 'ACLID_API_KEY' });
+      expect(resolveAclidApiKey({})).toBeNull();
+    });
+  });
+
+  it('sends the prod key whatever else is set (behaviour 1)', async () => {
+    process.env.ACLID_PROD_API_KEY = 'P';
+    process.env.ACLID_TEST_API_KEY = 'T';
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ url: 'https://verify.aclid.bio/x' }) });
+    await new AclidService().createVerificationUrl({ screenId: 'scr_1' });
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('P');
+  });
+
+  it('sends the test key when it is the only one (behaviour 2)', async () => {
+    delete process.env.ACLID_API_KEY;
+    process.env.ACLID_TEST_API_KEY = 'T';
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, text: async () => JSON.stringify({ url: 'https://verify.aclid.bio/x' }) });
+    await new AclidService().createVerificationUrl({ screenId: 'scr_1' });
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('T');
+  });
+
+  it('logs which variable it uses on boot and never the key (behaviour 4)', () => {
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    delete process.env.ACLID_API_KEY;
+    process.env.ACLID_TEST_API_KEY = 'T-secret';
+    new AclidService().onModuleInit();
+    expect(log).toHaveBeenCalledWith('Aclid: key from ACLID_TEST_API_KEY');
+    expect(JSON.stringify(log.mock.calls)).not.toContain('T-secret');
+    delete process.env.ACLID_TEST_API_KEY;
+    new AclidService().onModuleInit();
+    expect(log).toHaveBeenLastCalledWith('Aclid: not configured');
+    log.mockRestore();
   });
 
   it('screenInline posts the sequences and returns the succeeded screen', async () => {

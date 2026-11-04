@@ -1,4 +1,4 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { CustomerScreeningStatus } from '../job/screening-run.model';
 import { customerScreeningStatus } from './aclid-status.util';
 import { ACLID_CUSTOMER_POLL_TIMEOUT_MS, ACLID_DETAILS_MAX_MATCHES_PER_REGION, ACLID_POLL_INTERVAL_MS, ACLID_POLL_TIMEOUT_MS, ACLID_REQUEST_TIMEOUT_MS } from './aclid.constants';
@@ -14,7 +14,8 @@ import { ACLID_CUSTOMER_POLL_TIMEOUT_MS, ACLID_DETAILS_MAX_MATCHES_PER_REGION, A
  * screening as unavailable. Only a real regulatory / decision status from Aclid
  * is a verdict.
  *
- * Aclid authenticates with the raw API key in `Authorization` (no `Bearer`).
+ * Aclid authenticates with the raw API key in `Authorization` (no `Bearer`). The key comes from
+ * the first non-empty of `ACLID_PROD_API_KEY`, `ACLID_TEST_API_KEY`, then legacy `ACLID_API_KEY`.
  * Customer screening goes through `POST /v2/customers` and
  * `GET /v2/customers/{requester_id}`. Hosted KYC remains for the customer page:
  * the verification URL is minted per screen by `createVerificationUrl`.
@@ -171,21 +172,40 @@ function remainingMs(deadline: number): number {
   return Math.max(1, Math.min(ACLID_REQUEST_TIMEOUT_MS, deadline - Date.now()));
 }
 
+/** Key variables in precedence order: production wins, then the test key, then the legacy name. */
+export const ACLID_KEY_VARIABLES = ['ACLID_PROD_API_KEY', 'ACLID_TEST_API_KEY', 'ACLID_API_KEY'] as const;
+export type AclidKeyVariable = typeof ACLID_KEY_VARIABLES[number];
+
+/** The first non-empty (trimmed) Aclid key and the variable it came from, or null when none is set. */
+export function resolveAclidApiKey(env: NodeJS.ProcessEnv = process.env): { key: string; source: AclidKeyVariable } | null {
+  for (const source of ACLID_KEY_VARIABLES) {
+    const key = env[source]?.trim();
+    if (key) return { key, source };
+  }
+  return null;
+}
+
 @Injectable()
-export class AclidService {
+export class AclidService implements OnModuleInit {
   private readonly logger = new Logger(AclidService.name);
+
+  /** Says which variable supplies the key, never the key itself. */
+  onModuleInit(): void {
+    const resolved = resolveAclidApiKey();
+    this.logger.log(resolved ? `Aclid: key from ${resolved.source}` : 'Aclid: not configured');
+  }
 
   /** True when an API key is configured at all. Without one, Aclid is skipped, not failed. */
   isConfigured(): boolean {
-    return Boolean(process.env.ACLID_API_KEY?.trim());
+    return resolveAclidApiKey() !== null;
   }
 
   private apiKey(): string {
-    const key = process.env.ACLID_API_KEY?.trim();
-    if (!key) {
-      throw new HttpException('Aclid is not configured: set ACLID_API_KEY', HttpStatus.SERVICE_UNAVAILABLE);
+    const resolved = resolveAclidApiKey();
+    if (!resolved) {
+      throw new HttpException('Aclid is not configured: set ACLID_TEST_API_KEY or ACLID_PROD_API_KEY', HttpStatus.SERVICE_UNAVAILABLE);
     }
-    return key;
+    return resolved.key;
   }
 
   private baseUrl(): string {

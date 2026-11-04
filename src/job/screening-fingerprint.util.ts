@@ -31,11 +31,11 @@ export function screeningCustomerDetails(job: Pick<Job, 'clientDisplayName' | 'u
 
 /**
  * What a flagged parameter's stored answer contributes to the fingerprint; an empty array means
- * no value. Text is its trimmed strings. A Table is each file's key and filename, never its contents.
+ * no value. Text is its trimmed strings. A Table or File Upload is each file's key and filename, never its contents.
  */
 export function flaggedAnswerValue(paramType: string, value: unknown): unknown[] {
   if (paramType === 'string') return screeningStringsFromValue(value);
-  if (isTableType(paramType)) {
+  if (isTableType(paramType) || paramType === 'file') {
     return flattenValues(value)
       .filter((v) => v !== null && v !== undefined && v !== '')
       .map((v) => ({ key: sampleSheetKeyOf(v) ?? null, filename: fileRecord(v)?.filename ?? null }));

@@ -4,7 +4,7 @@ import { Mutation, ResolveField, Resolver, Query, Args, Parent, ID, Int } from '
 import { CreateJobInput, CreateJobPipe, CreateJobPreProcessed, JobAttachmentInput, JobAttachmentUpload, JobAttachmentUploadRequest, JobPipe } from './job.dto';
 import { OwnJobsInput, AllJobsInput, OwnJobsResult, JobsResult, JobsForViewerInput, JobScope, JobClient } from './dto/jobs-query.dto';
 import { CustomerVerificationSession } from './dto/customer-verification-session.dto';
-import { AclidScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
+import { AclidScreening, HomologyScreening, HomologyScreeningStatus, Job, JobAttachment, JobState, CustomerCategory } from './job.model';
 import { normalizeMemberEmailList, jobMemberEmails, jobPrimaryEmail, isJobMember, isValidEmail } from './job-membership';
 import { normalizeJobDescription } from './job-description';
 import { normalizeClientEmail } from './client-email';
@@ -43,7 +43,6 @@ import { assertParameterAnswersValid } from './parameter-answer-gate';
 import { ClientAccount, KeycloakService } from '../keycloak/keycloak.service';
 import { CancelJobInput, RejectJobReviewInput, RequestJobEditAccessInput, JobReviewDecision, RespondToJobReviewInput, ReviewJobInput, WithdrawJobInput } from './dto/review-job.input';
 import { JobReviewService } from './job-review.service';
-import { assertShowsBiosecurity, callerShowsBiosecurity } from './biosecurity-gate';
 import { NotificationDispatchService } from '../notification/notification-dispatch.service';
 import { AclidService } from '../aclid/aclid.service';
 import { redactJobBiosecurity } from './biosecurity-view';
@@ -256,11 +255,8 @@ export class JobResolver {
 
   @Query(() => Job, { nullable: true })
   @RequirePermission(Permission.JobsViewAll)
-  async jobById(@Args('id', { type: () => ID }) id: string, @CurrentUser() user: User): Promise<Job | null> {
-    const job = await this.jobService.findById(id);
-    if (!job) return null;
-    if (!(await this.callerShowsBiosecurity(user))) return redactJobBiosecurity(job, 'hidden');
-    return job;
+  async jobById(@Args('id', { type: () => ID }) id: string): Promise<Job | null> {
+    return this.jobService.findById(id);
   }
 
   @Query(() => Job, { nullable: true })
@@ -268,8 +264,7 @@ export class JobResolver {
     const job = await this.jobService.findById(id);
     if (!job || !isJobMember(job, user)) return null;
     const claimed = await this.jobService.claimSubIfPrimary(job, user);
-    const mode = (await this.callerShowsBiosecurity(user)) ? 'customer' : 'hidden';
-    return redactJobBiosecurity(claimed, mode);
+    return redactJobBiosecurity(claimed, hasPermission(user, Permission.JobsViewAll) ? 'customer' : 'hidden');
   }
 
   @Query(() => Job)
@@ -390,7 +385,6 @@ export class JobResolver {
   @Mutation(() => Job, { description: 'Staff-only. Re-run SecureDNA homology screening on a job and return the recorded verdict.' })
   @RequirePermission(Permission.JobsViewAll)
   async rerunJobHomologyScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
-    await this.assertShowsBiosecurity(user);
     const job = await this.jobService.findById(jobId);
     if (!job) {
       throw new NotFoundException(`Job with ID ${jobId} not found`);
@@ -404,9 +398,9 @@ export class JobResolver {
    * the caller is on their own job page, so "not found" is the honest answer
    * to a stale id, and "forbidden" the honest answer to someone else's.
    *
-   * Both KYC mutations are gated on the baseline `jobs:view`, so this is where
-   * scope is enforced — the owner, the client named on a staff-submitted job,
-   * or anyone holding `jobs:view-all`.
+   * Both callers (the start and the refresh) are gated on `jobs:view-all`, so
+   * the membership check below always passes for them. It stays as belt and
+   * braces: scope is still enforced here if a gate is ever loosened.
    */
   private async jobForVerificationAccess(jobId: string, user: User): Promise<Job> {
     const job = await this.jobService.findById(jobId);
@@ -416,7 +410,6 @@ export class JobResolver {
     if (!callerMayAccessJob(job, user, hasPermission(user, Permission.JobsViewAll))) {
       throw new ForbiddenException('You do not have permission to access this job');
     }
-    await this.assertShowsBiosecurity(user);
     return job;
   }
 
@@ -454,9 +447,9 @@ export class JobResolver {
    * run, and never from here.
    */
   @Mutation(() => CustomerVerificationSession, {
-    description: "Mint an Aclid hosted-KYC session for this job's screen. Requires being on the job (owner, named client, or jobs:view-all)."
+    description: "Staff-only (jobs:view-all). Mint an Aclid hosted-KYC session for this job's screen, for staff's Copy verification link."
   })
-  @RequirePermission(Permission.JobsView)
+  @RequirePermission(Permission.JobsViewAll)
   async startJobCustomerVerification(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<CustomerVerificationSession> {
     const { screenId } = await this.jobForCustomerVerification(jobId, user);
     const redirectUrl = `${process.env.APP_BASE_URL?.replace(/\/+$/, '') || ''}/client_view/${jobId}`;
@@ -475,9 +468,9 @@ export class JobResolver {
    * `rerunJobHomologyScreening`, which is staff-only.
    */
   @Mutation(() => Job, {
-    description: "Re-read this job's Aclid screen and record its current regulatory, verification and decision status. Does not re-screen. Requires being on the job."
+    description: "Re-read this job's Aclid screen and record its current regulatory, verification and decision status. Does not re-screen. Staff-only."
   })
-  @RequirePermission(Permission.JobsView)
+  @RequirePermission(Permission.JobsViewAll)
   async refreshJobAclidScreening(@Args('jobId', { type: () => ID }) jobId: string, @CurrentUser() user: User): Promise<Job> {
     const job = await this.jobForVerificationAccess(jobId, user);
     const existing = job.aclidScreening;
@@ -520,7 +513,7 @@ export class JobResolver {
     // because a FAILED row may be SecureDNA's, which this refresh knows nothing
     // about. Anything other than a new FAILED leaves the row exactly as it was.
     if (homologyStatus !== HomologyScreeningStatus.FAILED) {
-      return this.presentBiosecurity(updated ?? job, user);
+      return updated ?? job;
     }
     const rollup = job.homologyScreening;
     const failed = await this.jobService.setHomologyScreening(jobId, {
@@ -531,26 +524,7 @@ export class JobResolver {
       sequenceCount: rollup?.sequenceCount ?? existing.sequenceCount,
       detail: `Aclid now reports controlled${rollup?.detail ? ` (was: ${rollup.detail})` : ''}`
     });
-    return this.presentBiosecurity(failed ?? updated ?? job, user);
-  }
-
-  /**
-   * The Biosecurity block is per account, stored as a Keycloak attribute.
-   * A missing method (unit harnesses that never construct Keycloak) reads as shown.
-   */
-  private callerShowsBiosecurity(user: User): Promise<boolean> {
-    return callerShowsBiosecurity(this.keycloakService, user);
-  }
-
-  private assertShowsBiosecurity(user: User): Promise<void> {
-    return assertShowsBiosecurity(this.keycloakService, user);
-  }
-
-  /** Staff with the flag see the full record. Everyone else sees the customer view, or nothing. */
-  private async presentBiosecurity(job: Job, user: User): Promise<Job> {
-    if (!(await this.callerShowsBiosecurity(user))) return redactJobBiosecurity(job, 'hidden');
-    if (hasPermission(user, Permission.JobsViewAll)) return job;
-    return redactJobBiosecurity(job, 'customer');
+    return failed ?? updated ?? job;
   }
 
   @Mutation(() => Job, {
@@ -656,6 +630,19 @@ export class JobResolver {
       this.logger.warn(`Keycloak Admin API not configured; updating job categories for sub=${job.sub} without Keycloak sync`);
     }
 
+    // The accepted fingerprint includes the category, so without a restamp every
+    // accepted job here would fail the send gate's acceptance check for good:
+    // Recalculate-and-save fixes the document, and nothing short of
+    // re-accepting moved this. Only jobs whose figures still matched what was
+    // accepted are carried over — a lock that was already there is about
+    // something else and must survive the category change.
+    const before = job.sub ? await this.jobService.findBySub(job.sub) : [job];
+    const stillAsAccepted = new Set<string>();
+    for (const j of before) {
+      const accepted = (j as any).acceptedBillingFingerprint;
+      if (accepted && (await this.sowService.jobBillingFingerprint(j)) === accepted) stillAsAccepted.add(String(j._id));
+    }
+
     let updatedJobs: Job[];
     if (job.sub) {
       updatedJobs = await this.jobService.updateCustomerCategoryForSub(job.sub, customerCategory);
@@ -664,8 +651,22 @@ export class JobResolver {
       updatedJobs = single ? [single] : [];
     }
 
+    // Each job stands alone. The categories above are already written, so one
+    // SOW that cannot reprice — an old document billing a service since deleted
+    // from the catalog, say — must not abandon every job after it, including
+    // the one staff are working on. That SOW keeps its old figures and is
+    // reported here; its own Recalculate will surface the same error.
     for (const j of updatedJobs) {
-      await this.sowService.syncServicesFromJobWorkflows(String(j._id));
+      try {
+        await this.sowService.syncServicesFromJobWorkflows(String(j._id));
+      } catch (err) {
+        this.logger.warn(`Pricing category change: could not reprice the SOW for job ${String(j._id)}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+      // Independent of the sync: the fingerprint is read off the job's own
+      // workflows and category, not off the SOW.
+      if (stillAsAccepted.has(String(j._id))) {
+        await this.jobService.setAcceptedBillingFingerprint(String(j._id), await this.sowService.jobBillingFingerprint(j));
+      }
     }
 
     const updatedJob = updatedJobs.find((j) => String(j._id) === String(jobId)) ?? (await this.jobService.findById(jobId));
@@ -914,9 +915,7 @@ export class JobResolver {
       sub: user.sub,
       name: user.preferred_username ?? user.email ?? user.sub,
       email: user.email,
-      claims: user.realm_access?.roles ?? [],
-      // Only ACCEPT is gated by screening, so only ACCEPT pays for the Keycloak read.
-      showsBiosecurity: input.decision === JobReviewDecision.ACCEPT ? await this.callerShowsBiosecurity(user) : undefined
+      claims: user.realm_access?.roles ?? []
     });
     const title = JobResolver.REVIEW_NOTIFICATION_TITLES[input.decision] ?? 'Your job was reviewed';
     // Keyed on the review's own operation id, so a retried review makes one
@@ -1140,6 +1139,28 @@ export class JobResolver {
     );
 
     return withUrls;
+  }
+
+  /**
+   * Biosecurity belongs to jobs:view-all. These three are gated per field so every
+   * path that returns a Job (jobsForViewer, the member-open mutations, nested Jobs)
+   * is covered at once. Hidden reads as null, which all three nullable types allow.
+   * Staff pass the parent through, so a job already redacted by ownJobById or the
+   * Aclid refresh stays redacted.
+   */
+  @ResolveField(() => HomologyScreening, { name: 'homologyScreening', nullable: true })
+  homologyScreening(@Parent() job: Job, @CurrentUser() user: User): HomologyScreening | null | undefined {
+    return hasPermission(user, Permission.JobsViewAll) ? job.homologyScreening : null;
+  }
+
+  @ResolveField(() => AclidScreening, { name: 'aclidScreening', nullable: true })
+  aclidScreening(@Parent() job: Job, @CurrentUser() user: User): AclidScreening | null | undefined {
+    return hasPermission(user, Permission.JobsViewAll) ? job.aclidScreening : null;
+  }
+
+  @ResolveField(() => [ID], { name: 'screeningBatchIds', nullable: 'itemsAndList', description: 'Every SecureDNA screening batch run for this job, oldest first.' })
+  screeningBatchIds(@Parent() job: Job, @CurrentUser() user: User): string[] | null | undefined {
+    return hasPermission(user, Permission.JobsViewAll) ? job.screeningBatchIds : null;
   }
 
   @ResolveField(() => [Comment], { description: 'Staff see internal notes too; everyone else sees only what was written for the customer.' })

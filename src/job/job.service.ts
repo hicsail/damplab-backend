@@ -205,6 +205,15 @@ export class JobService {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { acceptedBillingFingerprint: fingerprint, acceptedAt: new Date(), acceptedBy: acceptedBy ?? null } }, { new: true }).exec();
   }
 
+  /**
+   * Moves only the accepted fingerprint, leaving who accepted and when alone.
+   * For a staff pricing-category change, which reprices the accepted terms
+   * without anyone re-accepting them (see changeJobCustomerCategory).
+   */
+  async setAcceptedBillingFingerprint(jobId: string, fingerprint: string): Promise<void> {
+    await this.jobModel.updateOne({ _id: jobId }, { $set: { acceptedBillingFingerprint: fingerprint } }).exec();
+  }
+
   async updateCustomerCategory(jobId: string, customerCategory: CustomerCategory): Promise<Job | null> {
     return this.jobModel.findOneAndUpdate({ _id: jobId }, { $set: { customerCategory } }, { new: true }).exec();
   }

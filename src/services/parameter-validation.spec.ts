@@ -167,13 +167,14 @@ describe('screening definition rules (biosecurity-update behaviour 4)', () => {
     expect(screeningRuleViolation(text({ screening: true }))).toBeNull();
     expect(screeningRuleViolation(table({ screening: true, screeningFields: [' insert '] }))).toBeNull();
     expect(screeningRuleViolation({ ...table({ screening: true, screeningFields: ['Insert'] }), type: 'sampleSheet' })).toBeNull();
+    expect(screeningRuleViolation({ id: 'f', name: 'Seqs', type: 'file', screening: true })).toBeNull();
     expect(screeningRuleViolation(text())).toBeNull();
     expect(screeningRuleViolation(text({ screening: false }))).toBeNull();
   });
 
   it('refuses the flag on any other type', () => {
-    expect(screeningRuleViolation({ id: 'n', name: 'Cycles', type: 'number', screening: true })).toBe('Only Text and Table parameters can require screening.');
-    expect(screeningRuleViolation({ id: 'f', name: 'Map', type: 'file', screening: true })).toBe('Only Text and Table parameters can require screening.');
+    expect(screeningRuleViolation({ id: 'n', name: 'Cycles', type: 'number', screening: true })).toBe('Only Text, Table and File Upload parameters can require screening.');
+    expect(screeningRuleViolation({ id: 'f', name: 'Seqs', type: 'file', screening: true, screeningFields: ['Insert'] })).toBe('Only a Table has screening columns.');
     expect(screeningRuleViolation(text({ screening: 'yes' }))).toBe('“Requires screening” must be true or false.');
   });
 
@@ -196,6 +197,6 @@ describe('screening definition rules (biosecurity-update behaviour 4)', () => {
   });
 
   it('parameterDefinitionError reports it with the parameter label', () => {
-    expect(parameterDefinitionError({ id: 'n', name: 'Cycles', type: 'number', screening: true })).toBe('Parameter “Cycles”: Only Text and Table parameters can require screening.');
+    expect(parameterDefinitionError({ id: 'n', name: 'Cycles', type: 'number', screening: true })).toBe('Parameter “Cycles”: Only Text, Table and File Upload parameters can require screening.');
   });
 });

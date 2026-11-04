@@ -317,7 +317,7 @@ describe('job -> SOW branch paths', () => {
      * figures in the document no longer match the job, and that is the thing
      * staff must fix first, so it is the only blocker reported.
      */
-    it('DOCUMENT_STALE: repricing a job blocks its SOW until the figures are recalculated', async () => {
+    it('DOCUMENT_STALE: a pricing-category change blocks its SOW until the figures are recalculated', async () => {
       const job = await F.createJob(ctx, 'customer', [workflowInput(serviceId)]);
       await F.reviewJob(ctx, 'staff', job.id, 'ACCEPT', 'op-accept-1');
       const sow = await F.createSowForJob(ctx, 'staff', job.id);
@@ -333,14 +333,14 @@ describe('job -> SOW branch paths', () => {
       expect(moved.actionGate).toMatchObject({ canSend: false, sendBlockers: ['DOCUMENT_STALE'] });
       expect(await F.sendSowToCustomerError(ctx, 'staff', sow.id)).toBeTruthy();
 
-      // Recalculating the document alone does NOT clear it: the figures are
-      // measured against the spec the lab accepted, not against the live job.
+      // Recalculating the document clears it, with no re-acceptance. A category
+      // change is a deliberate staff action, so changeJobCustomerCategory carries
+      // the accepted baseline over to the new price list; what is left out of
+      // date is only the document, which is what Recalculate repairs. (Until
+      // 2026-11-03 this required re-accepting the job, and the editor's own
+      // advice — "Recalculate the Fee Schedule and save" — could not clear it.)
       const stale = await F.readSow(ctx, 'staff', sow.id);
       await F.saveSowVersion(ctx, 'staff', sow.id, stale.currentVersion, { note: 'Recalculated for the market price list', refreshFeeSchedule: true });
-      expect((await F.readSow(ctx, 'staff', sow.id)).actionGate.sendBlockers).toEqual(['DOCUMENT_STALE']);
-
-      // Re-accepting is what re-baselines it, and the blocker clears.
-      await F.reviewJob(ctx, 'staff', job.id, 'ACCEPT', 'op-accept-2');
       expect((await F.readSow(ctx, 'staff', sow.id)).actionGate).toMatchObject({ canSend: true, sendBlockers: [] });
     });
 

@@ -6,6 +6,7 @@
  *   text:              <workflowId>_<nodeId>_<paramId>
  *   multi-value text:  <workflowId>_<nodeId>_<paramId>_v<n>                (n from 1)
  *   table cell:        <workflowId>_<nodeId>_<paramId>_r<row>_<columnSlug>  (row = data row, from 1)
+ *   file record:       <workflowId>_<nodeId>_<paramId>_f<file>_s<record>    (both from 1; the prefix is cut, never the suffix)
  *
  * Nothing parses these back: a screening run stores each name beside its human label.
  * (The old parser recognised only `insert`/`vector` and had no caller — F1.)
@@ -20,6 +21,14 @@ export function multiValueSliceName(workflowId: string, nodeId: string, paramId:
 
 export function tableCellSliceName(workflowId: string, nodeId: string, paramId: string, row: number, columnSlug: string): string {
   return `${screeningSliceName(workflowId, nodeId, paramId)}_r${row}_${columnSlug}`;
+}
+
+export const SLICE_NAME_MAX = 200;
+
+/** One record of one file of a flagged File Upload; at most SLICE_NAME_MAX characters, the prefix cut first. */
+export function fileRecordSliceName(workflowId: string, nodeId: string, paramId: string, file: number, record: number): string {
+  const suffix = `_f${file}_s${record}`;
+  return `${screeningSliceName(workflowId, nodeId, paramId)}`.slice(0, SLICE_NAME_MAX - suffix.length) + suffix;
 }
 
 const slug = (header: string): string =>

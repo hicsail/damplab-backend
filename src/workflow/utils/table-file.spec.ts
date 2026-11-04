@@ -172,13 +172,15 @@ describe('readTableFile', () => {
 
   // I1: the 10 MB cap is on compressed bytes; the inflated size is what costs memory.
   // I5: over the cap is a size refusal, not "not a spreadsheet".
+  // Building the bomb deflates 51 MiB in JSZip's pure-JS compressor: ~0.7 s alone, but past jest's 5 s default
+  // when the full suite runs in parallel. Its own timeout, like the heavy tests further down.
   it('refuses a small zip that inflates beyond the inflated-size cap, as too large to read', async () => {
     const zip = new JSZip();
     zip.file('xl/worksheets/sheet1.xml', Buffer.alloc(TABLE_FILE_MAX_INFLATED_BYTES + 1024 * 1024, 0x61));
     const bomb = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
     expect(bomb.byteLength).toBeLessThan(TABLE_FILE_MAX_BYTES);
     await expect(readTableFile(bomb)).rejects.toThrow(TABLE_FILE_TOO_LARGE_TO_READ_MESSAGE);
-  });
+  }, 30000);
 
   // I5: a valid workbook (header `Inducer`, one row) padded with 52 MiB of whitespace between its rows. The browser
   // refuses the same file with the same message before its preview, so the two never disagree on an over-cap file.
